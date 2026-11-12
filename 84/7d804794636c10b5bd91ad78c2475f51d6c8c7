@@ -1,0 +1,17 @@
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "847d804794636c10b5bd91ad78c2475f51d6c8c7",
+  "prompts": {},
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
