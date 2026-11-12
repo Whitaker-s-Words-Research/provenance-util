@@ -1,0 +1,94 @@
+.gitignore
+  h_dd7dcb3bf4c9d1 2-4
+Cargo.lock
+  h_dd7dcb3bf4c9d1 1-621
+Cargo.toml
+  h_dd7dcb3bf4c9d1 1-26
+LICENSE
+  h_dd7dcb3bf4c9d1 1-21
+PLAN.md
+  h_dd7dcb3bf4c9d1 1-101
+README.md
+  h_dd7dcb3bf4c9d1 33,120
+SPEC.md
+  h_dd7dcb3bf4c9d1 9,36,43-44,50,52,100,109,115,127,177,186,213,224,239,246,252-253,263,270-271,278,281-282,321,326-328,337,361,378,380-384,386,388,502,536
+crates/prov-adapters/Cargo.toml
+  h_dd7dcb3bf4c9d1 1-15
+crates/prov-adapters/src/claude_code.rs
+  h_dd7dcb3bf4c9d1 1-219
+crates/prov-adapters/src/lib.rs
+  h_dd7dcb3bf4c9d1 1-141
+crates/prov-core/Cargo.toml
+  h_dd7dcb3bf4c9d1 1-17
+crates/prov-core/src/config.rs
+  h_dd7dcb3bf4c9d1 1-130
+crates/prov-core/src/lib.rs
+  h_dd7dcb3bf4c9d1 1-21
+crates/prov-core/src/pattern.rs
+  h_dd7dcb3bf4c9d1 1-241
+crates/prov-core/src/state.rs
+  h_dd7dcb3bf4c9d1 1-395
+crates/prov-core/src/trailer.rs
+  h_dd7dcb3bf4c9d1 1-241
+crates/prov-git/Cargo.toml
+  h_dd7dcb3bf4c9d1 1-10
+crates/prov-git/src/lib.rs
+  h_dd7dcb3bf4c9d1 1-274
+crates/prov-gitai/Cargo.toml
+  h_dd7dcb3bf4c9d1 1-11
+crates/prov-gitai/src/lib.rs
+  h_dd7dcb3bf4c9d1 1-292
+crates/prov/Cargo.toml
+  h_dd7dcb3bf4c9d1 1-25
+crates/prov/build.rs
+  h_dd7dcb3bf4c9d1 1-12
+crates/prov/src/agent_hook.rs
+  h_dd7dcb3bf4c9d1 1-161
+crates/prov/src/archive.rs
+  h_dd7dcb3bf4c9d1 1-184
+crates/prov/src/check.rs
+  h_dd7dcb3bf4c9d1 1-400
+crates/prov/src/context.rs
+  h_dd7dcb3bf4c9d1 1-46
+crates/prov/src/gate.rs
+  h_dd7dcb3bf4c9d1 1-420
+crates/prov/src/git_hook.rs
+  h_dd7dcb3bf4c9d1 1-228
+crates/prov/src/main.rs
+  h_dd7dcb3bf4c9d1 1-84
+crates/prov/src/sweep.rs
+  h_dd7dcb3bf4c9d1 1-22
+crates/prov/tests/common/mod.rs
+  h_dd7dcb3bf4c9d1 1-453
+crates/prov/tests/fixtures/claude-code/SessionEnd.json
+  h_dd7dcb3bf4c9d1 1
+crates/prov/tests/fixtures/claude-code/SessionStart.json
+  h_dd7dcb3bf4c9d1 1
+crates/prov/tests/fixtures/claude-code/Stop.json
+  h_dd7dcb3bf4c9d1 1
+crates/prov/tests/fixtures/claude-code/UserPromptSubmit.json
+  h_dd7dcb3bf4c9d1 1
+crates/prov/tests/fixtures/claude-code/subagent.jsonl
+  h_dd7dcb3bf4c9d1 1-2
+crates/prov/tests/fixtures/claude-code/transcript.jsonl
+  h_dd7dcb3bf4c9d1 1-4
+crates/prov/tests/gate.rs
+  h_dd7dcb3bf4c9d1 1-408
+crates/prov/tests/integration.rs
+  h_dd7dcb3bf4c9d1 1-112
+crates/prov/tests/sessions.rs
+  h_dd7dcb3bf4c9d1 1-226
+rust-toolchain.toml
+  h_dd7dcb3bf4c9d1 1-2
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "5754bb08939cfe885cef36893e883bb37d0f6974",
+  "prompts": {},
+  "humans": {
+    "h_dd7dcb3bf4c9d1": {
+      "author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
