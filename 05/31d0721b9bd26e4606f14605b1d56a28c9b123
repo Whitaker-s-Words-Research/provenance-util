@@ -1,0 +1,22 @@
+README.md
+  s_dcbb7f2a5c007a::t_d0620ce17c27ab 1-4,6-39,41-182,184,186-213
+  s_dcbb7f2a5c007a::t_2e7c0a281542c0 5,40,183,185
+SPEC.md
+  s_dcbb7f2a5c007a::t_2c88610fc44201 1-742
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "0531d0721b9bd26e4606f14605b1d56a28c9b123",
+  "prompts": {},
+  "sessions": {
+    "s_dcbb7f2a5c007a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d2c1d1de-3e1d-41a4-a2ab-bdd43f965649",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
