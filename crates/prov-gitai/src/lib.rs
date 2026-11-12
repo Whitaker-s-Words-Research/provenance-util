@@ -215,6 +215,63 @@ impl GitAi {
         Ok(())
     }
 
+    /// The checkpoint of `prov approve --human`: every change to `files`
+    /// since the last checkpoint belongs to the human.
+    pub fn checkpoint_known_human(&self, worktree: &Path, files: &[PathBuf], editor_version: &str) -> Result<()> {
+        let out = self
+            .command(worktree)
+            .args(["checkpoint", "known_human", "--editor", "prov", "--editor-version", editor_version, "--"])
+            .args(files)
+            .stdin(Stdio::null())
+            .output()
+            .context("cannot run git-ai")?;
+        if !out.status.success() {
+            bail!("git-ai checkpoint failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+        }
+        Ok(())
+    }
+
+    /// The version that `git-ai --version` prints, for example `1.7.6`.
+    pub fn version(&self, dir: &Path) -> Result<String> {
+        let out = self.command(dir).arg("--version").stdin(Stdio::null()).output().context("cannot run git-ai")?;
+        if !out.status.success() {
+            bail!("git-ai --version failed");
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        text.split_whitespace()
+            .find(|word| word.chars().next().is_some_and(|c| c.is_ascii_digit()))
+            .map(String::from)
+            .context("git-ai --version printed no version")
+    }
+
+    /// A list from `git-ai config <key>`, for example `allow_repositories`.
+    pub fn config_list(&self, dir: &Path, key: &str) -> Result<Vec<String>> {
+        let out = self.command(dir).args(["config", key]).stdin(Stdio::null()).output().context("cannot run git-ai")?;
+        if !out.status.success() {
+            bail!("git-ai config {key} failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let text = text.trim();
+        if text.is_empty() || text == "null" {
+            return Ok(Vec::new());
+        }
+        serde_json::from_str(text).with_context(|| format!("unexpected output of git-ai config {key}"))
+    }
+
+    /// `git-ai debug`: the diagnostics of git-ai itself. Returns its output
+    /// when it fails.
+    pub fn debug(&self, dir: &Path) -> std::result::Result<(), String> {
+        match self.command(dir).arg("debug").stdin(Stdio::null()).output() {
+            Ok(out) if out.status.success() => Ok(()),
+            Ok(out) => Err(format!(
+                "{}{}",
+                String::from_utf8_lossy(&out.stdout).trim(),
+                String::from_utf8_lossy(&out.stderr).trim()
+            )),
+            Err(e) => Err(format!("cannot run git-ai: {e}")),
+        }
+    }
+
     /// Waits until the service has written the notes of new commits.
     pub fn await_notes(&self, worktree: &Path) -> Result<()> {
         let out = self
