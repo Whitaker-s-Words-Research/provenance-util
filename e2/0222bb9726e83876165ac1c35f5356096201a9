@@ -1,0 +1,21 @@
+crates/prov-git/Cargo.toml
+  s_d458000301c268::t_a0c6fdd3cd9640 1-10
+crates/prov-git/src/lib.rs
+  s_d458000301c268::t_8f7369c88b6a27 1-266
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e20222bb9726e83876165ac1c35f5356096201a9",
+  "prompts": {},
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
