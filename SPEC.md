@@ -6,7 +6,7 @@ Version 0.1 (draft). License: MIT.
 
 1. It gives each agent session its own worktree and branch.
 2. It records which session made which commits, with a hash of each session transcript.
-3. It controls what reaches the human branch.
+3. It controls what reaches a human branch.
 4. It sets and reads line authorship through git-ai.
 5. It copies files from another repository with their line authorship.
 6. It exports authorship as Agent Trace records (optional).
@@ -33,23 +33,23 @@ Not in version 1:
 
 Not in any version:
 
-- Integration of an agent branch through the merge button of a forge, for example a GitHub pull request. Reason: a human owns the responsibility for what goes into the human branch. The human does the integration locally, where the merge gate runs. `prov check` reports a forge merge as a failure. Protect the human branch so that agent branches cannot be merged on the forge.
+- Integration of an agent branch through the merge button of a forge, for example a GitHub pull request. Reason: a human owns the responsibility for what goes into a human branch. The human does the integration locally, where the merge gate runs. `prov check` reports a forge merge as a failure. Protect the human branches on the forge so that agent branches cannot be merged on the forge.
 
 ## Terms
 
 | Term | Meaning |
 |---|---|
 | Human | A person who commits to the repository. A repository can have more than one. "The human" in this specification is the person who runs the command. |
-| Human branch | The branch that only humans commit to. Default: `main`. |
-| Human worktree | A worktree that has the human branch checked out. |
+| Human branch | A branch that does not match `agent/**`. Only humans commit to it. Examples: `main`, and a feature branch that a human works on. An agent branch can start from any human branch and integrate into it. |
+| Human worktree | A worktree that has a human branch checked out. |
 | Base directory | The directory that holds the common git directory: the repository root in a normal clone, and the container directory of a bare repository with linked worktrees. |
 | Hooks directory | The directory where git looks for hooks: `git rev-parse --git-path hooks`. |
 | Agent branch | A branch where one or more agent sessions commit. Its name matches `agent/**`. |
 | Agent worktree | A git worktree on an agent branch. It holds one Open session at a time. |
 | Session | One run of an agent, identified by the agent's session ID. |
-| Contended worktree | An agent worktree with more than one Open session. See "Binding rules". |
+| Contended worktree | An agent worktree with more than one Open session that is not stale. See "Binding rules". |
 | Human commit | A commit whose author email is not an agent email from the config. A commit with a `Prov-Session` trailer is a human commit only if it also has a `Prov-Version` trailer, which marks an integration. |
-| Integration | The merge commit that brings agent commits into the human branch. See "Integration into the human branch". |
+| Integration | The merge commit that brings agent commits into a human branch. See "Integration into a human branch". |
 | Incoming range | The commits that an integration brings in: `HEAD..<incoming tip>`. |
 | Agent commit | In an integration: every commit in the incoming range, whatever its author. |
 | Note | The git-ai authorship record on a commit, in `refs/notes/ai`, format `authorship/3.0.0`. |
@@ -97,7 +97,7 @@ prov start <agent> [options] [-- <agent arguments>]
 |---|---|---|
 | `--name <slug>` | 4 random hex characters | The `<name>` part of the branch name. Letters, digits and `-` only. |
 | `--branch <name>` | `agent/<agent>/<YYYYMMDD>-<name>` | Full branch name. It must match `agent/**`. |
-| `--from <ref>` | the human branch | Start point of the new branch. |
+| `--from <ref>` | the branch that is checked out | Start point of the new branch. |
 | `--path <dir>` | `../<repo>.worktrees/<agent>-<YYYYMMDD>-<name>`, from the base directory | Location of the worktree. `<repo>` is the name of the base directory. |
 | `--no-launch` | off | Create the worktree, print its path, and do not start the agent. Use this for agents in an IDE. |
 | `--resume <session>` | none | Open the worktree of that session and start the agent with its resume option. If the worktree was removed, `prov` creates it again on the session's branch. If the session has no record, also give `--branch`. |
@@ -106,13 +106,13 @@ prov start <agent> [options] [-- <agent arguments>]
 
 ### Binding rules
 
-- An agent worktree holds one Open session at a time. Only an Open session occupies a worktree. A Closing session does not.
+- An agent worktree holds one Open session at a time. Only an Open session that is not stale occupies a worktree. A Closing session does not. A stale session does not: a new session in its worktree works normally. The stale session stays Open, and it must be closed before its branch integrates.
 - After a session ends, a new session can bind to the same worktree and branch.
 - `prov` cannot stop a second session. Reason: a SessionStart hook cannot stop Claude Code, and not every agent has a start event. When a second session starts in an occupied worktree, the worktree becomes contended:
     - `prov` records the second session as Open.
     - For Claude Code, the SessionStart hook prints an instruction to stop. Claude Code adds that text to the session context.
     - `prov` runs no sweep in a contended worktree, and `pre-commit` refuses every commit there.
-    - The worktree stays contended until only one session is Open. A session ends by itself, or the human runs `prov session close`.
+    - The worktree stays contended until only one session occupies it. A session ends by itself, or the human runs `prov session close`.
     - Lines without a checkpoint from that time become doubtful lines. `prov` does not attribute them to one of the sessions.
 - A session finds its record by its worktree. The agent's own environment variable is a cross-check. Claude Code sets `CLAUDE_CODE_SESSION_ID`.
 
@@ -124,7 +124,7 @@ prov start <agent> [options] [-- <agent arguments>]
 - `pre-commit` refuses a commit by an agent on such a branch.
 - A human can still commit the changes of such a session. `prov check` then fails in CI, because the note of a human commit names an AI session. See "Checking".
 
-Agent work reaches the human branch only through an integration.
+Agent work reaches a human branch only through an integration.
 
 ### Session states
 
@@ -174,7 +174,7 @@ Every session that ends is archived, also a session that made no commit.
 - `--override` removes the worktree in that case too. It first moves each Open session of the worktree to Closing.
 - `--force` goes to `git worktree remove`.
 - `prov finish` keeps the session records. Reason: a later integration of the branch needs the transcript hash. The records are deleted only by the integration or by `prov session drop`.
-- `prov` never deletes a branch. Reason: `git branch -d` checks the branch's upstream, not the human branch, so it can delete a branch that is not integrated.
+- `prov` never deletes a branch. Reason: `git branch -d` checks the branch's upstream, not the human branch that it started from, so it can delete a branch that is not integrated.
 
 ## Commit identity
 
@@ -183,7 +183,7 @@ Agent commits use the author name and email of the agent. Each adapter has a def
 - Claude Code: `prov init` writes the identity and the signing setting as `env` in `.claude/settings.json`. Every command that Claude Code runs gets them. Use `Claude <noreply@anthropic.com>`. Reason: git-ai recognizes this identity. When a committed line has no checkpoint, git-ai then attributes the line to Claude. With any other identity, git-ai attributes the line to the committer as a known human.
 - In `pre-commit`, `prov` identifies a commit by an agent through the author email from the config, or through an agent environment variable (`CLAUDECODE`, `CLAUDE_CODE_SESSION_ID`).
 - In an integration, the merge gate does not use the author email. Every commit in the incoming range is an agent commit. Reason: the agent sets its own author email.
-- The test for a human commit uses the author email. This test trusts the agent's identity: an agent that commits with a human's email passes as a human. `prov` does not check signatures. For a stronger control, use the forge's branch protection to require signed commits on the human branch.
+- The test for a human commit uses the author email. This test trusts the agent's identity: an agent that commits with a human's email passes as a human. `prov` does not check signatures. For a stronger control, use the forge's branch protection to require signed commits on the human branches.
 
 ## Hooks
 
@@ -210,7 +210,7 @@ The hooks directory must be outside every worktree. **Reason**: during a merge, 
 |---|---|
 | `pre-commit` | Refuse a commit by an agent on a branch that does not match `agent/**`. In an agent worktree: refuse if the worktree is contended; do the service check; do the sweep if one session is Open. Do the copy guard for each copied file. |
 | `prepare-commit-msg` | For an integration: run the merge gate, then add the integration trailers. For a commit in an agent worktree with one Open session: add `Prov-Session`. For all commits: add the `Prov-Approved` trailers of `--human` and `--ai` approvals, and the `Copied-From` trailers. |
-| `post-commit`, `post-merge` | After an integration: delete the live state of its sessions. After a commit with copied files: start the deferred copy check. After a fast-forward of the human branch: see "Squash, fast-forward, rebase and cherry-pick". |
+| `post-commit`, `post-merge` | After an integration: delete the live state of its sessions. After a commit with copied files: start the deferred copy check. After a fast-forward of a human branch: see "Squash, fast-forward, rebase and cherry-pick". |
 
 In an agent worktree with no Open session, `pre-commit` runs no sweep. Changes there have no checkpoint, so they become doubtful lines and the human decides at the gate. Reason: `prov` must not attribute a change to a session that did not make it.
 
@@ -221,7 +221,7 @@ There is no `pre-merge-commit` shim. Reason: `MERGE_HEAD` does not exist when th
 Hooks are advisory for an agent. An agent can commit with `--no-verify`, write to the hooks directory, or change `core.hooksPath`. The controls are these:
 
 - the merge gate, which runs from the hooks directory during integration
-- `prov check`, which does the same check on the human branch without local hooks
+- `prov check`, which does the same check on a human branch without local hooks
 - `prov doctor`, which checks the hooks directory and the shim contents
 
 ### No pre-commit gate
@@ -236,21 +236,21 @@ git-ai attributes a line through the checkpoints around the change. git-ai appli
 |---|---|
 | The agent commit identity is not recognized by git-ai | Use the agent identity in "Commit identity". |
 | A process that the agent started writes after the tool call ends | Sweep. In an agent worktree with one Open session, every change is the session's change. `prov` runs `git-ai checkpoint agent-v1` with type `ai_agent` on the changed files. The adapter decides when the sweep runs. For Claude Code, it runs at each Stop and in `pre-commit`. There is no sweep at the end of a session. Reason: a sweep has an effect only on the next commit, and the agent changes nothing after its last Stop. The agent name is `claude`, which is also git-ai's name for the tool. The conversation ID is the session ID. The model comes from "Agent model". |
-| The git-ai service is not available | `git-ai bg status --repo <worktree>` gives exit code 1 when the service is not available. A checkpoint then exits 0 and records nothing. At SessionStart, `prov` shows a warning and runs `git-ai bg start`. In an agent worktree, `pre-commit` refuses the commit. On the human branch, `pre-commit` shows a warning. |
+| The git-ai service is not available | `git-ai bg status --repo <worktree>` gives exit code 1 when the service is not available. A checkpoint then exits 0 and records nothing. At SessionStart, `prov` shows a warning and runs `git-ai bg start`. In an agent worktree, `pre-commit` refuses the commit. On a human branch, `pre-commit` shows a warning. |
 | The git-ai integration of an agent is not installed | `prov doctor` checks the integration of each configured agent. |
 
 - An agent must commit where the git-ai service is reachable. It must not commit inside a sandbox that blocks the service. Reason: `pre-commit` refuses the commit when the service check fails.
 - The human does not edit files in an agent worktree.
 - Processes that continue after SessionEnd, for example a development server, are not swept. Stop them before `prov finish`.
 
-## Integration into the human branch
+## Integration into a human branch
 
 There is one way to integrate: a merge commit, made with `git merge <agent branch>`. Reason: the agent commits then stay in the history of the human branch, and `prov check` can check everything that the gate checked.
 
 `prov init` sets two git options in the repository:
 
-- `branch.<human>.mergeoptions = --no-ff`. A plain `git merge` then always makes a merge commit, so the gate always runs.
-- `pull.ff = only`. Reason: with `--no-ff` alone, a plain `git pull` on the human branch makes a merge commit also when the branch is only behind. With `pull.ff = only`, a pull fast-forwards or stops. This option applies to every branch of the repository.
+- `merge.ff = false`. A plain `git merge` then always makes a merge commit, so the gate always runs. This option applies to every branch of the repository, because every branch that is not an agent branch is a human branch. A merge of one human branch into another therefore also makes a merge commit.
+- `pull.ff = only`. Reason: with `merge.ff = false` alone, a plain `git pull` on a human branch makes a merge commit also when the branch is only behind. With `pull.ff = only`, a pull fast-forwards or stops. This option applies to every branch of the repository.
 
 ### What counts as an integration
 
@@ -260,12 +260,14 @@ There is one way to integrate: a merge commit, made with `git merge <agent branc
 - The incoming range is `HEAD..<incoming tip>`.
 - The commit is an integration if one commit on the first-parent line of the incoming range is not a human commit.
 - In an integration, every commit in the incoming range is an agent commit.
-- A merge whose first-parent line holds only human commits is not an integration. Example: a merge of the human branch of another clone. The gate does not run.
+- A merge whose first-parent line holds only human commits is not an integration. Examples: a merge of a feature branch into `main`, and a merge of the same branch from another clone. The gate does not run. The integrations on the merged branch passed the gate when they were made, and `prov check <base>..<tip>` checks them again.
 - An octopus merge that contains an integration is refused.
 
 ### Sessions of an integration
 
 The sessions of an integration are those named in a `Prov-Session` trailer or in the note of an agent commit.
+
+One exception: a session that only a note names, and that has no record. git-ai invents such a session for lines with no checkpoint in a commit with an agent identity, for example after `git commit --no-verify`, which skips the sweep. No transcript exists for it. It is not a session of the integration, and its lines are doubtful lines. `prov check <base>..<tip>` has no records: there, a session that only a note names is a session of the integration if the merge has a trailer group for it.
 
 - The integration fails if one of these sessions is not Archived, or has no record. Close an Open session with `prov session close` first.
 - The integration fails while a session is Open in a worktree whose branch tip is in the incoming range.
@@ -273,11 +275,11 @@ The sessions of an integration are those named in a `Prov-Session` trailer or in
 
 ### Squash, fast-forward, rebase and cherry-pick
 
-Squash, fast-forward, rebase and cherry-pick of agent commits onto the human branch are not permitted. No hook that `prov` uses can refuse a fast-forward.
+Squash, fast-forward, rebase and cherry-pick of agent commits onto a human branch are not permitted. No hook that `prov` uses can refuse a fast-forward.
 
 - `prepare-commit-msg` refuses the commit after `git merge --squash` if the squashed commits are not all human commits. To stop the squash, run `git reset --hard`.
-- `post-merge` runs after a fast-forward. If the human branch moved onto commits that are not human commits, `prov` prints a warning and the command to undo it: `git reset --keep ORIG_HEAD`.
-- `prov check` refuses a first-parent commit on the human branch that is not a human commit.
+- `post-merge` runs after a fast-forward. If a human branch moved onto commits that are not human commits, `prov` prints a warning and the command to undo it: `git reset --keep ORIG_HEAD`.
+- `prov check` refuses a first-parent commit on a human branch that is not a human commit.
 
 ### Integration trailers
 
@@ -316,11 +318,14 @@ Each trailer value is one line. `prov` refuses a value with a line break.
 
 ## The merge gate
 
-No doubtful line reaches the human branch without a human approval. `prov` reads each agent commit with `git-ai diff <commit> --json`. An added line is doubtful when one of these is true:
+No doubtful line reaches a human branch without a human approval. `prov` reads each agent commit with `git-ai diff <commit> --json`. An added line is doubtful when one of these is true:
 
 - No range in the output gives it a session or a human (untracked).
 - A range gives it a human. Reason: in an agent commit, this label comes from git-ai's fallback, not from a person.
 - Its agent commit has no note.
+- A range gives it a session that no `Prov-Session` trailer names and that has no record. See "Sessions of an integration".
+
+A merge commit in the incoming range is not read with `git-ai diff`. Reason: git-ai shows a merge as the difference from its first parent, which repeats the lines of the merged commits. Instead, each path that the merge commit changed relative to every parent is doubtful. This is what the author of the merge wrote, for example an agent that merged the human branch into its branch and resolved a conflict. A clean merge has no such path.
 
 A change to a protected path is also doubtful. The default protected paths are `.provenance.toml`, `.claude/**` and `.github/workflows/**`. Reason: an agent could change these files on its own branch to weaken the controls.
 
@@ -329,7 +334,7 @@ The gate runs in `prepare-commit-msg` for each integration:
 1. It reads the config with `git show HEAD:.provenance.toml`. If the binary version does not satisfy `required_version`, the integration fails.
 2. It runs `git-ai await --timeout 60`. On a timeout, the integration fails. Run the commit again.
 3. It checks the sessions of the integration. See "Sessions of an integration".
-4. It lists each doubtful range and each changed protected path. If the merge message has no `Prov-Approved` trailer for the path of an item, the commit fails.
+4. It lists each doubtful range, each path that a merge commit in the incoming range changed, and each changed protected path. If the merge message has no `Prov-Approved` trailer for the path of an item, the commit fails.
 
 The gate reads the config from `HEAD`. Reason: during a merge, the file in the worktree is already the merged file, with the agent's changes. `HEAD` is the human branch before the integration.
 
@@ -353,7 +358,7 @@ To stop instead, run `git merge --abort`.
 | `--ai [--agent <tool>] [--model <model>]` | Before your own commit | Runs `git-ai checkpoint agent-v1` with type `ai_agent`. Recorded as `ai`. The default for `--agent` and `--model` is `unknown`. |
 
 - Only a human can approve. `prov approve` refuses in every agent worktree, and when an agent environment variable is set.
-- `prov approve` asks for a typed `yes` at a terminal. For a protected path, it first shows the diff of that path between the human branch and the incoming tip.
+- `prov approve` asks for a typed `yes` at a terminal. For a protected path, it first shows the diff of that path between the human branch (`HEAD` of the merge) and the incoming tip.
 - A merge approval exists only in the merge message of the merge in progress. `git merge --abort` discards it. `prov` keeps no other record of it, and you cannot approve before you start the merge.
 - `--human` and `--ai` are for lines whose author git-ai cannot know. Examples: code that you paste from an AI tool in a browser (`--ai`), and the output of a generator that you ran (`--human`). The approval stays in live state with the hash of the file content. A change to the file cancels it.
 - `--human` and `--ai` apply to a complete file: to every change in it since the last checkpoint. They cannot mark a part of the changes.
@@ -370,13 +375,17 @@ prov check [<agent branch> | <base>..<tip>]
 
 | Form | Use | What it does |
 |---|---|---|
-| `prov check` | The human, to see what waits | Lists each agent branch that is not integrated, with its commits, its sessions and the number of doubtful lines. |
+| `prov check` | The human, to see what waits | Lists each agent branch that is not integrated into the target, with its commits, its sessions and the number of doubtful lines. |
 | `prov check <agent branch>` | The human, before a merge | Does steps 2 to 4 of the gate for that branch. It lists the sessions that are not Archived, each doubtful range and each changed protected path. These are the items that the gate will show. |
-| `prov check <base>..<tip>` | CI, on the human branch | Checks commits that are already on the human branch. It uses no local hooks and no live state, only what a clone holds. |
+| `prov check <base>..<tip>` | CI, on a human branch | Checks commits that are already on a human branch. It uses no local hooks and no live state, only what a clone holds. |
 
-### Checks on the human branch
+The first two forms compare against a target: the human branch that the merge will go into. The target is the branch that is checked out. `--into <branch>` names a different target. In an agent worktree or with a detached `HEAD`, `--into` is necessary.
 
-`prov check <base>..<tip>` first checks that `.provenance.toml` at `<tip>` parses and that the binary version satisfies `required_version`. Then, for each commit on the first-parent line of the range:
+The exit code of each form is 0 only if nothing fails. For `prov check <agent branch>`, exit code 0 means that a plain `git merge` of the branch passes the gate now: an item that still needs an approval gives exit code 1.
+
+### Checks on a human branch
+
+`prov check <base>..<tip>` first checks that `.provenance.toml` at `<tip>` parses and that the binary version satisfies `required_version`. Then, for each commit on the first-parent line of the range, and on the first-parent line of each human branch that a merge in the range brings in:
 
 | Commit | Checks |
 |---|---|
@@ -490,7 +499,7 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 
 ## Trace export (optional)
 
-`prov trace export [<range>]` writes Agent Trace records as JSON Lines, one record per commit with a note. The default range is the human branch. It reads each commit with `git-ai diff <commit> --json`.
+`prov trace export [<range>]` writes Agent Trace records as JSON Lines, one record per commit with a note. The default range is the branch that is checked out. It reads each commit with `git-ai diff <commit> --json`.
 
 - The schema is Agent Trace 0.1.0, pinned in `vendor/agent-trace/0.1.0/` with its CC BY 4.0 notice. `prov` supports only this version.
 - `prov` validates each record against the pinned schema before it writes the record.
@@ -524,7 +533,7 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 
 - `.provenance.toml` parses, and the binary version satisfies `required_version`.
 - The hooks directory is outside every worktree. Each shim has the expected content.
-- `branch.<human>.mergeoptions` is `--no-ff`, and `pull.ff` is `only`.
+- `merge.ff` is `false`, and `pull.ff` is `only`.
 - The agent environment sets `commit.gpgsign=false` and the agent identity, in `.claude/settings.json`.
 - `.provenance.toml` and the agent settings files are committed.
 - git-ai is installed, its version is the compatibility baseline or later, its service is available, and it allows the repository. With `--deep`, `git-ai debug` passes.
@@ -537,7 +546,6 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 
 ```toml
 required_version = "=0.1.0"        # exact version. The merge gate and prov check refuse on a mismatch.
-human_branch = "main"
 agents = ["claude"]                # the agents in use
 logs_dir = "llm-logs"              # relative to the base directory
 protected = [".provenance.toml", ".claude/**", ".github/workflows/**"]

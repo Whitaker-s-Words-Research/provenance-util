@@ -34,8 +34,13 @@ enum Cmd {
     },
     /// Applies the rules of the merge gate without a merge.
     Check {
-        /// An agent branch, or `<base>..<tip>` for commits on the human branch.
+        /// An agent branch, or `<base>..<tip>` for commits that are already
+        /// on a human branch.
         target: Option<String>,
+        /// The branch that the agent branch will merge into. Default: the
+        /// branch that is checked out.
+        #[arg(long, value_name = "BRANCH")]
+        into: Option<String>,
         #[arg(long)]
         json: bool,
     },
@@ -54,7 +59,7 @@ fn main() -> ExitCode {
         }
         _ => match Cli::parse().command {
             Cmd::Hook { adapter, event, args } => run_hook(&adapter, &event, &args),
-            Cmd::Check { target, json } => check::run(target.as_deref(), json),
+            Cmd::Check { target, into, json } => check::run(target.as_deref(), into.as_deref(), json),
             Cmd::ArchiveSession { session } => archive::run(&session).map(|()| true),
         },
     };

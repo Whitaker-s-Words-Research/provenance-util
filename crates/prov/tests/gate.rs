@@ -40,7 +40,7 @@ fn protected_paths_need_approval() {
     env.agent_edit(
         &wt,
         ".provenance.toml",
-        "required_version = \"=0.1.0\"\nhuman_branch = \"main\"\nagents = [\"claude\"]\nlogs_dir = \"llm-logs\"\nprotected = []\n",
+        "required_version = \"=0.1.0\"\nagents = [\"claude\"]\nlogs_dir = \"llm-logs\"\nprotected = []\n",
         "sess-w",
     );
     // ... and changes them.
@@ -133,7 +133,7 @@ fn squash_is_refused_and_fast_forward_gets_a_warning() {
     archived_branch(&env, &repo, "sq", "sess-sq", "sq.py");
     let base = env.git(&repo, ["rev-parse", "HEAD"]);
 
-    // Squash. With `mergeoptions = --no-ff`, git itself refuses `--squash`.
+    // Squash. With `merge.ff = false`, git itself refuses `--squash`.
     let plain = env.try_git(&repo, ["merge", "--squash", &branch("sq")]).failure();
     assert!(plain.stderr.contains("cannot be used together"), "{}", plain.stderr);
     // `--ff` overrides the option. Then prepare-commit-msg refuses the commit.
@@ -253,4 +253,156 @@ fn version_mismatch_stops_the_gate_only() {
     env.git(&repo, ["merge", "--abort"]);
     let check = env.prov(&repo, ["check", "HEAD~1..HEAD"]).failure();
     assert!(check.stdout.contains("does not satisfy required_version"), "{}", check.stdout);
+}
+
+/// Every branch that is not an agent branch is a human branch. A human works
+/// on `feature/x`, and an agent works on a branch from it.
+#[test]
+fn an_agent_branch_integrates_into_a_feature_branch() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let base = env.git(&repo, ["rev-parse", "HEAD"]);
+    let feature = env.home().join("feature-wt");
+    env.git(&repo, ["worktree", "add", "-q", "-b", "feature/x", feature.to_str().unwrap()]);
+    env.plain_write(&feature, "f.txt", "f\n");
+    env.git(&feature, ["add", "-A"]);
+    env.git(&feature, ["commit", "-q", "-m", "Feature"]);
+
+    let wt = env.worktree_from(&repo, "helper", "feature/x");
+    env.start_session(&wt, "sess-f").success();
+    env.agent_edit(&wt, "a.py", "a = 1\n", "sess-f");
+    env.agent_commit(&wt, "sess-f", "Add a").success();
+    env.end_session(&wt, "sess-f");
+
+    // The target is the branch that is checked out: the human commit of
+    // feature/x is not counted as incoming.
+    let check = env.prov(&feature, ["check", &branch("helper")]).success();
+    assert!(check.stdout.contains("merge into feature/x"), "{}", check.stdout);
+    let list = env.prov(&feature, ["check", "--json"]).success();
+    let list: serde_json::Value = serde_json::from_str(&list.stdout).unwrap();
+    assert_eq!(list["into"], "feature/x");
+    assert_eq!(list["branches"][0]["commits"].as_array().unwrap().len(), 1, "{list}");
+    assert_eq!(list["branches"][0]["doubtful_lines"], 0, "{list}");
+    // From another worktree, the target is named.
+    let named = env.prov(&repo, ["check", &branch("helper"), "--into", "feature/x"]).success();
+    assert!(named.stdout.contains("merge into feature/x"), "{}", named.stdout);
+    // Against main, the human commit of feature/x is in the range too.
+    let main = env.prov(&repo, ["check", "--json"]).success();
+    let main: serde_json::Value = serde_json::from_str(&main.stdout).unwrap();
+    assert_eq!(main["branches"][0]["commits"].as_array().unwrap().len(), 2, "{main}");
+    // An agent branch is not a target.
+    let agent = env.prov(&wt, ["check"]).failure();
+    assert!(agent.stderr.contains("is an agent branch"), "{}", agent.stderr);
+    env.prov(&repo, ["check", "--into", &branch("helper")]).failure();
+
+    // The gate runs on feature/x, and an agent cannot commit there.
+    env.try_git(&feature, ["merge", &branch("helper")]).success();
+    let trailers = env.trailers(&feature, "HEAD");
+    assert!(trailers.iter().any(|t| t == "Prov-Session: claude:sess-f"), "{trailers:?}");
+    assert!(trailers.iter().any(|t| t.starts_with("Prov-Version:")), "{trailers:?}");
+    assert_eq!(env.git(&feature, ["log", "-1", "--format=%P"]).split(' ').count(), 2);
+
+    // The merge of feature/x into main is not an integration ...
+    env.try_git(&repo, ["merge", "feature/x"]).success();
+    assert!(env.trailers(&repo, "HEAD").is_empty());
+    env.await_notes(&repo);
+    // ... and the range check follows feature/x: the merge on main, then the
+    // human commit and the integration on feature/x.
+    let range = env.prov(&repo, ["check", &format!("{base}..HEAD"), "--json"]).success();
+    let range: serde_json::Value = serde_json::from_str(&range.stdout).unwrap();
+    assert_eq!(range["commits_checked"], 3, "{range}");
+}
+
+/// An integration that did not pass the gate on a feature branch is found
+/// after the feature branch is merged.
+#[test]
+fn check_follows_a_merged_human_branch() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let base = env.git(&repo, ["rev-parse", "HEAD"]);
+    let feature = env.home().join("feature-wt");
+    env.git(&repo, ["worktree", "add", "-q", "-b", "feature/y", feature.to_str().unwrap()]);
+    archived_branch(&env, &repo, "sneak", "sess-s", "s.py");
+
+    env.remove_shims(&repo);
+    env.try_git(&feature, ["merge", &branch("sneak")]).success();
+    env.plain_write(&feature, "f.txt", "f\n");
+    env.git(&feature, ["add", "-A"]);
+    env.git(&feature, ["commit", "-q", "-m", "Feature"]);
+    env.install_shims(&repo);
+
+    env.try_git(&repo, ["merge", "feature/y"]).success();
+    env.await_notes(&repo);
+    let check = env.prov(&repo, ["check", &format!("{base}..HEAD")]).failure();
+    assert!(check.stdout.contains("has no Prov-Version trailer"), "{}", check.stdout);
+    assert!(check.stdout.contains("has no trailer group for the session claude:sess-s"), "{}", check.stdout);
+}
+
+/// Lines with no checkpoint, in an agent commit that skipped `pre-commit`:
+/// git-ai gives them to a session that it invents. That session has no record
+/// and no transcript, so its lines are doubtful and a human approves them.
+#[test]
+fn lines_of_an_invented_session_are_doubtful() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let base = env.git(&repo, ["rev-parse", "HEAD"]);
+    let wt = env.worktree(&repo, "skip");
+    env.start_session(&wt, "sess-k").success();
+    env.agent_edit(&wt, "a.py", "a = 1\n", "sess-k");
+    env.agent_commit(&wt, "sess-k", "Add a").success();
+    env.plain_write(&wt, "raw.txt", "no checkpoint\n");
+    env.git(&wt, ["add", "-A"]);
+    env.agent_git(&wt, "sess-k", ["commit", "-q", "--no-verify", "-m", "Add raw"]).success();
+    env.end_session(&wt, "sess-k");
+
+    let check = env.prov(&repo, ["check", &branch("skip")]).failure();
+    assert!(check.stdout.contains("needs approval at the merge: raw.txt"), "{}", check.stdout);
+    assert!(!check.stdout.contains("has no record in this clone"), "{}", check.stdout);
+
+    let merge = env.try_git(&repo, ["merge", &branch("skip")]).failure();
+    assert!(merge.stderr.contains("prov approve --merge raw.txt"), "{}", merge.stderr);
+    approve(&env, &repo, &["raw.txt"]);
+    env.try_git(&repo, ["commit", "--no-edit"]).success();
+    // Only the session with a record has a trailer group.
+    let trailers = env.trailers(&repo, "HEAD");
+    assert_eq!(trailers.iter().filter(|t| t.starts_with("Prov-Session:")).count(), 1, "{trailers:?}");
+    assert!(trailers.iter().any(|t| t == "Prov-Approved: raw.txt ack"), "{trailers:?}");
+    env.await_notes(&repo);
+    env.prov(&repo, ["check", &format!("{base}..HEAD")]).success();
+}
+
+/// The agent merges the human branch into its branch and resolves a
+/// conflict. What the merge commit wrote needs an approval; a clean merge
+/// needs none.
+#[test]
+fn a_conflict_resolution_on_an_agent_branch_needs_approval() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let base = env.git(&repo, ["rev-parse", "HEAD"]);
+    let wt = env.worktree(&repo, "resolve");
+    env.start_session(&wt, "sess-r").success();
+    env.agent_edit(&wt, "shared.txt", "agent\n", "sess-r");
+    env.agent_commit(&wt, "sess-r", "Agent side").success();
+
+    env.plain_write(&repo, "shared.txt", "human\n");
+    env.plain_write(&repo, "other.txt", "other\n");
+    env.git(&repo, ["add", "-A"]);
+    env.git(&repo, ["commit", "-q", "-m", "Human side"]);
+
+    env.agent_git(&wt, "sess-r", ["merge", "main"]).failure();
+    env.agent_edit(&wt, "shared.txt", "agent and human\n", "sess-r");
+    env.git(&wt, ["add", "-A"]);
+    env.agent_git(&wt, "sess-r", ["commit", "-q", "--no-edit"]).success();
+    env.end_session(&wt, "sess-r");
+
+    let check = env.prov(&repo, ["check", &branch("resolve")]).failure();
+    assert!(check.stdout.contains("shared.txt: changed by the merge commit"), "{}", check.stdout);
+    // The clean part of the merge is not an item.
+    assert!(!check.stdout.contains("other.txt"), "{}", check.stdout);
+
+    env.try_git(&repo, ["merge", &branch("resolve")]).failure();
+    approve(&env, &repo, &["shared.txt"]);
+    env.try_git(&repo, ["commit", "--no-edit"]).success();
+    env.await_notes(&repo);
+    env.prov(&repo, ["check", &format!("{base}..HEAD")]).success();
 }

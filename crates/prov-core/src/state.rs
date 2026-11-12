@@ -145,9 +145,11 @@ impl SessionRecord {
             && !self.archive_pid.is_some_and(pid_alive)
     }
 
-    /// Only an Open session occupies a worktree.
-    pub fn occupies(&self, worktree: &Path) -> bool {
-        self.state == State::Open && self.worktree == worktree
+    /// Only an Open session that is not stale occupies a worktree. A stale
+    /// session stays Open, and it must still be closed before its branch
+    /// integrates, but it does not make the worktree contended.
+    pub fn occupies(&self, worktree: &Path, now: u64) -> bool {
+        self.state == State::Open && self.worktree == worktree && !self.is_stale(now)
     }
 }
 
@@ -240,9 +242,11 @@ impl Store {
         Ok(out)
     }
 
-    /// The Open sessions of a worktree. More than one: the worktree is contended.
+    /// The sessions that occupy a worktree: Open and not stale. More than
+    /// one: the worktree is contended.
     pub fn open_in(&self, worktree: &Path) -> Result<Vec<SessionRecord>> {
-        Ok(self.sessions()?.into_iter().filter(|s| s.occupies(worktree)).collect())
+        let now = crate::now();
+        Ok(self.sessions()?.into_iter().filter(|s| s.occupies(worktree, now)).collect())
     }
 }
 
@@ -355,15 +359,18 @@ mod tests {
         assert!(store.sessions().unwrap().is_empty());
         {
             let lock = store.lock().unwrap();
-            lock.put(&record("b", 2)).unwrap();
-            lock.put(&record("a", 1)).unwrap();
-            let mut closing = record("c", 3);
-            closing.close(3).unwrap();
+            let now = crate::now();
+            lock.put(&record("b", now + 2)).unwrap();
+            lock.put(&record("a", now + 1)).unwrap();
+            let mut closing = record("c", now + 3);
+            closing.close(now + 3).unwrap();
             lock.put(&closing).unwrap();
+            // Open, with no event for a long time: stale.
+            lock.put(&record("d", now.saturating_sub(STALE_AFTER_SECS))).unwrap();
         }
         let ids: Vec<_> = store.sessions().unwrap().into_iter().map(|s| s.id).collect();
-        assert_eq!(ids, ["a", "b", "c"]);
-        // A Closing session does not occupy the worktree.
+        assert_eq!(ids, ["d", "a", "b", "c"]);
+        // A Closing session and a stale session do not occupy the worktree.
         assert_eq!(store.open_in(Path::new("/w/a")).unwrap().len(), 2);
         assert_eq!(store.open_in(Path::new("/w/other")).unwrap().len(), 0);
         let lock = store.lock().unwrap();

@@ -212,6 +212,14 @@ impl Repo {
     }
 
     /// The paths that differ between the merge base of `base` and `tip`, and `tip`.
+    /// The paths that a merge commit changed relative to every parent: what
+    /// the author of the merge wrote, for example to resolve a conflict.
+    /// Empty for a clean merge.
+    pub fn merge_resolved_paths(&self, commit: &str) -> Result<Vec<String>> {
+        let text = self.git(["diff-tree", "--no-commit-id", "--name-only", "-r", "-c", "-z", commit])?;
+        Ok(text.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())
+    }
+
     pub fn changed_paths(&self, base: &str, tip: &str) -> Result<Vec<String>> {
         let text = self.git(["diff", "--name-only", "--no-renames", "-z", &format!("{base}...{tip}")])?;
         Ok(text.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())

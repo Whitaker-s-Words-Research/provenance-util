@@ -61,9 +61,8 @@ fn pre_commit(ctx: &Ctx) -> Result<bool> {
             };
             say(format!(
                 "refused: a commit by an agent ({why}) on the branch `{}`. An agent commits only on a branch \
-                 that matches `agent/**`. Agent work reaches `{}` only through a merge of an agent branch.",
+                 that matches `agent/**`. Agent work reaches this branch only through a merge of an agent branch.",
                 repo.branch.as_deref().unwrap_or("detached HEAD"),
-                config.human_branch,
             ));
             return Ok(false);
         }
@@ -203,7 +202,7 @@ fn post(ctx: &Ctx, post_merge: bool) -> Result<bool> {
     Ok(true)
 }
 
-/// No hook can refuse a fast-forward. `post-merge` runs after one: if the
+/// No hook can refuse a fast-forward. `post-merge` runs after one: if a
 /// human branch moved onto commits that are not human commits, say how to undo it.
 fn warn_fast_forward(ctx: &Ctx) -> Result<()> {
     let repo = &ctx.repo;

@@ -143,7 +143,7 @@ fn pre_commit_refuses_in_an_agent_worktree_without_the_service() {
     env.plain_write(&wt, "a.txt", "a\n");
     env.plain_write(&repo, "h.txt", "h\n");
 
-    env.run(env.home(), "git-ai", ["bg", "shutdown"], &[], None).success();
+    env.stop_service();
     // A checkpoint would now exit 0 and record nothing.
     let refused = env.agent_commit(&wt, "sess-n", "Add a").failure();
     assert!(refused.stderr.contains("the git-ai service is not available"), "{}", refused.stderr);
@@ -157,10 +157,11 @@ fn pre_commit_refuses_in_an_agent_worktree_without_the_service() {
     assert!(start.stdout.contains("the git-ai service is not available"), "{}", start.stdout);
     let begin = Instant::now();
     loop {
-        if env.agent_commit(&wt, "sess-n", "Add a").ok {
+        let commit = env.agent_commit(&wt, "sess-n", "Add a");
+        if commit.ok {
             break;
         }
-        assert!(begin.elapsed() < Duration::from_secs(20), "the service did not start");
+        assert!(begin.elapsed() < Duration::from_secs(20), "the service did not start: {}", commit.stderr);
         std::thread::sleep(Duration::from_millis(200));
     }
 }
@@ -195,4 +196,31 @@ fn agent_hooks_are_fast() {
     eprintln!("SessionEnd: {end:?}");
     assert!(end < Duration::from_millis(100), "SessionEnd takes {end:?}");
     env.wait_state(&repo, "sess-fast", "archived");
+}
+
+/// A session whose agent process is gone is stale. It does not make the
+/// worktree contended, but it must be closed before the branch integrates.
+#[test]
+fn a_stale_session_does_not_occupy_the_worktree() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let wt = env.worktree(&repo, "stale");
+    // No process has this ID.
+    env.write_transcript("sess-gone", &wt);
+    env.hook_from(&wt, "SessionStart", "sess-gone", i32::MAX as u32).success();
+    assert_eq!(env.state(&repo, "sess-gone"), "open");
+
+    let start = env.start_session(&wt, "sess-new").success();
+    assert!(!start.stdout.contains("STOP"), "{}", start.stdout);
+    env.agent_edit(&wt, "a.py", "a = 1\n", "sess-new");
+    env.agent_commit(&wt, "sess-new", "Add a").success();
+    assert!(env.trailers(&wt, "HEAD").iter().any(|t| t == "Prov-Session: claude:sess-new"));
+    env.end_session(&wt, "sess-new");
+
+    // The stale session is still Open on the branch.
+    let merge = env.try_git(&repo, ["merge", &branch("stale")]).failure();
+    assert!(merge.stderr.contains("claude:sess-gone is open in the worktree"), "{}", merge.stderr);
+    env.git(&repo, ["merge", "--abort"]);
+    env.end_session(&wt, "sess-gone");
+    env.try_git(&repo, ["merge", &branch("stale")]).success();
 }

@@ -33,11 +33,10 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
         if event.kind == EventKind::Start {
             out.push(format!(
                 "prov: this session is not in an agent worktree (branch: {}). prov records no session here, \
-                 and it refuses a commit by an agent on this branch. Agent work reaches the branch `{}` only \
+                 and it refuses a commit by an agent on this branch. Agent work reaches this branch only \
                  through a merge of an agent branch. Stop, and ask the human to start the session with \
                  `prov start {}` or in a worktree on a branch that matches `agent/**`.",
                 ctx.repo.branch.as_deref().unwrap_or("detached HEAD"),
-                config.human_branch,
                 adapter.agent_name(),
             ));
         }

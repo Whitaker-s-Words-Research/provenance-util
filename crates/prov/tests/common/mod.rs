@@ -127,6 +127,24 @@ impl Env {
         }
     }
 
+    /// Stops the git-ai service of this environment and waits until its
+    /// process is gone. `git-ai bg shutdown` returns before that, and a
+    /// `git-ai bg start` in that interval does nothing.
+    pub fn stop_service(&self) {
+        let pid_file = self.home().join(".git-ai/internal/daemon/daemon.pid.json");
+        let pid = std::fs::read_to_string(&pid_file)
+            .ok()
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+            .and_then(|v| v["pid"].as_u64());
+        self.run(self.home(), "git-ai", ["bg", "shutdown"], &[], None).success();
+        let Some(pid) = pid else { panic!("no pid in {}", pid_file.display()) };
+        let begin = std::time::Instant::now();
+        while Path::new(&format!("/proc/{pid}")).exists() {
+            assert!(begin.elapsed() < std::time::Duration::from_secs(20), "the git-ai service {pid} did not exit");
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+    }
+
     /// git as the human. Panics if git fails.
     #[track_caller]
     pub fn git<I, S>(&self, dir: &Path, args: I) -> String
@@ -183,7 +201,7 @@ impl Env {
         self.git(&dir, ["init", "-q", "-b", "main", "."]);
         std::fs::write(
             dir.join(".provenance.toml"),
-            "required_version = \"=0.1.0\"\nhuman_branch = \"main\"\nagents = [\"claude\"]\nlogs_dir = \"llm-logs\"\n\
+            "required_version = \"=0.1.0\"\nagents = [\"claude\"]\nlogs_dir = \"llm-logs\"\n\
              protected = [\".provenance.toml\", \".claude/**\", \".github/workflows/**\"]\n",
         )
         .unwrap();
@@ -192,7 +210,9 @@ impl Env {
         self.git(&dir, ["add", "-A"]);
         self.git(&dir, ["commit", "-q", "-m", "Set up"]);
         self.install_shims(&dir);
-        self.git(&dir, ["config", "branch.main.mergeoptions", "--no-ff"]);
+        // Every branch that is not an agent branch is a human branch, so the
+        // merge commit is forced for the whole repository.
+        self.git(&dir, ["config", "merge.ff", "false"]);
         self.git(&dir, ["config", "pull.ff", "only"]);
         dir
     }
@@ -219,10 +239,15 @@ impl Env {
         }
     }
 
-    /// An agent worktree on the new branch `agent/claude/<name>`.
+    /// An agent worktree on the new branch `agent/claude/<name>`, from `main`.
     pub fn worktree(&self, repo: &Path, name: &str) -> PathBuf {
+        self.worktree_from(repo, name, "main")
+    }
+
+    /// An agent worktree on the new branch `agent/claude/<name>`, from `start`.
+    pub fn worktree_from(&self, repo: &Path, name: &str, start: &str) -> PathBuf {
         let dir = self.home().join(format!("{}.worktrees", repo.file_name().unwrap().to_str().unwrap())).join(name);
-        self.git(repo, ["worktree", "add", "-q", "-b", &branch(name), dir.to_str().unwrap(), "main"]);
+        self.git(repo, ["worktree", "add", "-q", "-b", &branch(name), dir.to_str().unwrap(), start]);
         dir
     }
 
@@ -243,6 +268,11 @@ impl Env {
 
     /// Runs `prov hook claude-code <event>` with the recorded payload of the event.
     pub fn hook(&self, cwd: &Path, event: &str, session: &str) -> Out {
+        self.hook_from(cwd, event, session, std::process::id())
+    }
+
+    /// The same, from an agent process with the ID `agent_pid`.
+    pub fn hook_from(&self, cwd: &Path, event: &str, session: &str, agent_pid: u32) -> Out {
         let template = match event {
             "SessionStart" => include_str!("../fixtures/claude-code/SessionStart.json"),
             "UserPromptSubmit" => include_str!("../fixtures/claude-code/UserPromptSubmit.json"),
@@ -251,7 +281,7 @@ impl Env {
             other => panic!("no recorded payload for {other}"),
         };
         let payload = fill(template, session, cwd, &self.transcript_path(session));
-        let pid = std::process::id().to_string();
+        let pid = agent_pid.to_string();
         let envs = [("CLAUDE_PID", pid.as_str()), ("CLAUDECODE", "1"), ("CLAUDE_CODE_SESSION_ID", session)];
         self.run(cwd, "prov", ["hook", "claude-code", event], &envs, Some(&payload))
     }

@@ -41,6 +41,15 @@ pub enum Reason {
     Human,
     /// A change to a protected path.
     Protected,
+    /// The note gives the lines to an AI session that no `Prov-Session`
+    /// trailer names and that has no record. git-ai invents such a session
+    /// for lines with no checkpoint in a commit with an agent identity, for
+    /// example after `git commit --no-verify`. No transcript exists for it.
+    UnknownSession,
+    /// A merge commit in the incoming range changed the path relative to
+    /// every parent: the author of the merge wrote the result, for example to
+    /// resolve a conflict. git-ai gives no usable line record for a merge.
+    MergeResolution,
 }
 
 /// Something that the human must approve before the integration.
@@ -55,6 +64,9 @@ pub struct Item {
     pub start_line: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub end_line: Option<u32>,
+    /// The session of an `UnknownSession` range.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 impl Item {
@@ -66,14 +78,27 @@ impl Item {
     }
 
     pub fn describe(&self) -> String {
+        let commit = self.commit.as_deref().map(|c| &c[..c.len().min(10)]).unwrap_or("?");
         match self.reason {
             Reason::Protected => format!("{}: protected path changed", self.path),
+            Reason::MergeResolution => format!(
+                "{}: changed by the merge commit {commit} on the incoming branch (a conflict resolution?)",
+                self.path
+            ),
+            Reason::UnknownSession => format!(
+                "{}: lines {}-{} of commit {commit} belong to the session {}, which has no Prov-Session trailer and \
+                 no record (lines with no checkpoint, in a commit that skipped the hooks?)",
+                self.path,
+                self.start_line.unwrap_or(0),
+                self.end_line.unwrap_or(0),
+                self.session.as_deref().unwrap_or("?"),
+            ),
             reason => format!(
                 "{}: lines {}-{} of commit {} {}",
                 self.path,
                 self.start_line.unwrap_or(0),
                 self.end_line.unwrap_or(0),
-                self.commit.as_deref().map(|c| &c[..c.len().min(10)]).unwrap_or("?"),
+                commit,
                 if reason == Reason::Human {
                     "are attributed to a human, in an agent commit"
                 } else {
@@ -93,9 +118,29 @@ pub struct Analysis {
     /// agent commit, in order of first appearance.
     pub sessions: Vec<SessionRef>,
     pub items: Vec<Item>,
+    /// The sessions that a `Prov-Session` trailer names.
+    named: Vec<SessionRef>,
+    /// Each range that a note gives to an AI session.
+    ai_ranges: Vec<(SessionRef, Item)>,
 }
 
 impl Analysis {
+    /// Removes each session that no `Prov-Session` trailer names and that
+    /// `known` does not know. Its lines become doubtful ranges, which a human
+    /// approves by path. The merge gate knows a session by its record;
+    /// `prov check <base>..<tip>` knows it by its trailer group.
+    pub fn drop_unknown_sessions(&mut self, known: impl Fn(&SessionRef) -> bool) {
+        let named = &self.named;
+        let (keep, unknown): (Vec<SessionRef>, Vec<SessionRef>) =
+            std::mem::take(&mut self.sessions).into_iter().partition(|s| named.contains(s) || known(s));
+        self.sessions = keep;
+        for (session, item) in &self.ai_ranges {
+            if unknown.contains(session) {
+                self.items.push(item.clone());
+            }
+        }
+    }
+
     pub fn doubtful_lines(&self) -> u32 {
         self.items.iter().map(Item::lines).sum()
     }
@@ -112,13 +157,27 @@ pub fn analyze(repo: &Repo, gitai: &GitAi, config: &Config, base: &str, tip: &st
         }
     };
     let mut items = Vec::new();
+    let mut named = Vec::new();
+    let mut ai_ranges = Vec::new();
     for commit in &commits {
         for s in trailer::sessions(&commit.trailers) {
+            add(&mut named, s.clone());
             add(&mut sessions, s);
         }
         // git-ai shows a merge commit as the difference from its first parent,
-        // which repeats the lines of commits that are read on their own.
+        // which repeats the lines of commits that are read on their own. What
+        // the merge itself wrote needs an approval by path.
         if commit.parents.len() > 1 {
+            for path in repo.merge_resolved_paths(&commit.sha)? {
+                items.push(Item {
+                    path,
+                    reason: Reason::MergeResolution,
+                    commit: Some(commit.sha.clone()),
+                    start_line: None,
+                    end_line: None,
+                    session: None,
+                });
+            }
             continue;
         }
         let authorship = gitai.diff(&repo.toplevel, &commit.sha)?;
@@ -126,32 +185,43 @@ pub fn analyze(repo: &Repo, gitai: &GitAi, config: &Config, base: &str, tip: &st
             add(&mut sessions, SessionRef::new(&s.tool, &s.id));
         }
         for range in authorship.added {
-            let reason = match range.author {
-                Author::Ai(_) => continue,
-                Author::Human => Reason::Human,
-                Author::Untracked => Reason::Untracked,
-            };
-            items.push(Item {
-                path: range.path,
+            let item = |reason, session| Item {
+                path: range.path.clone(),
                 reason,
                 commit: Some(commit.sha.clone()),
                 start_line: Some(range.start),
                 end_line: Some(range.end),
-            });
+                session,
+            };
+            match &range.author {
+                Author::Ai(s) => {
+                    let session = SessionRef::new(&s.tool, &s.id);
+                    let text = session.to_string();
+                    ai_ranges.push((session, item(Reason::UnknownSession, Some(text))));
+                }
+                Author::Human => items.push(item(Reason::Human, None)),
+                Author::Untracked => items.push(item(Reason::Untracked, None)),
+            }
         }
     }
     let protected = config.protected_set()?;
     for path in repo.changed_paths(base, tip)? {
         if protected.matches(&path) {
-            items.push(Item { path, reason: Reason::Protected, commit: None, start_line: None, end_line: None });
+            items.push(Item { path, reason: Reason::Protected, commit: None, start_line: None, end_line: None, session: None });
         }
     }
-    Ok(Analysis { commits, sessions, items })
+    Ok(Analysis { commits, sessions, items, named, ai_ranges })
 }
 
 /// The items whose path has no `Prov-Approved` trailer.
 pub fn unapproved<'a>(items: &'a [Item], approvals: &[Approval]) -> Vec<&'a Item> {
     items.iter().filter(|item| !approvals.iter().any(|a| a.path == item.path)).collect()
+}
+
+/// True if this clone has a record of the session.
+pub fn has_record(ctx: &Ctx, session: &SessionRef) -> bool {
+    // An ID that cannot be a record name has no record.
+    ctx.store.get(&session.id).ok().flatten().is_some_and(|r| r.agent == session.agent)
 }
 
 /// Checks the sessions of an integration against live state. Returns the
@@ -243,7 +313,7 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
 
     // 1. The config and the version.
     let Some(config) = head_config else {
-        say("HEAD has no .provenance.toml. Run `prov init` on the human branch and commit the file.\nTo stop: git merge --abort");
+        say("HEAD has no .provenance.toml. Run `prov init` on this branch and commit the file.\nTo stop: git merge --abort");
         return Ok(false);
     };
     if let Err(e) = config.check_version(prov_core::VERSION) {
@@ -258,7 +328,8 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
     }
 
     // 3. The sessions.
-    let analysis = analyze(repo, &ctx.gitai, &config, "HEAD", tip)?;
+    let mut analysis = analyze(repo, &ctx.gitai, &config, "HEAD", tip)?;
+    analysis.drop_unknown_sessions(|s| has_record(ctx, s));
     let (records, problems) = check_sessions(ctx, &analysis)?;
 
     // 4. Doubtful ranges and protected paths.
@@ -337,7 +408,7 @@ mod tests {
 
     #[test]
     fn approval_is_by_path() {
-        let item = |path: &str, reason| Item { path: path.into(), reason, commit: None, start_line: Some(1), end_line: Some(3) };
+        let item = |path: &str, reason| Item { path: path.into(), reason, commit: None, start_line: Some(1), end_line: Some(3), session: None };
         let items = vec![item("a b.txt", Reason::Human), item("c.txt", Reason::Untracked), item(".claude/x", Reason::Protected)];
         let approvals = vec![Approval::parse("a b.txt ack").unwrap(), Approval::parse(".claude/x ack").unwrap()];
         let open = unapproved(&items, &approvals);

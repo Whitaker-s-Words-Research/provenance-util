@@ -1,4 +1,4 @@
-//! `.provenance.toml`: five keys and the optional `[agent.<name>]` sections.
+//! `.provenance.toml`: four keys and the optional `[agent.<name>]` sections.
 
 use std::collections::BTreeMap;
 
@@ -16,8 +16,6 @@ pub struct Config {
     /// A semver requirement, for example `=0.1.0`. `None`: no requirement.
     #[serde(default)]
     pub required_version: Option<String>,
-    #[serde(default = "default_human_branch")]
-    pub human_branch: String,
     #[serde(default = "default_agents")]
     pub agents: Vec<String>,
     /// Relative paths resolve against the base directory.
@@ -38,9 +36,6 @@ pub struct AgentSection {
     pub command: Option<Vec<String>>,
 }
 
-fn default_human_branch() -> String {
-    "main".into()
-}
 fn default_agents() -> Vec<String> {
     vec!["claude".into()]
 }
@@ -55,7 +50,6 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             required_version: None,
-            human_branch: default_human_branch(),
             agents: default_agents(),
             logs_dir: default_logs_dir(),
             protected: default_protected(),
@@ -75,9 +69,6 @@ impl Config {
         if let Some(req) = &self.required_version {
             semver::VersionReq::parse(req)
                 .with_context(|| format!("{CONFIG_FILE}: invalid required_version `{req}`"))?;
-        }
-        if self.human_branch.trim().is_empty() {
-            anyhow::bail!("{CONFIG_FILE}: human_branch is empty");
         }
         self.protected_set()?;
         Ok(())
@@ -115,7 +106,6 @@ mod tests {
         let c = Config::parse(
             r#"
 required_version = "=0.1.0"
-human_branch = "main"
 agents = ["claude"]
 logs_dir = "llm-logs"
 protected = [".provenance.toml", ".claude/**", ".github/workflows/**"]
@@ -125,7 +115,6 @@ command = ["claude", "--model", "opus"]
 "#,
         )
         .unwrap();
-        assert_eq!(c.human_branch, "main");
         assert_eq!(c.agent["claude"].command.as_ref().unwrap().len(), 3);
         assert!(c.check_version("0.1.0").is_ok());
         assert!(c.check_version("0.1.1").is_err());

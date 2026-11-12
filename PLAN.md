@@ -23,14 +23,14 @@ Build these together, in this order. Each row names the spec section to follow.
 - [x] **Claude Code hooks.** `prov hook claude-code <event>` for SessionStart, UserPromptSubmit, Stop and SessionEnd. Each must return in less than 100 ms at the 95th percentile. See "Agent hooks".
 - [x] **Sweep.** The `agent-v1` checkpoint at each Stop and in `pre-commit`, with the session ID and the correct model. See "Keeping attribution complete" and "Agent model".
 - [x] **Git hooks.** `prov hook git <name>` for `pre-commit`, `prepare-commit-msg`, `post-commit` and `post-merge`. See "Git hooks".
-- [x] **Merge gate.** What counts as an integration, the sessions of an integration, doubtful lines, protected paths, the integration trailers, refusing a squash. See "Integration into the human branch" and "The merge gate".
+- [x] **Merge gate.** What counts as an integration, the sessions of an integration, doubtful lines, protected paths, the integration trailers, refusing a squash. See "Integration into a human branch" and "The merge gate".
 - [x] **`prov check`.** The three forms: no argument, an agent branch, a range for CI. It shares the rules of the gate. See "Checking".
 
 For session 1, a minimal archive step is enough to reach the Archived state (the gate needs a transcript hash). The full archive rules are in session 2.
 
 Done when: an integration test runs a recorded Claude Code session in an agent worktree, merges the branch, sees the gate refuse a doubtful line, approves it by writing the trailer into the merge message by hand, completes the merge, and `prov check <base>..<tip>` passes.
 
-**Status: done on 2026-11-11, not committed.** `cargo test --workspace` passes. The "done when" test is `crates/prov/tests/integration.rs`.
+**Status: done on 2026-11-11.** `cargo test --workspace` passes. The "done when" test is `crates/prov/tests/integration.rs`.
 
 What session 1 left for session 2, beyond its list:
 
@@ -42,9 +42,9 @@ What session 1 left for session 2, beyond its list:
 
 ## Session 2: commands (Opus, or Fable)
 
-- [ ] **`prov init`.** Config file, shims in the hooks directory, Claude Code settings, `mergeoptions` and `pull.ff`. Keeps an existing hook as `<name>.local`. Stops if the hooks directory is inside a worktree.
+- [ ] **`prov init`.** Config file, shims in the hooks directory, Claude Code settings, `merge.ff = false` and `pull.ff = only`. There is no `human_branch` key: every branch that does not match `agent/**` is a human branch, so the merge commit is forced for the whole repository, not for one branch. Keeps an existing hook as `<name>.local`. Stops if the hooks directory is inside a worktree.
 - [ ] **`prov doctor`.** The eight checks in "Doctor checks".
-- [ ] **`prov start`.** Worktree, branch name by convention, launch, `--resume`, `--no-launch`.
+- [ ] **`prov start`.** Worktree, branch name by convention, launch, `--resume`, `--no-launch`. `--from` defaults to the branch that is checked out, which can be a feature branch.
 - [ ] **`prov finish`.** `git worktree remove`, the refusal while a session is Open or Closing, `--override`, `--force`.
 - [ ] **`prov session`.** `list`, `show`, `close`, `drop`.
 - [ ] **Archive step, complete.** The deterministic tar with the transcript and the `<session ID>/` directory, SHA-256 before compression, the gzip file, the detached process, the Failed state. See "Archive step".
@@ -75,7 +75,8 @@ These come from tests during the design work. The evidence is in "Appendix: test
 - **The git-ai service must run.** Check with `git-ai bg status --repo <dir>`.
 - **Inside an agent session, give the tests their own git-ai service.** The harness in `crates/prov/tests/common/mod.rs` does this: a new `HOME` in `/tmp` with its own `.gitconfig` (the `trace2.eventTarget` socket of that home) and `git-ai bg start`. The agent's git-ai hooks then cannot reach the test repositories, and no allowed remote is necessary, because the new home has no `allow_repositories`. The home must be a short path: git-ai moves its sockets to `/tmp/git-ai-d-*` when the path is too long for a Unix socket, and the trace2 target is then wrong.
 - **Run the binary from a local disk when you measure time.** This checkout is on a 9p mount. The start of any binary from it takes about 40 ms. The harness copies `prov` to `/tmp` first. From there, the agent hooks take 4 to 10 ms (median).
-- **With `mergeoptions = --no-ff`, git itself refuses `git merge --squash`** ("cannot be used together"). A squash needs `--squash --ff`. The refusal in `prepare-commit-msg` covers that case.
+- **`git-ai bg start` does nothing if it runs while the old service still exits.** `git-ai bg shutdown` returns before the process is gone. A test that stops and starts the service must wait for the old process (`Env::stop_service` in the harness).
+- **With `merge.ff = false`, git itself refuses `git merge --squash`** ("cannot be used together"). A squash needs `--squash --ff`. The refusal in `prepare-commit-msg` covers that case.
 - **Tested versions:** git 2.53, git-ai 1.7.6, Claude Code 2.1.322, Rust 1.93.1 (installed at `/usr/bin/cargo`). Check the appendix results again if a version changes.
 
 ## Constraints from the user
