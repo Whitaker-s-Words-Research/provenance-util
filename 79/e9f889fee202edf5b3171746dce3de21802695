@@ -1,0 +1,23 @@
+vendor/agent-trace/0.1.0/trace-record.schema.json
+  s_d22d40adfc4eab::t_8b5d6a7f1b494a 1-221
+vendor/agent-trace/0.1.0/trace-record.spec-page.schema.json
+  s_d22d40adfc4eab::t_aebccb4342be39 1-149
+vendor/agent-trace/0.1.0/NOTICE.md
+  s_d22d40adfc4eab::t_4df2e9e75fd391 1-41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "79e9f889fee202edf5b3171746dce3de21802695",
+  "prompts": {},
+  "sessions": {
+    "s_d22d40adfc4eab": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "331c1c56-003e-47c1-8fb0-1c54dc33c975",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
