@@ -36,9 +36,14 @@ pub fn spawn_detached(ctx: &Ctx, session_id: &str) -> Result<u32> {
     Ok(child.id())
 }
 
-/// The archive step of one Closing session.
+/// The archive step of one Closing session, for the detached process.
 pub fn run(session_id: &str) -> Result<()> {
-    let ctx = Ctx::here()?;
+    run_in(&Ctx::here()?, session_id)
+}
+
+/// The archive step of one Closing session. The result is in the record:
+/// Archived, or Failed with the error text.
+pub fn run_in(ctx: &Ctx, session_id: &str) -> Result<()> {
     let session = {
         let lock = ctx.store.lock()?;
         let Some(mut session) = lock.get(session_id)? else { bail!("no record of session {session_id}") };

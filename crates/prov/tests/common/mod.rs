@@ -127,6 +127,79 @@ impl Env {
         }
     }
 
+    /// `prov` with a controlling terminal, as a human at a keyboard has.
+    /// `input` is what the human types. Standard output and standard error
+    /// are captured as in [`Env::run`].
+    pub fn prov_tty<I, S>(&self, dir: &Path, args: I, input: &str) -> Out
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        use std::os::fd::FromRawFd;
+        use std::os::unix::process::CommandExt;
+        let (mut master, mut slave) = (0, 0);
+        // SAFETY: openpty writes two file descriptors to valid integers.
+        let rc = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+        assert_eq!(rc, 0, "openpty failed");
+        let mut cmd = Command::new("prov");
+        cmd.current_dir(dir)
+            .args(args)
+            .env_clear()
+            .env("HOME", self.home())
+            .env("PATH", &self.path)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_EDITOR", "true")
+            .env("LC_ALL", "C")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
+        // SAFETY: setsid and ioctl are async-signal-safe. The new session
+        // takes the pseudo-terminal as its controlling terminal, so the
+        // child can open /dev/tty.
+        unsafe {
+            cmd.pre_exec(move || {
+                libc::setsid();
+                if libc::ioctl(slave, libc::TIOCSCTTY as _, 0) != 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = cmd.spawn().expect("cannot run prov");
+        // SAFETY: both descriptors are open and owned here.
+        unsafe { libc::close(slave) };
+        let mut terminal = unsafe { std::fs::File::from_raw_fd(master) };
+        terminal.write_all(input.as_bytes()).unwrap();
+        let out = child.wait_with_output().unwrap();
+        drop(terminal);
+        Out {
+            ok: out.status.success(),
+            stdout: String::from_utf8_lossy(&out.stdout).into_owned(),
+            stderr: String::from_utf8_lossy(&out.stderr).into_owned(),
+        }
+    }
+
+    /// A repository with one human commit and nothing of `prov`: what a
+    /// person has before `prov init`.
+    pub fn plain_repo(&self, name: &str) -> PathBuf {
+        let dir = self.home().join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        self.git(&dir, ["init", "-q", "-b", "main", "."]);
+        std::fs::write(dir.join("README.md"), format!("# {name}\n")).unwrap();
+        self.git(&dir, ["add", "-A"]);
+        self.git(&dir, ["commit", "-q", "-m", "Start"]);
+        dir
+    }
+
+    /// What `git-ai install-hooks` writes for Claude Code: the checkpoint
+    /// hooks in the user's settings. The hooks never run in a test.
+    pub fn install_gitai_integration(&self) {
+        let dir = self.home().join(".claude");
+        std::fs::create_dir_all(&dir).unwrap();
+        let hook = serde_json::json!([{"matcher": "*", "hooks": [{"type": "command", "command": "git-ai checkpoint claude --hook-input stdin"}]}]);
+        std::fs::write(dir.join("settings.json"), serde_json::json!({"hooks": {"PreToolUse": hook, "PostToolUse": hook}}).to_string()).unwrap();
+    }
+
     /// Stops the git-ai service of this environment and waits until its
     /// process is gone. `git-ai bg shutdown` returns before that, and a
     /// `git-ai bg start` in that interval does nothing.

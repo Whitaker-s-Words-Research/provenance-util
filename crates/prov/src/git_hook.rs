@@ -16,13 +16,66 @@ use crate::{gate, sweep};
 /// Returns false to make the hook fail.
 pub fn run(name: &str, args: &[String]) -> Result<bool> {
     let ctx = Ctx::here()?;
-    match name {
-        "pre-commit" => pre_commit(&ctx),
-        "prepare-commit-msg" => prepare_commit_msg(&ctx, args),
-        "post-commit" => post(&ctx, false),
-        "post-merge" => post(&ctx, true),
+    let ok = match name {
+        "pre-commit" => pre_commit(&ctx)?,
+        "prepare-commit-msg" => prepare_commit_msg(&ctx, args)?,
+        "post-commit" => post(&ctx, false)?,
+        "post-merge" => post(&ctx, true)?,
         other => bail!("unknown git hook `{other}`"),
+    };
+    Ok(ok && run_local(&ctx, name, args)?)
+}
+
+/// A hook that existed before `prov init` stays as `<name>.local`. It runs
+/// after the work of `prov`, with the same arguments. If it fails, the hook fails.
+fn run_local(ctx: &Ctx, name: &str, args: &[String]) -> Result<bool> {
+    let local = ctx.repo.hooks_dir()?.join(format!("{name}.local"));
+    if !local.is_file() {
+        return Ok(true);
     }
+    let status = std::process::Command::new(&local)
+        .args(args)
+        .current_dir(&ctx.repo.toplevel)
+        .status()
+        .with_context(|| format!("cannot run {}", local.display()))?;
+    if !status.success() {
+        say(format!("the hook {} failed", local.display()));
+    }
+    Ok(status.success())
+}
+
+/// The approvals of `prov approve --human` and `--ai` become trailers of the
+/// commit that holds the approved content. A change to the file since the
+/// approval cancels it.
+fn add_own_approvals(ctx: &Ctx, message_file: &std::path::Path) -> Result<()> {
+    let repo = &ctx.repo;
+    let pending = ctx.store.approvals(&repo.toplevel)?;
+    if pending.is_empty() {
+        return Ok(());
+    }
+    let staged = repo.git(["diff", "--cached", "--name-only", "--no-renames", "-z"])?;
+    let staged: Vec<&str> = staged.split('\0').filter(|p| !p.is_empty()).collect();
+    let existing = trailer::approvals(&repo.message_trailers(message_file)?);
+    let mut add = Vec::new();
+    for approval in pending {
+        // Not in this commit: the approval waits for a later one.
+        if !staged.contains(&approval.path.as_str()) {
+            continue;
+        }
+        let blob = repo.git_opt(["rev-parse", "-q", "--verify", &format!(":{}", approval.path)])?;
+        if blob.as_deref() != Some(approval.content_hash.as_str()) {
+            say(format!(
+                "warning: {} changed after `prov approve --{}`. The approval is cancelled; approve the file again.",
+                approval.path, approval.choice
+            ));
+            ctx.store.lock()?.delete_approval(&approval)?;
+            continue;
+        }
+        if !existing.iter().any(|a| a.path == approval.path) {
+            add.push(Trailer::new(trailer::PROV_APPROVED, format!("{} {}", approval.path, approval.choice))?);
+        }
+    }
+    repo.add_trailers(message_file, &add)
 }
 
 /// The config of this checkout. During a merge, the file in the worktree can
@@ -106,9 +159,10 @@ fn prepare_commit_msg(ctx: &Ctx, args: &[String]) -> Result<bool> {
             return Ok(false);
         }
         let heads = repo.merge_heads()?;
-        if !heads.is_empty() {
-            return gate::run(ctx, &message_file, &heads);
+        if !heads.is_empty() && !gate::run(ctx, &message_file, &heads)? {
+            return Ok(false);
         }
+        add_own_approvals(ctx, &message_file)?;
         return Ok(true);
     }
 
@@ -192,6 +246,20 @@ fn post(ctx: &Ctx, post_merge: bool) -> Result<bool> {
                     .is_some_and(|tip| incoming.contains(&tip.as_str()));
             if is_named || on_branch {
                 lock.delete(&r.id)?;
+            }
+        }
+    }
+
+    // An approval that became a trailer of this commit is done.
+    let done = trailer::approvals(&head.trailers);
+    if !done.is_empty() {
+        let pending = ctx.store.approvals(&repo.toplevel)?;
+        if !pending.is_empty() {
+            let lock = ctx.store.lock()?;
+            for approval in pending {
+                if done.iter().any(|a| a.path == approval.path && a.choice.as_str() == approval.choice) {
+                    lock.delete_approval(&approval)?;
+                }
             }
         }
     }
