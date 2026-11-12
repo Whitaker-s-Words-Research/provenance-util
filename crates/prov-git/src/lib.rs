@@ -32,6 +32,30 @@ pub struct Repo {
     pub branch: Option<String>,
 }
 
+/// One entry of `git worktree list`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Worktree {
+    pub path: PathBuf,
+    /// `None` with a detached `HEAD`.
+    pub branch: Option<String>,
+}
+
+/// Removes `.` and `..` components without reading the file system.
+fn normalize(path: &Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other.as_os_str()),
+        }
+    }
+    out
+}
+
 #[derive(Debug, Clone)]
 pub struct CommitInfo {
     pub sha: String,
@@ -211,7 +235,6 @@ impl Repo {
         self.git_ok(["merge-base", "--is-ancestor", ancestor, descendant])
     }
 
-    /// The paths that differ between the merge base of `base` and `tip`, and `tip`.
     /// The paths that a merge commit changed relative to every parent: what
     /// the author of the merge wrote, for example to resolve a conflict.
     /// Empty for a clean merge.
@@ -220,6 +243,7 @@ impl Repo {
         Ok(text.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())
     }
 
+    /// The paths that differ between the merge base of `base` and `tip`, and `tip`.
     pub fn changed_paths(&self, base: &str, tip: &str) -> Result<Vec<String>> {
         let text = self.git(["diff", "--name-only", "--no-renames", "-z", &format!("{base}...{tip}")])?;
         Ok(text.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())
@@ -242,6 +266,57 @@ impl Repo {
             }
         }
         Ok(out)
+    }
+
+    /// The hooks directory: `core.hooksPath`, or `hooks` in the common git directory.
+    pub fn hooks_dir(&self) -> Result<PathBuf> {
+        self.git_path("hooks")
+    }
+
+    /// A value of the git configuration, from every level. `None` if it is not set.
+    pub fn config_value(&self, key: &str) -> Result<Option<String>> {
+        self.git_opt(["config", "--get", key])
+    }
+
+    /// Sets a value in the configuration of the repository.
+    pub fn set_config_value(&self, key: &str, value: &str) -> Result<()> {
+        self.git(["config", "--local", key, value]).map(|_| ())
+    }
+
+    /// Every worktree of the repository, the main worktree first.
+    pub fn worktrees(&self) -> Result<Vec<Worktree>> {
+        let text = self.git(["worktree", "list", "--porcelain", "-z"])?;
+        let mut out: Vec<Worktree> = Vec::new();
+        for field in text.split('\0') {
+            if let Some(path) = field.strip_prefix("worktree ") {
+                out.push(Worktree { path: PathBuf::from(path), branch: None });
+            } else if let (Some(branch), Some(last)) = (field.strip_prefix("branch refs/heads/"), out.last_mut()) {
+                last.branch = Some(branch.to_string());
+            }
+        }
+        Ok(out)
+    }
+
+    /// The path of a file relative to the root of the worktree, with `/`.
+    /// `path` is relative to the current directory, or absolute.
+    pub fn relative_path(&self, path: &Path) -> Result<String> {
+        let abs = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) };
+        let abs = normalize(&abs);
+        let top = std::fs::canonicalize(&self.toplevel).unwrap_or_else(|_| self.toplevel.clone());
+        // The parent directory resolves symbolic links; the file itself can be one.
+        let resolved = match (abs.parent().and_then(|p| std::fs::canonicalize(p).ok()), abs.file_name()) {
+            (Some(parent), Some(name)) => parent.join(name),
+            _ => abs.clone(),
+        };
+        let rel = resolved
+            .strip_prefix(&top)
+            .or_else(|_| abs.strip_prefix(&self.toplevel))
+            .with_context(|| format!("{} is not in the worktree {}", path.display(), self.toplevel.display()))?;
+        let text = rel.to_str().with_context(|| format!("{} is not UTF-8", path.display()))?;
+        if text.is_empty() {
+            bail!("{} is the root of the worktree, not a file", path.display());
+        }
+        Ok(text.to_string())
     }
 
     /// The author email that a commit made now would get.
