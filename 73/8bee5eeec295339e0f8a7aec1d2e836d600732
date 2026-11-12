@@ -1,0 +1,37 @@
+.gitignore
+  s_d458000301c268::t_87a1c46d875df8 1-2
+Cargo.toml
+  s_d458000301c268::t_1ee77820e46a11 1-26
+LICENSE
+  s_d458000301c268::t_1eda390baf5836 1-21
+crates/prov-core/Cargo.toml
+  s_d458000301c268::t_30a57352ae93dc 1-17
+rust-toolchain.toml
+  s_d458000301c268::t_714baf5c13e6cd 1-2
+crates/prov-core/src/config.rs
+  s_d458000301c268::t_33faaf585b15d2 1-141
+crates/prov-core/src/lib.rs
+  s_d458000301c268::t_1028e0be962cf6 1-21
+crates/prov-core/src/pattern.rs
+  s_d458000301c268::t_ca25938d580550 1-241
+crates/prov-core/src/state.rs
+  s_d458000301c268::t_078f534f5befa3 1-388
+crates/prov-core/src/trailer.rs
+  s_d458000301c268::t_babd111a2a661e 1-241
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "738bee5eeec295339e0f8a7aec1d2e836d600732",
+  "prompts": {},
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
