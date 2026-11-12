@@ -1,0 +1,49 @@
+Cargo.lock
+  s_d458000301c268::t_4bae675c32af5e 215-220,337,340,402-407,463-464,481-491
+Cargo.toml
+  s_d458000301c268::t_84a5e5ef225a3e 14,18-19
+crates/prov/Cargo.toml
+  s_d458000301c268::t_aef3807979176f 15-16
+crates/prov/src/approve.rs
+  s_d458000301c268::t_a035e37733f703 1-221
+crates/prov/src/archive.rs
+  s_d458000301c268::t_f0e30fcc7c75f2 39,41-46
+crates/prov/src/doctor.rs
+  s_d458000301c268::t_7ecfe88b26220a 1-353
+crates/prov/src/finish.rs
+  s_d458000301c268::t_f02e7901569323 1-110
+crates/prov/src/git_hook.rs
+  s_d458000301c268::t_913e048e2e1748 19-23,25-76,78,162-163,165,253-266
+crates/prov/src/main.rs
+  s_d458000301c268::t_0cf5105d0f0123 4,8-9,12-15,17,20,23,34-53,67-105,111-206,217-218,220-259
+crates/prov/src/schema.rs
+  s_d458000301c268::t_4e3822cf0c7f6e 1-214
+crates/prov/src/session.rs
+  s_d458000301c268::t_34d5cdd548f705 1-216
+crates/prov/src/start.rs
+  s_d458000301c268::t_1bf3bb3deb1b4f 1-212
+crates/prov/src/trace.rs
+  s_d458000301c268::t_1f1985e9a34483 1-203
+crates/prov/tests/commands.rs
+  s_d458000301c268::t_39e3334d5322e3 1-340
+crates/prov/tests/common/mod.rs
+  s_d458000301c268::t_61d417fc8612c2 130-202
+crates/prov/src/init.rs
+  s_d458000301c268::t_d24414d1883982 1-307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "fb1354c23e945461aab52918e9b58aa3643346f7",
+  "prompts": {},
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}

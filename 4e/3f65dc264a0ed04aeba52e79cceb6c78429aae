@@ -1,0 +1,21 @@
+PLAN.md
+  s_d458000301c268::t_2bc552770287df 37,45-53,57-81
+SPEC.md
+  s_d458000301c268::t_d47294c05c98f6 519
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "4e3f65dc264a0ed04aeba52e79cceb6c78429aae",
+  "prompts": {},
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
