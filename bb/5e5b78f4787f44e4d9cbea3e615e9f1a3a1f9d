@@ -1,0 +1,19 @@
+crates/prov-git/src/lib.rs
+  s_d458000301c268::t_536d466f4ab814 35-58,246,271-321
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "bb5e5b78f4787f44e4d9cbea3e615e9f1a3a1f9d",
+  "prompts": {},
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
