@@ -1,0 +1,45 @@
+PLAN.md
+  s_d458000301c268::t_0d665e71761b86 26,33,45,47,78-79
+README.md
+  s_d458000301c268::t_8bda0a674c48aa 33,120
+SPEC.md
+  s_d458000301c268::t_0f5692845e8481 9,36,43-44,50,52,100,109,115,127,177,186,213,224,239,246,252-253,263,270-271,278,281-282,321,326-328,337,361,378,380-384,386,388,502,536
+crates/prov-core/src/config.rs
+  s_d458000301c268::t_7ec83a5b510169 1
+crates/prov-core/src/state.rs
+  s_d458000301c268::t_b5cf96d6ce240b 148-152,245-246,248-249,362-366,368-369,372-373
+crates/prov-git/src/lib.rs
+  s_d458000301c268::t_61877805d1d141 215-222
+crates/prov/src/agent_hook.rs
+  s_d458000301c268::t_7e2f0581abdc00 36
+crates/prov/src/check.rs
+  s_d458000301c268::t_b9526be6558760 3-8,32-36,71,76-92,103-124,140,151,162-163,165-168,177,180-181,202-204,209-210,220-221,233,235-239,263-284,287,291,294-302,306,310-311,314,317,324,328,331-335,355
+crates/prov/src/gate.rs
+  s_d458000301c268::t_f6aab4e38c1f58 44-52,67-69,81,84-95,101,121-124,128-143,160-161,164,168-169,171-180,188-189,194-204,210,213,221-226,316,331-332,411
+crates/prov/src/git_hook.rs
+  s_d458000301c268::t_38b84ce98e7356 64,205
+crates/prov/src/main.rs
+  s_d458000301c268::t_80787d9f9ee8bb 37-38,40-43,62
+crates/prov/tests/common/mod.rs
+  s_d458000301c268::t_076342fd3c2d6c 130-147,204,213-215,242,244-248,250,271-275,284
+crates/prov/tests/gate.rs
+  s_d458000301c268::t_751b7f5cec10e3 43,136,257-408
+crates/prov/tests/sessions.rs
+  s_d458000301c268::t_6d61734297cff4 146,160-161,164,200-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "f1e19e484bfb3f73365f0295e48d957c01ffc292",
+  "prompts": {},
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
