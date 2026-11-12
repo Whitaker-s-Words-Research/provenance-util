@@ -1,0 +1,21 @@
+crates/prov-gitai/src/lib.rs
+  s_d458000301c268::t_b1bc3550058ff9 1-292
+crates/prov-gitai/Cargo.toml
+  s_d458000301c268::t_37ac894b7dbaca 1-11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "fe162733d7fd852ccacd31e315772480ede455c5",
+  "prompts": {},
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
