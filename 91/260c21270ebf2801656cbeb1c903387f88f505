@@ -1,0 +1,59 @@
+Cargo.lock
+  s_d458000301c268::t_a344f873f5bb93 1-621
+crates/prov/tests/common/mod.rs
+  s_d458000301c268::t_60f08a3ac44bb7 1-423
+crates/prov/src/check.rs
+  s_d458000301c268::t_496fdb7fb5ac5b 1-331
+crates/prov/src/archive.rs
+  s_d458000301c268::t_9335265a80ac32 1-184
+crates/prov/tests/gate.rs
+  s_d458000301c268::t_ebf33bb3aac0dc 1-256
+crates/prov/tests/integration.rs
+  s_d458000301c268::t_ec88c8a05f1864 1-112
+crates/prov/build.rs
+  s_d458000301c268::t_0fd80872621c01 1-12
+crates/prov/src/agent_hook.rs
+  s_d458000301c268::t_996d94cb5bb85f 1-162
+crates/prov/tests/fixtures/claude-code/transcript.jsonl
+  s_d458000301c268::t_0f4387ae10712f 1-4
+crates/prov/tests/fixtures/claude-code/subagent.jsonl
+  s_d458000301c268::t_ddd002c606c143 1-2
+crates/prov/tests/fixtures/claude-code/Stop.json
+  s_d458000301c268::t_9fd5205bb4d8a4 1
+crates/prov/src/context.rs
+  s_d458000301c268::t_5e40f8a77f3c99 1-46
+crates/prov/src/gate.rs
+  s_d458000301c268::t_ce4978a535682b 1-349
+crates/prov/tests/sessions.rs
+  s_d458000301c268::t_9925931efd9b83 1-198
+crates/prov/src/main.rs
+  s_d458000301c268::t_9039b713cb680f 1-79
+crates/prov/tests/fixtures/claude-code/UserPromptSubmit.json
+  s_d458000301c268::t_0bf60002d38211 1
+crates/prov/src/sweep.rs
+  s_d458000301c268::t_270be33b41594a 1-22
+crates/prov/tests/fixtures/claude-code/SessionStart.json
+  s_d458000301c268::t_94689ba79dace8 1
+crates/prov/tests/fixtures/claude-code/SessionEnd.json
+  s_d458000301c268::t_ab47e368e9948a 1
+crates/prov/Cargo.toml
+  s_d458000301c268::t_89580a65fa794e 1-25
+crates/prov/src/git_hook.rs
+  s_d458000301c268::t_89c21e64de39f4 1-229
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "91260c21270ebf2801656cbeb1c903387f88f505",
+  "prompts": {},
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
