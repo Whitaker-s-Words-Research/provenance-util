@@ -1,0 +1,26 @@
+[workspace]
+resolver = "2"
+members = ["crates/prov-core", "crates/prov-git", "crates/prov-adapters", "crates/prov-gitai", "crates/prov"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+rust-version = "1.89"
+
+[workspace.dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+semver = "1"
+sha2 = "0.10"
+flate2 = "1"
+tar = { version = "0.4", default-features = false }
+libc = "0.2"
+clap = { version = "4", features = ["derive"] }
+tempfile = "3"
+prov-core = { path = "crates/prov-core" }
+prov-git = { path = "crates/prov-git" }
+prov-adapters = { path = "crates/prov-adapters" }
+prov-gitai = { path = "crates/prov-gitai" }
