@@ -516,7 +516,7 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 
 | Command | Run by | Effect |
 |---|---|---|
-| `prov init [--agent <name>]... [--force]` | Human, once in each clone | Writes `.provenance.toml`, the shims in the hooks directory and the Claude Code settings. Sets `mergeoptions` and `pull.ff`. Adds `logs_dir` to `.gitignore` if it is inside a worktree. Refuses to overwrite a changed file without `--force`. |
+| `prov init [--agent <name>]... [--force]` | Human, once in each clone | Writes `.provenance.toml`, the shims in the hooks directory and the Claude Code settings. Sets `merge.ff` and `pull.ff`. Adds `logs_dir` to `.gitignore` if it is inside a worktree. Refuses to overwrite a changed file without `--force`. |
 | `prov doctor [--deep]` | Human | Checks the items in "Doctor checks". Exit code 1 if one check fails. |
 | `prov check [<agent branch> \| <base>..<tip>]` | Human, CI | See "Checking". |
 | `prov start <agent>` | Human | See "Starting a session". |

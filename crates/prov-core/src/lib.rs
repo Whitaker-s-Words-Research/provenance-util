@@ -7,7 +7,7 @@ pub mod state;
 pub mod trailer;
 
 pub use config::Config;
-pub use state::{SessionRecord, State, Store};
+pub use state::{ApprovalRecord, SessionRecord, State, Store};
 
 /// The version of this build, without the build SHA.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

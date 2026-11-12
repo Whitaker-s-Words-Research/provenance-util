@@ -1,17 +1,26 @@
 //! `prov`: the command line.
 
 mod agent_hook;
+mod approve;
 mod archive;
 mod check;
 mod context;
+mod doctor;
+mod finish;
 mod gate;
 mod git_hook;
+mod init;
+mod schema;
+mod session;
+mod start;
 mod sweep;
+mod trace;
 
 use std::io::Read;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(name = "prov", version = concat!(env!("CARGO_PKG_VERSION"), "+", env!("PROV_BUILD_SHA")), about = "Provenance for repositories where AI agents and humans commit")]
@@ -22,15 +31,26 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Handles an agent or git event. For the hook shims only.
-    Hook {
-        /// `git`, or the name of an agent adapter, for example `claude-code`.
-        adapter: String,
-        /// The event or the git hook name.
-        event: String,
-        /// The arguments that git gives the hook.
-        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
-        args: Vec<String>,
+    /// Sets up this clone: the config file, the hook shims, the agent settings and the git options.
+    Init {
+        /// An agent in use. Default: the agents of the config file, or `claude`.
+        #[arg(long = "agent", value_name = "NAME")]
+        agents: Vec<String>,
+        /// Replace a file or a hook that has other content.
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Checks the setup of this clone.
+    Doctor {
+        /// Also run `git-ai debug`.
+        #[arg(long)]
+        deep: bool,
+        #[arg(long)]
+        json: bool,
     },
     /// Applies the rules of the merge gate without a merge.
     Check {
@@ -44,9 +64,144 @@ enum Cmd {
         #[arg(long)]
         json: bool,
     },
+    /// Creates a worktree on a new agent branch and starts the agent in it.
+    Start(StartArgs),
+    /// Handles an agent or git event. For the hook shims only.
+    Hook {
+        /// `git`, or the name of an agent adapter, for example `claude-code`.
+        adapter: String,
+        /// The event or the git hook name.
+        event: String,
+        /// The arguments that git gives the hook.
+        #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<String>,
+    },
+    /// Shows sessions, closes one, or deletes the record of one.
+    Session {
+        #[command(subcommand)]
+        action: SessionCmd,
+    },
+    /// Removes the worktree of a session. The branch stays.
+    Finish {
+        /// A session ID, or the branch of the worktree.
+        target: String,
+        /// Remove the worktree also while a session in it is open. Each open session is closed first.
+        #[arg(long = "override")]
+        override_: bool,
+        /// Passed to `git worktree remove`: remove a worktree with changes that are not committed.
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Records a human decision about the authorship of paths.
+    Approve(ApproveArgs),
+    /// Agent Trace records.
+    Trace {
+        #[command(subcommand)]
+        action: TraceCmd,
+    },
     /// Runs the archive step of a Closing session. Started by `prov` itself.
     #[command(hide = true)]
     ArchiveSession { session: String },
+}
+
+#[derive(Args)]
+struct StartArgs {
+    /// The agent, for example `claude`.
+    agent: String,
+    /// The `<name>` part of the branch name. Default: 4 random hex characters.
+    #[arg(long, value_name = "SLUG")]
+    name: Option<String>,
+    /// The full branch name. It must match `agent/**`.
+    #[arg(long, value_name = "NAME")]
+    branch: Option<String>,
+    /// The start point of the new branch. Default: the branch that is checked out.
+    #[arg(long, value_name = "REF")]
+    from: Option<String>,
+    /// The location of the worktree.
+    #[arg(long, value_name = "DIR")]
+    path: Option<PathBuf>,
+    /// Create the worktree, print its path, and do not start the agent.
+    #[arg(long)]
+    no_launch: bool,
+    /// Open the worktree of that session and start the agent with its resume option.
+    #[arg(long, value_name = "SESSION")]
+    resume: Option<String>,
+    #[arg(long)]
+    dry_run: bool,
+    #[arg(long)]
+    json: bool,
+    /// Arguments for the agent, after `--`.
+    #[arg(last = true)]
+    agent_args: Vec<String>,
+}
+
+#[derive(Subcommand)]
+enum SessionCmd {
+    /// Lists the sessions that have a record.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Shows one session.
+    Show {
+        session: String,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Moves an Open session to Closing and archives it. For a Failed session: runs the archive step again.
+    Close {
+        session: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Deletes the record of a session. The transcript archive stays.
+    Drop {
+        session: String,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Args)]
+struct ApproveArgs {
+    #[arg(required = true)]
+    paths: Vec<PathBuf>,
+    /// While a merge is in progress: the lines keep their git-ai attribution.
+    #[arg(long, group = "mode")]
+    merge: bool,
+    /// Before your own commit: you wrote the changes, or a generator that you ran.
+    #[arg(long, group = "mode")]
+    human: bool,
+    /// Before your own commit: an AI wrote the changes.
+    #[arg(long, group = "mode")]
+    ai: bool,
+    /// With --ai: the tool. Default: `unknown`.
+    #[arg(long, value_name = "TOOL")]
+    agent: Option<String>,
+    /// With --ai: the model. Default: `unknown`.
+    #[arg(long)]
+    model: Option<String>,
+    #[arg(long)]
+    dry_run: bool,
+    #[arg(long)]
+    json: bool,
+}
+
+#[derive(Subcommand)]
+enum TraceCmd {
+    /// Writes Agent Trace 0.1.0 records as JSON Lines, one record for each commit with a note.
+    Export {
+        /// A git range, for example `main..HEAD`. Default: the branch that is checked out.
+        range: Option<String>,
+    },
 }
 
 fn main() -> ExitCode {
@@ -59,7 +214,49 @@ fn main() -> ExitCode {
         }
         _ => match Cli::parse().command {
             Cmd::Hook { adapter, event, args } => run_hook(&adapter, &event, &args),
+            Cmd::Init { agents, force, dry_run, json } => init::run(init::Args { agents, force, dry_run, json }),
+            Cmd::Doctor { deep, json } => doctor::run(deep, json),
             Cmd::Check { target, into, json } => check::run(target.as_deref(), into.as_deref(), json),
+            Cmd::Start(a) => start::run(start::Args {
+                agent: a.agent,
+                name: a.name,
+                branch: a.branch,
+                from: a.from,
+                path: a.path,
+                no_launch: a.no_launch,
+                resume: a.resume,
+                dry_run: a.dry_run,
+                json: a.json,
+                agent_args: a.agent_args,
+            }),
+            Cmd::Session { action } => match action {
+                SessionCmd::List { json } => session::run(session::Action::List, json, false),
+                SessionCmd::Show { session, json } => session::run(session::Action::Show(session), json, false),
+                SessionCmd::Close { session, dry_run, json } => session::run(session::Action::Close(session), json, dry_run),
+                SessionCmd::Drop { session, dry_run, json } => session::run(session::Action::Drop(session), json, dry_run),
+            },
+            Cmd::Finish { target, override_, force, dry_run, json } => {
+                finish::run(finish::Args { target, r#override: override_, force, dry_run, json })
+            }
+            Cmd::Approve(a) => {
+                let mode = match (a.merge, a.human, a.ai) {
+                    (true, false, false) => Ok(approve::Mode::Merge),
+                    (false, true, false) => Ok(approve::Mode::Human),
+                    (false, false, true) => Ok(approve::Mode::Ai),
+                    _ => Err(anyhow::anyhow!("give exactly one of --merge, --human and --ai")),
+                };
+                mode.and_then(|mode| {
+                    approve::run(approve::Args {
+                        paths: a.paths,
+                        mode,
+                        agent: a.agent,
+                        model: a.model,
+                        dry_run: a.dry_run,
+                        json: a.json,
+                    })
+                })
+            }
+            Cmd::Trace { action: TraceCmd::Export { range } } => trace::run(range.as_deref()),
             Cmd::ArchiveSession { session } => archive::run(&session).map(|()| true),
         },
     };

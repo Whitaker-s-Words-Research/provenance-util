@@ -34,7 +34,7 @@ Done when: an integration test runs a recorded Claude Code session in an agent w
 
 What session 1 left for session 2, beyond its list:
 
-- The git hooks do not yet run `<name>.local`.
+- The git hooks do not yet run `<name>.local`. (Done in session 2.)
 - `prov approve` does not exist. The tests write `Prov-Approved` into `.git/MERGE_MSG` with `git interpret-trailers`. A trailer added by hand must be in the last paragraph of the message, in one block with the other trailers; git ignores a trailer in an earlier paragraph.
 - The gate messages name `prov session close`, which does not exist yet.
 - The archive step is complete (deterministic tar, hash, gzip, detached process, Failed state). Session 2 only has to call it from `prov session close`.
@@ -42,17 +42,42 @@ What session 1 left for session 2, beyond its list:
 
 ## Session 2: commands (Opus, or Fable)
 
-- [ ] **`prov init`.** Config file, shims in the hooks directory, Claude Code settings, `merge.ff = false` and `pull.ff = only`. There is no `human_branch` key: every branch that does not match `agent/**` is a human branch, so the merge commit is forced for the whole repository, not for one branch. Keeps an existing hook as `<name>.local`. Stops if the hooks directory is inside a worktree.
-- [ ] **`prov doctor`.** The eight checks in "Doctor checks".
-- [ ] **`prov start`.** Worktree, branch name by convention, launch, `--resume`, `--no-launch`. `--from` defaults to the branch that is checked out, which can be a feature branch.
-- [ ] **`prov finish`.** `git worktree remove`, the refusal while a session is Open or Closing, `--override`, `--force`.
-- [ ] **`prov session`.** `list`, `show`, `close`, `drop`.
-- [ ] **Archive step, complete.** The deterministic tar with the transcript and the `<session ID>/` directory, SHA-256 before compression, the gzip file, the detached process, the Failed state. See "Archive step".
-- [ ] **`prov approve`.** `--merge` writes the trailer into `.git/MERGE_MSG`. `--human` and `--ai` run the checkpoints and keep the approval in live state until the commit. See "Approval".
-- [ ] **`prov trace export`.** Records from `git-ai diff --json`, validated against `vendor/agent-trace/0.1.0/`. See "Trace export".
-- [ ] **Plumbing.** `--json` and `--dry-run` on every command, the latency test, CI on Linux and macOS, release builds with `--locked`.
+- [x] **`prov init`.** Config file, shims in the hooks directory, Claude Code settings, `merge.ff = false` and `pull.ff = only`. There is no `human_branch` key: every branch that does not match `agent/**` is a human branch, so the merge commit is forced for the whole repository, not for one branch. Keeps an existing hook as `<name>.local`. Stops if the hooks directory is inside a worktree.
+- [x] **`prov doctor`.** The eight checks in "Doctor checks".
+- [x] **`prov start`.** Worktree, branch name by convention, launch, `--resume`, `--no-launch`. `--from` defaults to the branch that is checked out, which can be a feature branch.
+- [x] **`prov finish`.** `git worktree remove`, the refusal while a session is Open or Closing, `--override`, `--force`.
+- [x] **`prov session`.** `list`, `show`, `close`, `drop`.
+- [x] **Archive step, complete.** The deterministic tar with the transcript and the `<session ID>/` directory, SHA-256 before compression, the gzip file, the detached process, the Failed state. See "Archive step".
+- [x] **`prov approve`.** `--merge` writes the trailer into `.git/MERGE_MSG`. `--human` and `--ai` run the checkpoints and keep the approval in live state until the commit. See "Approval".
+- [x] **`prov trace export`.** Records from `git-ai diff --json`, validated against `vendor/agent-trace/0.1.0/`. See "Trace export".
+- [x] **Plumbing.** `--json` and `--dry-run` on every command, the latency test, CI on Linux and macOS, release builds with `--locked`.
 
 Done when: every command in the "Commands" table except `prov cp` works, and `prov doctor` passes in a repository that `prov init` set up.
+
+**Status: done on 2026-11-12, on the branch `session-2-commands`.** `cargo test --workspace --locked` passes. The tests of the commands are in `crates/prov/tests/commands.rs`.
+
+Choices made in session 2 that the spec does not fix. Each is open for the user to change:
+
+- **`prov approve` reads the typed `yes` from `/dev/tty`.** With no terminal it refuses. `--dry-run` shows the items with no prompt. The tests give it a pseudo-terminal (`Env::prov_tty`).
+- **`prov session close` and `prov finish --override` run the archive step in the foreground**, not in a detached process. The command returns when the session is Archived or Failed.
+- **`prov init` keeps an existing `.provenance.toml` that parses.** It replaces the file only with `--force`, and only when `--agent` asks for other agents or the file does not parse. It replaces a value in `.claude/settings.json` that differs (for example another `GIT_AUTHOR_EMAIL`) only with `--force`.
+- **`prov doctor` decides "git-ai allows the repository" from `git-ai config allow_repositories` and `exclude_repositories`**, matched against the remote URLs. This repeats git-ai's rule; git-ai has no command that answers the question.
+- **`prov trace export` finds the commits with a note through `git notes --ref=ai list`.** It reads only which commits have a note. The content comes from `git-ai diff --json`.
+- **The content hash of a `--human` or `--ai` approval is the git blob ID** of the file. `prepare-commit-msg` compares it with the staged blob.
+- **`prov start` is not refused for an agent.** The spec says "run by a human" and gives no refusal.
+- **The JSON Schema validator is written in `crates/prov/src/schema.rs`**, for the keywords that the pinned schema uses. An unknown keyword is an error.
+
+Not tested in session 2:
+
+- `prov start` with the real `claude` command. The tests use a stub command from `[agent.claude]`. A real launch bills to the Claude Code login; ask first.
+- The workflows in `.github/workflows/`. They never ran. CI has no git-ai, so the integration tests print "SKIPPED" there and only the build and the unit tests count.
+- macOS. Everything ran on Linux only.
+- `prov doctor --deep` (`git-ai debug`).
+
+What session 2 left for session 3:
+
+- `prov doctor` reports a file in `.git/provenance/copies/` that has `"failed": true`. Session 3 defines that file.
+- `prepare-commit-msg` adds the `Prov-Approved` trailers of `--human` and `--ai`. The `Copied-From` trailers and the copy guard in `pre-commit` are not there yet.
 
 ## Session 3: copy (Fable)
 
