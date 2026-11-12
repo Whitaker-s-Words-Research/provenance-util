@@ -153,6 +153,41 @@ impl SessionRecord {
     }
 }
 
+/// An approval with `prov approve --human` or `--ai`, kept until the commit.
+/// A merge approval is not stored: it exists only in the merge message.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ApprovalRecord {
+    pub worktree: PathBuf,
+    /// Relative to the root of the worktree.
+    pub path: String,
+    /// `human` or `ai`.
+    pub choice: String,
+    /// The git blob ID of the file content at the approval. A change to the
+    /// file cancels the approval.
+    pub content_hash: String,
+    pub approved_at: u64,
+}
+
+impl ApprovalRecord {
+    /// The name of the record: one approval for each path of a worktree.
+    pub fn key(&self) -> String {
+        approval_key(&self.worktree, &self.path)
+    }
+}
+
+fn approval_key(worktree: &Path, path: &str) -> String {
+    // FNV-1a, 64 bit, of the worktree and the path. Only a file name: a
+    // collision would replace one pending approval with another.
+    let mut hash = [0xcbf29ce484222325u64, 0x84222325cbf29ce4u64];
+    for (i, seed) in hash.iter_mut().enumerate() {
+        for byte in worktree.as_os_str().as_encoded_bytes().iter().chain([0u8, i as u8].iter()).chain(path.as_bytes()) {
+            *seed ^= u64::from(*byte);
+            *seed = seed.wrapping_mul(0x100000001b3);
+        }
+    }
+    format!("{:016x}{:016x}", hash[0], hash[1])
+}
+
 /// True if a process with this ID exists.
 pub fn pid_alive(pid: u32) -> bool {
     let Ok(pid) = libc::pid_t::try_from(pid) else { return false };
@@ -186,6 +221,39 @@ impl Store {
     fn session_path(&self, id: &str) -> Result<PathBuf> {
         check_id(id)?;
         Ok(self.sessions_dir().join(format!("{id}.json")))
+    }
+
+    fn approvals_dir(&self) -> PathBuf {
+        self.dir.join("approvals")
+    }
+
+    /// The pending approvals of one worktree, sorted by path.
+    pub fn approvals(&self, worktree: &Path) -> Result<Vec<ApprovalRecord>> {
+        let mut out = Vec::new();
+        let entries = match fs::read_dir(self.approvals_dir()) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+            Err(e) => return Err(e).context("cannot read the approval records"),
+        };
+        for entry in entries {
+            let path = entry?.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            match fs::read(&path) {
+                Ok(bytes) => {
+                    let record: ApprovalRecord =
+                        serde_json::from_slice(&bytes).with_context(|| format!("{} does not parse", path.display()))?;
+                    if record.worktree == worktree {
+                        out.push(record);
+                    }
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+            }
+        }
+        out.sort_by(|a, b| a.path.cmp(&b.path));
+        Ok(out)
     }
 
     /// Takes the advisory lock. All writes go through the returned guard.
@@ -281,6 +349,27 @@ impl Locked<'_> {
 
     pub fn delete(&self, id: &str) -> Result<bool> {
         let path = self.store.session_path(id)?;
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e).with_context(|| format!("cannot delete {}", path.display())),
+        }
+    }
+
+    pub fn put_approval(&self, record: &ApprovalRecord) -> Result<()> {
+        let dir = self.store.approvals_dir();
+        fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        let path = dir.join(format!("{}.json", record.key()));
+        let tmp = path.with_extension("json.tmp");
+        let mut file = File::create(&tmp).with_context(|| format!("cannot write {}", tmp.display()))?;
+        file.write_all(&serde_json::to_vec_pretty(record)?)?;
+        file.write_all(b"\n")?;
+        drop(file);
+        fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
+    }
+
+    pub fn delete_approval(&self, record: &ApprovalRecord) -> Result<bool> {
+        let path = self.store.approvals_dir().join(format!("{}.json", record.key()));
         match fs::remove_file(&path) {
             Ok(()) => Ok(true),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
@@ -391,5 +480,30 @@ mod tests {
         assert_eq!(lock.refresh(10 + CLOSING_TIMEOUT_SECS - 1).unwrap()[0].state, State::Closing);
         assert_eq!(lock.refresh(10 + CLOSING_TIMEOUT_SECS).unwrap()[0].state, State::Failed);
         assert_eq!(store.get("s1").unwrap().unwrap().state, State::Failed);
+    }
+
+    #[test]
+    fn approvals_are_kept_for_each_worktree_and_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::new(dir.path());
+        let approval = |worktree: &str, path: &str, choice: &str| ApprovalRecord {
+            worktree: PathBuf::from(worktree),
+            path: path.into(),
+            choice: choice.into(),
+            content_hash: "abc".into(),
+            approved_at: 1,
+        };
+        assert!(store.approvals(Path::new("/w/a")).unwrap().is_empty());
+        let lock = store.lock().unwrap();
+        lock.put_approval(&approval("/w/a", "b.txt", "human")).unwrap();
+        lock.put_approval(&approval("/w/a", "a.txt", "human")).unwrap();
+        lock.put_approval(&approval("/w/a", "a.txt", "ai")).unwrap(); // replaces
+        lock.put_approval(&approval("/w/b", "a.txt", "human")).unwrap();
+        let here = store.approvals(Path::new("/w/a")).unwrap();
+        assert_eq!(here.iter().map(|a| (a.path.as_str(), a.choice.as_str())).collect::<Vec<_>>(), [("a.txt", "ai"), ("b.txt", "human")]);
+        assert!(lock.delete_approval(&here[0]).unwrap());
+        assert!(!lock.delete_approval(&here[0]).unwrap());
+        assert_eq!(store.approvals(Path::new("/w/a")).unwrap().len(), 1);
+        assert_eq!(store.approvals(Path::new("/w/b")).unwrap().len(), 1);
     }
 }
