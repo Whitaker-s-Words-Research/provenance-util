@@ -1,0 +1,25 @@
+[package]
+name = "prov"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+build = "build.rs"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+clap.workspace = true
+sha2.workspace = true
+flate2.workspace = true
+tar.workspace = true
+libc.workspace = true
+prov-core.workspace = true
+prov-git.workspace = true
+prov-adapters.workspace = true
+prov-gitai.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+serde_json.workspace = true

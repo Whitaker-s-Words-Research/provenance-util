@@ -1,0 +1,349 @@
+//! The rules of the merge gate. `prepare-commit-msg` applies them to a merge
+//! in progress, and `prov check` applies them without a merge.
+
+use std::collections::BTreeSet;
+use std::path::Path;
+
+use anyhow::{Context, Result};
+use prov_core::trailer::{self, Approval, SessionRef, Trailer};
+use prov_core::{Config, SessionRecord, State};
+use prov_git::{CommitInfo, Repo};
+use prov_gitai::{Author, GitAi};
+use serde::Serialize;
+
+use crate::context::{full_version, say, Ctx};
+
+/// A human commit: its author email is not an agent email. A commit with a
+/// `Prov-Session` trailer is a human commit only if it also has a
+/// `Prov-Version` trailer, which marks an integration.
+pub fn is_human_commit(commit: &CommitInfo, agent_emails: &[String]) -> bool {
+    let agent_email = agent_emails.contains(&commit.author_email.to_ascii_lowercase());
+    let session = trailer::has(&commit.trailers, trailer::PROV_SESSION);
+    let version = trailer::has(&commit.trailers, trailer::PROV_VERSION);
+    !agent_email && (!session || version)
+}
+
+/// True if a merge of `tip` into `base` is an integration: one commit on the
+/// first-parent line of `base..tip` is not a human commit. The decision comes
+/// from the incoming commits, not from a branch name.
+pub fn is_integration(repo: &Repo, base: &str, tip: &str, agent_emails: &[String]) -> Result<bool> {
+    let line = repo.commits(["--first-parent", &format!("{base}..{tip}")])?;
+    Ok(line.iter().any(|c| !is_human_commit(c, agent_emails)))
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Reason {
+    /// No range gives the lines a session or a human, or the commit has no note.
+    Untracked,
+    /// A range gives the lines a human. In an agent commit, this label comes
+    /// from git-ai's fallback, not from a person.
+    Human,
+    /// A change to a protected path.
+    Protected,
+}
+
+/// Something that the human must approve before the integration.
+#[derive(Debug, Clone, Serialize)]
+pub struct Item {
+    pub path: String,
+    pub reason: Reason,
+    /// The agent commit of a doubtful range.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub commit: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<u32>,
+}
+
+impl Item {
+    pub fn lines(&self) -> u32 {
+        match (self.start_line, self.end_line) {
+            (Some(start), Some(end)) => end.saturating_sub(start) + 1,
+            _ => 0,
+        }
+    }
+
+    pub fn describe(&self) -> String {
+        match self.reason {
+            Reason::Protected => format!("{}: protected path changed", self.path),
+            reason => format!(
+                "{}: lines {}-{} of commit {} {}",
+                self.path,
+                self.start_line.unwrap_or(0),
+                self.end_line.unwrap_or(0),
+                self.commit.as_deref().map(|c| &c[..c.len().min(10)]).unwrap_or("?"),
+                if reason == Reason::Human {
+                    "are attributed to a human, in an agent commit"
+                } else {
+                    "have no author (untracked, or the commit has no note)"
+                },
+            ),
+        }
+    }
+}
+
+/// What a merge of `tip` into `base` brings in.
+#[derive(Debug, Default)]
+pub struct Analysis {
+    /// The incoming range `base..tip`, oldest first. Every one is an agent commit.
+    pub commits: Vec<CommitInfo>,
+    /// The sessions named in a `Prov-Session` trailer or in the note of an
+    /// agent commit, in order of first appearance.
+    pub sessions: Vec<SessionRef>,
+    pub items: Vec<Item>,
+}
+
+impl Analysis {
+    pub fn doubtful_lines(&self) -> u32 {
+        self.items.iter().map(Item::lines).sum()
+    }
+}
+
+/// Reads each agent commit of `base..tip` with `git-ai diff <commit> --json`.
+/// `config` supplies the protected paths.
+pub fn analyze(repo: &Repo, gitai: &GitAi, config: &Config, base: &str, tip: &str) -> Result<Analysis> {
+    let commits = repo.commits(["--reverse", "--topo-order", &format!("{base}..{tip}")])?;
+    let mut sessions: Vec<SessionRef> = Vec::new();
+    let add = |sessions: &mut Vec<SessionRef>, s: SessionRef| {
+        if !sessions.contains(&s) {
+            sessions.push(s);
+        }
+    };
+    let mut items = Vec::new();
+    for commit in &commits {
+        for s in trailer::sessions(&commit.trailers) {
+            add(&mut sessions, s);
+        }
+        // git-ai shows a merge commit as the difference from its first parent,
+        // which repeats the lines of commits that are read on their own.
+        if commit.parents.len() > 1 {
+            continue;
+        }
+        let authorship = gitai.diff(&repo.toplevel, &commit.sha)?;
+        for s in &authorship.sessions {
+            add(&mut sessions, SessionRef::new(&s.tool, &s.id));
+        }
+        for range in authorship.added {
+            let reason = match range.author {
+                Author::Ai(_) => continue,
+                Author::Human => Reason::Human,
+                Author::Untracked => Reason::Untracked,
+            };
+            items.push(Item {
+                path: range.path,
+                reason,
+                commit: Some(commit.sha.clone()),
+                start_line: Some(range.start),
+                end_line: Some(range.end),
+            });
+        }
+    }
+    let protected = config.protected_set()?;
+    for path in repo.changed_paths(base, tip)? {
+        if protected.matches(&path) {
+            items.push(Item { path, reason: Reason::Protected, commit: None, start_line: None, end_line: None });
+        }
+    }
+    Ok(Analysis { commits, sessions, items })
+}
+
+/// The items whose path has no `Prov-Approved` trailer.
+pub fn unapproved<'a>(items: &'a [Item], approvals: &[Approval]) -> Vec<&'a Item> {
+    items.iter().filter(|item| !approvals.iter().any(|a| a.path == item.path)).collect()
+}
+
+/// Checks the sessions of an integration against live state. Returns the
+/// records of the sessions, in start order, and the problems.
+///
+/// - Each session must have a record and be Archived.
+/// - No session may be Open in a worktree whose branch tip is in the incoming range.
+pub fn check_sessions(ctx: &Ctx, analysis: &Analysis) -> Result<(Vec<SessionRecord>, Vec<String>)> {
+    let mut records = Vec::new();
+    let mut problems = Vec::new();
+    for session in &analysis.sessions {
+        // An ID that cannot be a record name has no record.
+        let record = ctx.store.get(&session.id).ok().flatten().filter(|r| r.agent == session.agent);
+        match record {
+            None => problems.push(format!(
+                "session {session} has no record in this clone. A session is integrated from the clone that ran it."
+            )),
+            Some(r) if r.state == State::Archived && r.archive_sha256.as_deref().is_some_and(trailer::is_sha256) => {
+                records.push(r)
+            }
+            Some(r) => problems.push(match r.state {
+                State::Open => format!("session {session} is open. Close it first: prov session close {}", r.id),
+                State::Closing => format!("session {session} is closing. Wait for the archive step, then try again."),
+                State::Failed => format!(
+                    "session {session} is failed ({}). Run the archive step again: prov session close {}",
+                    r.error.as_deref().unwrap_or("no error text"),
+                    r.id
+                ),
+                State::Archived => format!("session {session} has no transcript hash."),
+            }),
+        }
+    }
+    let incoming: BTreeSet<&str> = analysis.commits.iter().map(|c| c.sha.as_str()).collect();
+    for r in ctx.store.sessions()? {
+        if r.state != State::Open || analysis.sessions.iter().any(|s| s.id == r.id && s.agent == r.agent) {
+            continue;
+        }
+        if let Some(tip) = ctx.repo.rev_parse(&format!("refs/heads/{}", r.branch))? {
+            if incoming.contains(tip.as_str()) {
+                problems.push(format!(
+                    "session {}:{} is open in the worktree {} on the branch {}. Close it first: prov session close {}",
+                    r.agent,
+                    r.id,
+                    r.worktree.display(),
+                    r.branch,
+                    r.id
+                ));
+            }
+        }
+    }
+    records.sort_by(|a, b| (a.started_at, &a.id).cmp(&(b.started_at, &b.id)));
+    Ok((records, problems))
+}
+
+/// The integration trailers: one group for each session, in start order, then `Prov-Version`.
+pub fn integration_trailers(records: &[SessionRecord]) -> Result<Vec<Trailer>> {
+    let mut out = Vec::new();
+    for r in records {
+        out.push(Trailer::new(trailer::PROV_SESSION, SessionRef::new(&r.agent, &r.id).to_string())?);
+        let hash = r.archive_sha256.clone().context("an archived session has no transcript hash")?;
+        out.push(Trailer::new(trailer::PROV_TRANSCRIPT_SHA256, hash)?);
+    }
+    out.push(Trailer::new(trailer::PROV_VERSION, full_version())?);
+    Ok(out)
+}
+
+/// The gate, for the merge in progress. Returns false to refuse the commit.
+///
+/// `heads` are the commits of `MERGE_HEAD`. If the merge is not an
+/// integration, the gate does not run and the commit is allowed.
+pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
+    let repo = &ctx.repo;
+    // The config comes from HEAD: the file in the worktree is already the
+    // merged file, with the agent's changes.
+    let head_config = repo.config_at("HEAD")?;
+    let emails = prov_adapters::agent_emails(head_config.as_ref().unwrap_or(&Config::default()));
+    let mut any = false;
+    for head in heads {
+        any |= is_integration(repo, "HEAD", head, &emails)?;
+    }
+    if !any {
+        return Ok(true);
+    }
+    if heads.len() > 1 {
+        say("an octopus merge that contains agent commits is refused. Merge one agent branch at a time.\nTo stop: git merge --abort");
+        return Ok(false);
+    }
+    let tip = &heads[0];
+
+    // 1. The config and the version.
+    let Some(config) = head_config else {
+        say("HEAD has no .provenance.toml. Run `prov init` on the human branch and commit the file.\nTo stop: git merge --abort");
+        return Ok(false);
+    };
+    if let Err(e) = config.check_version(prov_core::VERSION) {
+        say(format!("the integration fails: {e}.\nTo stop: git merge --abort"));
+        return Ok(false);
+    }
+
+    // 2. git-ai writes a note some seconds after a commit.
+    if let Err(e) = ctx.gitai.await_notes(&repo.toplevel) {
+        say(format!("the integration fails: {e:#}.\nRun the commit again: git commit"));
+        return Ok(false);
+    }
+
+    // 3. The sessions.
+    let analysis = analyze(repo, &ctx.gitai, &config, "HEAD", tip)?;
+    let (records, problems) = check_sessions(ctx, &analysis)?;
+
+    // 4. Doubtful ranges and protected paths.
+    let message = repo.message_trailers(message_file)?;
+    let approvals = trailer::approvals(&message);
+    let open = unapproved(&analysis.items, &approvals);
+
+    if !problems.is_empty() || !open.is_empty() {
+        say("the merge gate refuses this integration.");
+        for p in &problems {
+            say(format!("  session: {p}"));
+        }
+        if !open.is_empty() {
+            say("  these items need the approval of a human:");
+            for item in &open {
+                say(format!("    {}", item.describe()));
+            }
+            let mut paths: Vec<&str> = open.iter().map(|i| i.path.as_str()).collect();
+            paths.dedup();
+            let paths: BTreeSet<&str> = paths.into_iter().collect();
+            say("The merge is still in progress. Next steps:");
+            say(format!(
+                "  1. prov approve --merge {}",
+                paths.iter().map(|p| shell_quote(p)).collect::<Vec<_>>().join(" ")
+            ));
+            say("  2. git commit");
+        } else {
+            say("The merge is still in progress. Correct the sessions, then run: git commit");
+        }
+        say("To stop instead: git merge --abort");
+        return Ok(false);
+    }
+
+    // The gate can run twice on one message, for example when the editor
+    // stops the first commit. The trailers go in once.
+    if !trailer::has(&message, trailer::PROV_VERSION) {
+        repo.add_trailers(message_file, &integration_trailers(&records)?)?;
+    }
+    Ok(true)
+}
+
+fn shell_quote(s: &str) -> String {
+    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./+=:@".contains(c)) {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', "'\\''"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn commit(email: &str, trailers: &str) -> CommitInfo {
+        CommitInfo {
+            sha: "a".repeat(40),
+            author_email: email.into(),
+            parents: vec![],
+            subject: "s".into(),
+            trailers: trailer::parse_block(trailers),
+        }
+    }
+
+    #[test]
+    fn human_commits() {
+        let agents = vec!["noreply@anthropic.com".to_string()];
+        assert!(is_human_commit(&commit("me@example.invalid", ""), &agents));
+        assert!(!is_human_commit(&commit("NoReply@Anthropic.com", ""), &agents));
+        // A Prov-Session trailer marks an agent commit, whatever the email ...
+        assert!(!is_human_commit(&commit("me@example.invalid", "Prov-Session: claude:s1\n"), &agents));
+        // ... except on an integration, which also has Prov-Version.
+        let integration = "Prov-Session: claude:s1\nProv-Transcript-SHA256: ab\nProv-Version: 0.1.0+x\n";
+        assert!(is_human_commit(&commit("me@example.invalid", integration), &agents));
+        assert!(!is_human_commit(&commit("noreply@anthropic.com", integration), &agents));
+    }
+
+    #[test]
+    fn approval_is_by_path() {
+        let item = |path: &str, reason| Item { path: path.into(), reason, commit: None, start_line: Some(1), end_line: Some(3) };
+        let items = vec![item("a b.txt", Reason::Human), item("c.txt", Reason::Untracked), item(".claude/x", Reason::Protected)];
+        let approvals = vec![Approval::parse("a b.txt ack").unwrap(), Approval::parse(".claude/x ack").unwrap()];
+        let open = unapproved(&items, &approvals);
+        assert_eq!(open.len(), 1);
+        assert_eq!(open[0].path, "c.txt");
+        assert_eq!(items[0].lines(), 3);
+        assert_eq!(shell_quote("a b.txt"), "'a b.txt'");
+    }
+}
