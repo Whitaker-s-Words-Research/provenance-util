@@ -1,0 +1,14 @@
+.gitignore
+  h_dd7dcb3bf4c9d1 1-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "86d735bb81edf720d1ca844ca3e78b1fff634eba",
+  "prompts": {},
+  "humans": {
+    "h_dd7dcb3bf4c9d1": {
+      "author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
