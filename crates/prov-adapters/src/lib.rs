@@ -74,6 +74,36 @@ pub trait Adapter: Sync {
     fn archive_entries(&self, session_id: &str, transcript: Option<&Path>) -> Result<Vec<ArchiveEntry>>;
     /// True if text that a hook prints at this event reaches the agent's context.
     fn message_reaches_agent(&self, kind: EventKind) -> bool;
+    /// The arguments that make the agent's command resume a session.
+    fn resume_args(&self, session_id: &str) -> Vec<String>;
+    /// The provider part of a model ID, for a model with no provider: `anthropic`.
+    fn model_provider(&self) -> &'static str;
+    /// The tracked settings file of the agent, relative to the root of a
+    /// worktree. It holds the agent hooks, the commit identity and the
+    /// signing setting.
+    fn settings_file(&self) -> &'static str;
+    /// The settings file with the entries of `prov` merged in. All other keys
+    /// stay. `existing` is the text of the file, if it exists.
+    fn merge_settings(&self, existing: Option<&str>, identity: &Identity) -> Result<String>;
+    /// What the settings file lacks. Empty: the file is complete.
+    fn settings_problems(&self, existing: Option<&str>, identity: &Identity) -> Vec<String>;
+    /// Checks that git-ai's own integration of this agent is installed for
+    /// the user in `home`. `Err` holds what is missing.
+    fn gitai_integration(&self, home: &Path) -> std::result::Result<(), String>;
+}
+
+/// The environment that makes an agent commit with its identity and without
+/// a signature: the author, the committer and `commit.gpgsign=false`.
+pub fn commit_env(identity: &Identity) -> Vec<(&'static str, String)> {
+    vec![
+        ("GIT_AUTHOR_NAME", identity.name.clone()),
+        ("GIT_AUTHOR_EMAIL", identity.email.clone()),
+        ("GIT_COMMITTER_NAME", identity.name.clone()),
+        ("GIT_COMMITTER_EMAIL", identity.email.clone()),
+        ("GIT_CONFIG_COUNT", "1".to_string()),
+        ("GIT_CONFIG_KEY_0", "commit.gpgsign".to_string()),
+        ("GIT_CONFIG_VALUE_0", "false".to_string()),
+    ]
 }
 
 static ADAPTERS: [&dyn Adapter; 1] = [&claude_code::ClaudeCode];
