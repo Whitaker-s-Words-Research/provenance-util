@@ -1,0 +1,23 @@
+crates/prov-adapters/src/claude_code.rs
+  s_d458000301c268::t_5461ee2cbe918a 1-219
+crates/prov-adapters/src/lib.rs
+  s_d458000301c268::t_abb35c736210fa 1-141
+crates/prov-adapters/Cargo.toml
+  s_d458000301c268::t_b261ebbe13eef5 1-15
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b6fb9c492cd5b6636c90effcda8f7ecf895e84e2",
+  "prompts": {},
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-fable-5-2"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
