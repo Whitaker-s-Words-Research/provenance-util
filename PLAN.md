@@ -1,0 +1,100 @@
+# prov: implementation plan
+
+Written 2026-11-11. Nothing is implemented yet. The specification is [SPEC.md](SPEC.md); read it first. The user-facing overview is [README.md](README.md).
+
+The work is split into three sessions. Start each in a new Claude Code session, in this directory.
+
+| Session | Model | Scope | Why this model |
+|---|---|---|---|
+| 1. Core | Fable | Workspace, sessions, hooks, sweep, merge gate, `prov check` | These parts depend on each other, and a wrong design choice here is expensive. |
+| 2. Commands | Opus (or Fable if the usage limit allows) | `init`, `doctor`, `start`, `finish`, `session`, archive step, `approve`, `trace export`, plumbing | They follow the spec closely and have little design left. |
+| 3. Copy | Fable | `prov cp` | It is the largest part of the design that no test has touched. |
+
+OpenCode is phase 2 and is not in this plan. See "Appendix: phase 2, OpenCode" in the spec. Do not make phase 1 rules specific to Claude Code; the appendix lists the six rules that must stay general.
+
+## Session 1: core (Fable)
+
+Build these together, in this order. Each row names the spec section to follow.
+
+- [x] **Workspace.** Cargo workspace with the five crates from "Build and release": `prov-core`, `prov-git`, `prov-adapters`, `prov-gitai`, `prov`. Pinned toolchain in `rust-toolchain.toml`. License MIT.
+- [x] **Test harness.** Integration tests that create temporary git repositories with worktrees and run the real `git` and `git-ai`. See "Tests" and the notes on testing below.
+- [x] **Config and live state.** Read `.provenance.toml` (five keys, plus the optional `[agent.<name>]` section). Session records in `.git/provenance/sessions/`, with the file lock. See "Configuration" and "Live state".
+- [x] **Session state machine.** Open, Closing, Archived, Failed. Stale is calculated, not stored. Contended worktrees. See "Session states" and "Binding rules".
+- [x] **Claude Code hooks.** `prov hook claude-code <event>` for SessionStart, UserPromptSubmit, Stop and SessionEnd. Each must return in less than 100 ms at the 95th percentile. See "Agent hooks".
+- [x] **Sweep.** The `agent-v1` checkpoint at each Stop and in `pre-commit`, with the session ID and the correct model. See "Keeping attribution complete" and "Agent model".
+- [x] **Git hooks.** `prov hook git <name>` for `pre-commit`, `prepare-commit-msg`, `post-commit` and `post-merge`. See "Git hooks".
+- [x] **Merge gate.** What counts as an integration, the sessions of an integration, doubtful lines, protected paths, the integration trailers, refusing a squash. See "Integration into the human branch" and "The merge gate".
+- [x] **`prov check`.** The three forms: no argument, an agent branch, a range for CI. It shares the rules of the gate. See "Checking".
+
+For session 1, a minimal archive step is enough to reach the Archived state (the gate needs a transcript hash). The full archive rules are in session 2.
+
+Done when: an integration test runs a recorded Claude Code session in an agent worktree, merges the branch, sees the gate refuse a doubtful line, approves it by writing the trailer into the merge message by hand, completes the merge, and `prov check <base>..<tip>` passes.
+
+**Status: done on 2026-11-11, not committed.** `cargo test --workspace` passes. The "done when" test is `crates/prov/tests/integration.rs`.
+
+What session 1 left for session 2, beyond its list:
+
+- The git hooks do not yet run `<name>.local`.
+- `prov approve` does not exist. The tests write `Prov-Approved` into `.git/MERGE_MSG` with `git interpret-trailers`. A trailer added by hand must be in the last paragraph of the message, in one block with the other trailers; git ignores a trailer in an earlier paragraph.
+- The gate messages name `prov session close`, which does not exist yet.
+- The archive step is complete (deterministic tar, hash, gzip, detached process, Failed state). Session 2 only has to call it from `prov session close`.
+- `prov hook` is parsed by hand in `main.rs`, before clap. Keep it so: building the clap parser costs more than the rest of a hook.
+
+## Session 2: commands (Opus, or Fable)
+
+- [ ] **`prov init`.** Config file, shims in the hooks directory, Claude Code settings, `mergeoptions` and `pull.ff`. Keeps an existing hook as `<name>.local`. Stops if the hooks directory is inside a worktree.
+- [ ] **`prov doctor`.** The eight checks in "Doctor checks".
+- [ ] **`prov start`.** Worktree, branch name by convention, launch, `--resume`, `--no-launch`.
+- [ ] **`prov finish`.** `git worktree remove`, the refusal while a session is Open or Closing, `--override`, `--force`.
+- [ ] **`prov session`.** `list`, `show`, `close`, `drop`.
+- [ ] **Archive step, complete.** The deterministic tar with the transcript and the `<session ID>/` directory, SHA-256 before compression, the gzip file, the detached process, the Failed state. See "Archive step".
+- [ ] **`prov approve`.** `--merge` writes the trailer into `.git/MERGE_MSG`. `--human` and `--ai` run the checkpoints and keep the approval in live state until the commit. See "Approval".
+- [ ] **`prov trace export`.** Records from `git-ai diff --json`, validated against `vendor/agent-trace/0.1.0/`. See "Trace export".
+- [ ] **Plumbing.** `--json` and `--dry-run` on every command, the latency test, CI on Linux and macOS, release builds with `--locked`.
+
+Done when: every command in the "Commands" table except `prov cp` works, and `prov doctor` passes in a repository that `prov init` set up.
+
+## Session 3: copy (Fable)
+
+- [ ] **Plan.** Build the plan from `git-ai blame --json` (only AI sessions are inherited), `--all`, `--missing`. TOML format with `author = "?"` for unresolved ranges.
+- [ ] **Resolving.** Editor flow, `--plan <file>`, `--apply <file>`, the printed summary.
+- [ ] **Replay.** Staged writes with `known_human` and `agent-v1` checkpoints. Directories, binary files, symbolic links, the executable bit.
+- [ ] **Guard and trailers.** Copy guard in `pre-commit`, one `Copied-From` trailer for each file.
+- [ ] **Deferred check.** Compare the note with the plan after the commit; report through `prov doctor`.
+- [ ] **Recipe test.** The steps in "Replacing the authorship of a file" work as written.
+
+Done when: a test copies a directory with files of mixed authorship into one commit and each file agrees with its plan.
+
+## Notes on testing
+
+These come from tests during the design work. The evidence is in "Appendix: test evidence" in the spec.
+
+- **Run git-ai tests outside an agent session, with a clean environment** (`env -i HOME=... PATH=...`). Inside a Claude Code session, git-ai's own hooks attribute changes made by test commands to that session. This happened once during the design work.
+- **A test repository needs a remote that git-ai allows.** On this machine, `allow_repositories` is `github.com/Whitaker-s-Words-Research/*`. A remote URL under that name is enough; nothing is pushed.
+- **git-ai writes a note 1 to 6 seconds after a commit.** Run `git-ai await --timeout 60` before reading it.
+- **The git-ai service must run.** Check with `git-ai bg status --repo <dir>`.
+- **Inside an agent session, give the tests their own git-ai service.** The harness in `crates/prov/tests/common/mod.rs` does this: a new `HOME` in `/tmp` with its own `.gitconfig` (the `trace2.eventTarget` socket of that home) and `git-ai bg start`. The agent's git-ai hooks then cannot reach the test repositories, and no allowed remote is necessary, because the new home has no `allow_repositories`. The home must be a short path: git-ai moves its sockets to `/tmp/git-ai-d-*` when the path is too long for a Unix socket, and the trace2 target is then wrong.
+- **Run the binary from a local disk when you measure time.** This checkout is on a 9p mount. The start of any binary from it takes about 40 ms. The harness copies `prov` to `/tmp` first. From there, the agent hooks take 4 to 10 ms (median).
+- **With `mergeoptions = --no-ff`, git itself refuses `git merge --squash`** ("cannot be used together"). A squash needs `--squash --ff`. The refusal in `prepare-commit-msg` covers that case.
+- **Tested versions:** git 2.53, git-ai 1.7.6, Claude Code 2.1.322, Rust 1.93.1 (installed at `/usr/bin/cargo`). Check the appendix results again if a version changes.
+
+## Constraints from the user
+
+- **No API costs outside Claude Code.** Before a test calls a model, say what it bills to. Short `claude -p` runs use the Claude Code login and are acceptable in small numbers. Do not run other agents or API calls without asking.
+- **Design choices go to the user as questions**, with a recommendation, not as direct edits to the spec.
+- **A human owns the responsibility for what goes into the human branch.** Integration through a forge's merge button is never to be supported.
+- **Nothing in this repository is committed yet.** Ask before the first commit, and before any push.
+
+## Open questions in the spec
+
+1. Where is the `prov` repository published?
+2. How does an untracked line appear in `git-ai diff --json`? The gate defines it as an added line with no session and no human. No test could produce one with git-ai 1.7.6.
+
+## Parts of the design that no test has touched
+
+Expect these to need changes when they are built. Raise them with the user.
+
+- The copy plan and its editor flow (session 3).
+- Running an existing hook as `<name>.local` (session 2).
+- Refusing a local squash in `prepare-commit-msg` (session 1). Now tested with real git; it works. It reads the squashed commits from `.git/SQUASH_MSG`.
+- Contended worktrees with two real sessions (session 1). Tested with recorded hook payloads only, not with two real Claude Code processes.
