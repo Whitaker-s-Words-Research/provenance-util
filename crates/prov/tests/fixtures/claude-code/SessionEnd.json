@@ -1,0 +1,1 @@
+{"session_id":"{{SESSION}}","transcript_path":"{{TRANSCRIPT}}","cwd":"{{CWD}}","hook_event_name":"SessionEnd","reason":"prompt_input_exit"}

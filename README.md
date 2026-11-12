@@ -30,7 +30,7 @@ When AI agents and people both commit to a repository, three questions come up l
 3. **The gate stops on anything doubtful.** A line is doubtful when git-ai cannot say who wrote it. A change to a protected file, such as the agent's own settings, is also doubtful. You approve each item, or you stop the merge.
 4. **The merge commit carries the record.** It names each session and the hash of its transcript.
 
-A human owns the responsibility for what goes into the main branch. For that reason, `prov` supports only local merges. It does not support the merge button of a forge such as GitHub, and it never will.
+A human owns the responsibility for what goes into the main branch. The same rule applies to every branch that is not an agent branch (`agent/**`): you can work on a feature branch, start agent branches from it, and merge them back into it through the same gate. For that reason, `prov` supports only local merges. It does not support the merge button of a forge such as GitHub, and it never will.
 
 ## Requirements
 
@@ -117,7 +117,7 @@ git-ai blame src/parse.py
 | `prov start <agent>` | Creates a worktree on a new agent branch and starts the agent there. |
 | `prov check` | Lists agent branches that are not merged yet. |
 | `prov check <agent branch>` | Shows what the merge gate will ask about, before you merge. |
-| `prov check <base>..<tip>` | Checks commits already on the main branch. This is the command for CI. |
+| `prov check <base>..<tip>` | Checks commits already on the main branch, and on the feature branches merged into it. This is the command for CI. |
 | `prov approve <path>...` | Records your decision about a file. See "Approving" below. |
 | `prov session list` / `show` / `close` / `drop` | Shows sessions, ends one that did not end by itself, or deletes the record of one. |
 | `prov finish <branch>` | Removes an agent worktree and keeps the branch. |
@@ -179,7 +179,6 @@ The job needs the full history, not a shallow clone. It fails when:
 
 ```toml
 required_version = "=0.1.0"
-human_branch = "main"
 agents = ["claude"]
 logs_dir = "llm-logs"
 protected = [".provenance.toml", ".claude/**", ".github/workflows/**"]

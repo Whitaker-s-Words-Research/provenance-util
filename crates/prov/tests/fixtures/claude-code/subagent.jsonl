@@ -1,0 +1,2 @@
+{"type":"user","isSidechain":true,"message":{"role":"user","content":"Find the parser entry point."},"uuid":"s-1"}
+{"type":"assistant","isSidechain":true,"message":{"role":"assistant","model":"claude-haiku-5-5","content":[{"type":"text","text":"src/parse.py"}]},"uuid":"s-2"}

@@ -1,0 +1,4 @@
+{"type":"user","sessionId":"{{SESSION}}","cwd":"{{CWD}}","message":{"role":"user","content":"Add the parser tests."},"uuid":"u-1","timestamp":"2026-11-11T15:00:00.000Z"}
+{"type":"assistant","sessionId":"{{SESSION}}","message":{"id":"msg_1","type":"message","role":"assistant","model":"claude-fable-5-2","content":[{"type":"text","text":"I will add them."}]},"uuid":"a-1","timestamp":"2026-11-11T15:00:05.000Z"}
+{"type":"user","sessionId":"{{SESSION}}","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t-1","content":"ok"}]},"uuid":"u-2","timestamp":"2026-11-11T15:00:09.000Z"}
+{"type":"assistant","sessionId":"{{SESSION}}","message":{"id":"msg_2","type":"message","role":"assistant","model":"claude-fable-5-2","content":[{"type":"text","text":"Done."}]},"uuid":"a-2","timestamp":"2026-11-11T15:00:12.000Z"}
