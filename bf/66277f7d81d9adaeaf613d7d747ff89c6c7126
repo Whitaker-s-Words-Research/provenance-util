@@ -1,0 +1,21 @@
+.github/workflows/ci.yml
+  s_d458000301c268::t_b3ea78c9cd716a 1-30
+.github/workflows/release.yml
+  s_d458000301c268::t_5ea2f675956d47 1-57
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "bf66277f7d81d9adaeaf613d7d747ff89c6c7126",
+  "prompts": {},
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "unknown"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
