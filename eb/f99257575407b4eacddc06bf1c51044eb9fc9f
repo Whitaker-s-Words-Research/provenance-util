@@ -1,0 +1,54 @@
+.provenance.toml
+  h_dd7dcb3bf4c9d1 4
+AGENTS.md
+  h_dd7dcb3bf4c9d1 1-64
+CLAUDE.md
+  h_dd7dcb3bf4c9d1 1-12
+PLAN.md
+  h_dd7dcb3bf4c9d1 3
+README.md
+  h_dd7dcb3bf4c9d1 65,74,76,78,81-83,86-90,93,95,97-106,108
+SPEC.md
+  h_dd7dcb3bf4c9d1 371,602
+crates/prov-core/src/config.rs
+  h_dd7dcb3bf4c9d1 51-58,129
+crates/prov-core/src/pattern.rs
+  h_dd7dcb3bf4c9d1 173,178-183
+crates/prov/tests/common/mod.rs
+  h_dd7dcb3bf4c9d1 318
+crates/prov/tests/gate.rs
+  h_dd7dcb3bf4c9d1 34-35,52-53,62-63,72
+docs/README.md
+  h_dd7dcb3bf4c9d1 1-18
+docs/ci.md
+  h_dd7dcb3bf4c9d1 1-39
+docs/commands.md
+  h_dd7dcb3bf4c9d1 1-143
+docs/configuration.md
+  h_dd7dcb3bf4c9d1 1-62
+docs/copying.md
+  h_dd7dcb3bf4c9d1 1-87
+docs/development.md
+  h_dd7dcb3bf4c9d1 1-69
+docs/getting-started.md
+  h_dd7dcb3bf4c9d1 1-89
+docs/how-it-works.md
+  h_dd7dcb3bf4c9d1 1-99
+docs/record.md
+  h_dd7dcb3bf4c9d1 1-87
+docs/troubleshooting.md
+  h_dd7dcb3bf4c9d1 1-96
+docs/workflow.md
+  h_dd7dcb3bf4c9d1 1-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ebf99257575407b4eacddc06bf1c51044eb9fc9f",
+  "prompts": {},
+  "humans": {
+    "h_dd7dcb3bf4c9d1": {
+      "author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
