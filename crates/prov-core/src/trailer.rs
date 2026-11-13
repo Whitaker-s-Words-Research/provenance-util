@@ -8,6 +8,9 @@ pub const PROV_SESSION: &str = "Prov-Session";
 pub const PROV_TRANSCRIPT_SHA256: &str = "Prov-Transcript-SHA256";
 pub const PROV_APPROVED: &str = "Prov-Approved";
 pub const PROV_VERSION: &str = "Prov-Version";
+/// In an integration group: the model of the session, from its record. The
+/// git-ai note can lack it (`unknown`); see "Agent model" in the spec.
+pub const PROV_MODEL: &str = "Prov-Model";
 pub const COPIED_FROM: &str = "Copied-From";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -140,6 +143,23 @@ pub fn session_groups(trailers: &[Trailer]) -> Vec<(SessionRef, Option<String>)>
     groups
 }
 
+/// The `Prov-Model` of each session group of an integration. A `Prov-Model`
+/// belongs to the `Prov-Session` before it.
+pub fn session_models(trailers: &[Trailer]) -> Vec<(SessionRef, String)> {
+    let mut out = Vec::new();
+    let mut current: Option<SessionRef> = None;
+    for t in trailers {
+        if t.key == PROV_SESSION {
+            current = SessionRef::parse(&t.value);
+        } else if t.key == PROV_MODEL {
+            if let Some(session) = &current {
+                out.push((session.clone(), t.value.clone()));
+            }
+        }
+    }
+    out
+}
+
 pub fn sessions(trailers: &[Trailer]) -> Vec<SessionRef> {
     trailers.iter().filter(|t| t.key == PROV_SESSION).filter_map(|t| SessionRef::parse(&t.value)).collect()
 }
@@ -152,18 +172,41 @@ pub fn has(trailers: &[Trailer], key: &str) -> bool {
     trailers.iter().any(|t| t.key == key)
 }
 
-/// The path of a `Copied-From` value: `<source>@<commit>:<path>`.
-pub fn copied_from_path(value: &str) -> Option<&str> {
+/// The separator before the destination in a `Copied-From` value, when the
+/// file has another path in this repository than in the source.
+pub const COPIED_TO: &str = " => ";
+
+/// The value of a `Copied-From` trailer: `<source>@<commit>:<path>`, and
+/// ` => <dest>` after it if the destination is not `<path>`.
+pub fn copied_from_value(source: &str, commit: &str, path: &str, dest: &str) -> String {
+    if path == dest {
+        format!("{source}@{commit}:{path}")
+    } else {
+        format!("{source}@{commit}:{path}{COPIED_TO}{dest}")
+    }
+}
+
+/// `<path>` and the destination of a `Copied-From` value.
+fn copied_from_parts(value: &str) -> Option<(&str, &str)> {
     let bytes = value.as_bytes();
     // Find `@<40 or 64 hex>:` from the right; the source can contain `@` and `:`.
     for (at, _) in value.match_indices('@').collect::<Vec<_>>().into_iter().rev() {
         let rest = &bytes[at + 1..];
         let hex = rest.iter().take_while(|b| b.is_ascii_hexdigit()).count();
         if (hex == 40 || hex == 64) && rest.get(hex) == Some(&b':') {
-            return Some(&value[at + 1 + hex + 1..]);
+            let tail = &value[at + 1 + hex + 1..];
+            return Some(match tail.rsplit_once(COPIED_TO) {
+                Some((path, dest)) => (path, dest),
+                None => (tail, tail),
+            });
         }
     }
     None
+}
+
+/// The path in this repository of a `Copied-From` value.
+pub fn copied_from_dest(value: &str) -> Option<&str> {
+    copied_from_parts(value).map(|(_, dest)| dest)
 }
 
 #[cfg(test)]
@@ -183,13 +226,13 @@ mod tests {
         };
         let alphabet: Vec<char> = "abcXYZ019 :/.-_@#é\t".chars().collect();
         for _ in 0..2000 {
-            let len = (next() % 40) as usize;
-            let mut value: Vec<char> = (0..len).map(|_| alphabet[(next() % alphabet.len() as u64) as usize]).collect();
+            let len = usize::try_from(next() % 40).unwrap();
+            let mut value: Vec<char> = (0..len).map(|_| alphabet[usize::try_from(next() % alphabet.len() as u64).unwrap()]).collect();
             let clean: String = value.iter().collect();
             if !clean.trim().is_empty() {
                 assert!(Trailer::new(PROV_APPROVED, clean.clone()).is_ok(), "{clean:?}");
             }
-            let pos = (next() % (len as u64 + 1)) as usize;
+            let pos = usize::try_from(next() % (len as u64 + 1)).unwrap();
             let brk = match next() % 3 {
                 0 => "\n",
                 1 => "\r",
@@ -199,7 +242,7 @@ mod tests {
                 value.insert(pos + i, c);
             }
             let broken: String = value.iter().collect();
-            for key in [PROV_SESSION, PROV_TRANSCRIPT_SHA256, PROV_APPROVED, PROV_VERSION, COPIED_FROM] {
+            for key in [PROV_SESSION, PROV_TRANSCRIPT_SHA256, PROV_MODEL, PROV_APPROVED, PROV_VERSION, COPIED_FROM] {
                 assert!(Trailer::new(key, broken.clone()).is_err(), "{broken:?}");
             }
         }
@@ -233,9 +276,23 @@ mod tests {
     }
 
     #[test]
+    fn models_belong_to_the_group_before_them() {
+        let text = "Prov-Session: claude:a\nProv-Transcript-SHA256: x\nProv-Model: m1\nProv-Session: claude:b\nProv-Transcript-SHA256: y\nProv-Version: 0.1.0+s\n";
+        let trailers = parse_block(text);
+        assert_eq!(session_models(&trailers), vec![(SessionRef::new("claude", "a"), "m1".to_string())]);
+        // A model does not break the group of a session and its hash.
+        assert_eq!(session_groups(&trailers)[0], (SessionRef::new("claude", "a"), Some("x".to_string())));
+    }
+
+    #[test]
     fn copied_from() {
         let sha = "a".repeat(40);
-        assert_eq!(copied_from_path(&format!("git@github.com:o/r.git@{sha}:src/a b.py")), Some("src/a b.py"));
-        assert_eq!(copied_from_path("nothing"), None);
+        assert_eq!(copied_from_dest(&format!("git@github.com:o/r.git@{sha}:src/a b.py")), Some("src/a b.py"));
+        assert_eq!(copied_from_dest("nothing"), None);
+        let same = copied_from_value("/srv/r", &sha, "a.py", "a.py");
+        assert_eq!(same, format!("/srv/r@{sha}:a.py"));
+        assert_eq!(copied_from_dest(&same), Some("a.py"));
+        let moved = copied_from_value("/srv/r", &sha, "src/a.py", "lib/b.py");
+        assert_eq!(copied_from_parts(&moved), Some(("src/a.py", "lib/b.py")));
     }
 }
