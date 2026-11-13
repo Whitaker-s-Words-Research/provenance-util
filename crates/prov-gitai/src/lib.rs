@@ -13,8 +13,49 @@ use std::process::{Command, Stdio};
 use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 
-/// The compatibility baseline.
+/// The compatibility baseline: the oldest git-ai that `prov` supports.
 pub const BASELINE_VERSION: &str = "1.7.6";
+/// The newest git-ai that the contract tests (`crates/prov/tests/gitai_contract.rs`)
+/// passed against. Raise it only after that suite passes against the new
+/// version, and record the run in "Appendix: test evidence" of the spec.
+pub const TESTED_VERSION: &str = "1.7.6";
+
+/// How an installed git-ai version relates to the supported range.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Compat {
+    /// Older than the baseline, or not a version that `prov` can read.
+    Unsupported,
+    /// From the baseline to the tested version.
+    Tested,
+    /// Newer than the tested version. It can work; no test shows that it does.
+    Untested,
+}
+
+/// A version such as `1.7.6`, `v1.10.0-beta` or `1.7.6+abc`, as numbers.
+pub fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
+    let mut parts = text.trim_start_matches('v').split(['.', '-', '+']);
+    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
+}
+
+/// Where `version` falls in the supported range.
+pub fn compat(version: &str) -> Compat {
+    let (Some(v), Some(base), Some(tested)) =
+        (parse_version(version), parse_version(BASELINE_VERSION), parse_version(TESTED_VERSION))
+    else {
+        return Compat::Unsupported;
+    };
+    if v < base {
+        Compat::Unsupported
+    } else if v <= tested {
+        Compat::Tested
+    } else {
+        Compat::Untested
+    }
+}
+/// The tool name of the checkpoint that taints changes: lines that `prov`
+/// cannot give to a session. Each taint gets a new conversation ID, so no
+/// record and no trailer ever names it, and the gate lists its lines.
+pub const UNATTRIBUTED_TOOL: &str = "prov-unattributed";
 /// The time limit for `git-ai await`, in seconds.
 pub const AWAIT_TIMEOUT_SECS: u32 = 60;
 
@@ -137,6 +178,37 @@ pub fn parse_diff(json: &str) -> Result<CommitAuthorship> {
     Ok(CommitAuthorship { added, sessions })
 }
 
+/// Parses the output of `git-ai blame <file> --json`: `lines` maps line
+/// ranges (`"3-4"`, `"7"`, or several with commas) to a key of `prompts`.
+pub fn parse_blame(json: &str) -> Result<Vec<(u32, u32, AiSession)>> {
+    #[derive(Deserialize)]
+    struct Raw {
+        #[serde(default)]
+        lines: BTreeMap<String, String>,
+        #[serde(default)]
+        prompts: BTreeMap<String, RawSession>,
+    }
+    let raw: Raw = serde_json::from_str(json).context("unexpected output of git-ai blame --json")?;
+    let mut out = Vec::new();
+    for (ranges, key) in &raw.lines {
+        let prompt = raw.prompts.get(key).with_context(|| format!("git-ai blame names the prompt {key} and does not define it"))?;
+        let a = &prompt.agent_id;
+        let session =
+            AiSession { tool: a.tool.clone(), id: a.id.clone(), model: a.model.clone().unwrap_or_else(|| "unknown".into()) };
+        for part in ranges.split(',') {
+            let part = part.trim();
+            let (start, end) = match part.split_once('-') {
+                Some((a, b)) => (a.parse::<u32>(), b.parse::<u32>()),
+                None => (part.parse::<u32>(), part.parse::<u32>()),
+            };
+            let (Ok(start), Ok(end)) = (start, end) else { bail!("git-ai blame has the line range `{part}`") };
+            out.push((start, end, session.clone()));
+        }
+    }
+    out.sort();
+    Ok(out)
+}
+
 impl GitAi {
     /// git-ai gets no git hook environment: it must find the repository from
     /// the directory, as it does when an agent runs it.
@@ -165,7 +237,7 @@ impl GitAi {
             .output();
         match out {
             Ok(out) if out.status.success() => {
-                serde_json::from_slice::<Status>(&out.stdout).map(|s| s.ok).unwrap_or(false)
+                serde_json::from_slice::<Status>(&out.stdout).is_ok_and(|s| s.ok)
             }
             _ => false,
         }
@@ -213,6 +285,46 @@ impl GitAi {
             bail!("git-ai checkpoint failed: {}", String::from_utf8_lossy(&out.stderr).trim());
         }
         Ok(())
+    }
+
+    /// The checkpoint before an AI edit: `agent-v1` with type `human` on
+    /// `files`. What the files hold now is not the work of the session.
+    pub fn checkpoint_before_ai(&self, worktree: &Path, files: &[PathBuf]) -> Result<()> {
+        let payload = serde_json::json!({
+            "type": "human",
+            "repo_working_dir": worktree,
+            "will_edit_filepaths": files,
+        });
+        let mut child = self
+            .command(worktree)
+            .args(["checkpoint", "agent-v1", "--hook-input", "stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::piped())
+            .spawn()
+            .context("cannot run git-ai")?;
+        child.stdin.take().context("no stdin")?.write_all(payload.to_string().as_bytes())?;
+        let out = child.wait_with_output()?;
+        if !out.status.success() {
+            bail!("git-ai checkpoint failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+        }
+        Ok(())
+    }
+
+    /// The AI ranges of a file as it is in `worktree`, from
+    /// `git-ai blame <file> --json`. Lines of humans are not listed. The
+    /// file must be equal to its committed content.
+    pub fn blame(&self, worktree: &Path, file: &str) -> Result<Vec<(u32, u32, AiSession)>> {
+        let out = self
+            .command(worktree)
+            .args(["blame", file, "--json"])
+            .stdin(Stdio::null())
+            .output()
+            .context("cannot run git-ai")?;
+        if !out.status.success() {
+            bail!("git-ai blame {file} failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+        }
+        parse_blame(&String::from_utf8_lossy(&out.stdout)).with_context(|| format!("file {file}"))
     }
 
     /// The checkpoint of `prov approve --human`: every change to `files`
@@ -272,7 +384,8 @@ impl GitAi {
         }
     }
 
-    /// Waits until the service has written the notes of new commits.
+    /// Waits until the service has done its queued work: the checkpoints it
+    /// has received, and the notes of new commits.
     pub fn await_notes(&self, worktree: &Path) -> Result<()> {
         let out = self
             .command(worktree)
@@ -341,9 +454,36 @@ mod tests {
     }
 
     #[test]
+    fn parses_blame() {
+        // Output of git-ai 1.7.6, shortened.
+        let json = r#"{"lines": {"3-4": "s_e2::t_64", "7,9-10": "s_e2::t_64"},
+          "prompts": {"s_e2::t_64": {"agent_id": {"tool": "claude", "id": "s1", "model": "m1"}, "human_author": "T"}},
+          "metadata": {"is_logged_in": false}}"#;
+        let ranges = parse_blame(json).unwrap();
+        let s = AiSession { tool: "claude".into(), id: "s1".into(), model: "m1".into() };
+        assert_eq!(ranges, vec![(3, 4, s.clone()), (7, 7, s.clone()), (9, 10, s)]);
+        assert_eq!(parse_blame(r#"{"lines": {}, "prompts": {}}"#).unwrap(), [] as [(u32, u32, AiSession); 0]);
+        assert!(parse_blame(r#"{"lines": {"1": "x"}, "prompts": {}}"#).is_err());
+    }
+
+    #[test]
     fn empty_output() {
         let a = parse_diff(r#"{"files":{},"prompts":{},"hunks":[],"commits":{}}"#).unwrap();
         assert!(a.added.is_empty() && a.sessions.is_empty());
         assert!(parse_diff("not json").is_err());
+    }
+
+    #[test]
+    fn versions_and_the_supported_range() {
+        assert_eq!(parse_version("1.7.6"), Some((1, 7, 6)));
+        assert_eq!(parse_version("v1.10.0-beta"), Some((1, 10, 0)));
+        assert_eq!(parse_version("1.7"), None);
+        assert_eq!(compat("1.7"), Compat::Unsupported);
+        assert_eq!(compat("1.7.5"), Compat::Unsupported);
+        assert_eq!(compat(BASELINE_VERSION), Compat::Tested);
+        assert_eq!(compat(TESTED_VERSION), Compat::Tested);
+        let (a, b, c) = parse_version(TESTED_VERSION).unwrap();
+        assert_eq!(compat(&format!("{a}.{b}.{}", c + 1)), Compat::Untested);
+        assert_eq!(compat(&format!("{}.0.0", a + 1)), Compat::Untested);
     }
 }
