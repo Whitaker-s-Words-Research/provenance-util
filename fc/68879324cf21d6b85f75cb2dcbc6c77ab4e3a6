@@ -1,0 +1,46 @@
+docs/getting-started.md
+  s_1733e838cf38a3::t_687dce07ae6ba5 1-89
+docs/record.md
+  s_1733e838cf38a3::t_5d1c4a354c48a1 1-81,83-87
+  s_1733e838cf38a3::t_898d7a00b8d4df 82
+docs/README.md
+  s_1733e838cf38a3::t_24b34e6cc5da23 1-18
+docs/commands.md
+  s_1733e838cf38a3::t_7ffa4f4f6ba488 1-143
+docs/ci.md
+  s_1733e838cf38a3::t_1e74da364abf89 1-39
+PLAN.md
+  s_1733e838cf38a3::t_2ff75b5b9f163e 3
+README.md
+  s_1733e838cf38a3::t_e237218e7b0379 65,74,76,78,81-83,86-90,93,95,97-106,108
+docs/troubleshooting.md
+  s_1733e838cf38a3::t_a9b4cbd2758e2a 1-91,93-96
+  s_1733e838cf38a3::t_b672419bf7af51 92
+docs/configuration.md
+  s_1733e838cf38a3::t_e7d3dc07f5b5fc 1-62
+docs/development.md
+  s_1733e838cf38a3::t_fa6a115a292cf9 1-24,26-69
+  s_1733e838cf38a3::t_b672419bf7af51 25
+docs/how-it-works.md
+  s_1733e838cf38a3::t_d60113e5aa4e71 1-99
+docs/copying.md
+  s_1733e838cf38a3::t_c9bb45a1e4a931 1-87
+docs/workflow.md
+  s_1733e838cf38a3::t_b46c1c7de9bf34 1-155
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "fc68879324cf21d6b85f75cb2dcbc6c77ab4e3a6",
+  "prompts": {},
+  "sessions": {
+    "s_1733e838cf38a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fabfe3bd-54e1-4a11-b94e-1fe0075d2e91",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
