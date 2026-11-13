@@ -1,0 +1,40 @@
+crates/prov-core/src/trailer.rs
+  s_d458000301c268::t_cdbc75b0b34698 11-13,146-162,175-190,197-201,207-211,229-230,235,245,278-286,290-296
+crates/prov-core/src/lib.rs
+  s_d458000301c268::t_af68ad5daed6ca 6,11,20
+crates/prov-core/src/state.rs
+  s_d458000301c268::t_5a963bdf0a1d66 44-47,78,100,110-112,115,117,149-161,202-204,206,212-313,382-458,580-604,606-632,671-702,722,754-757,771
+crates/prov-core/src/config.rs
+  s_93daf0a95a694d::t_9136520c58a454 1,28-32,62,80-84
+crates/prov-core/src/plan.rs
+  s_d458000301c268::t_eaaa3ce234d1be 1-437
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e7a42d1d846a06c74400e7b57b8e38ba5cd124da",
+  "prompts": {},
+  "humans": {
+    "h_dd7dcb3bf4c9d1": {
+      "author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  },
+  "sessions": {
+    "s_93daf0a95a694d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1ca1983f-fa22-4ef0-b89d-6da85a6faef1",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    },
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
