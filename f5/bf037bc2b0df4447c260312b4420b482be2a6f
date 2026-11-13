@@ -1,0 +1,28 @@
+crates/prov/src/session.rs
+  s_ab79b924a6f68d::t_7348beff183aef 26-40,72,88-116,130-131,138-141,144,146-150,158-159,165-167,293-304
+crates/prov-adapters/src/claude_code.rs
+  s_ab79b924a6f68d::t_7922981e0bbabf 56,59-68,142,156-178,341-359
+  s_ab79b924a6f68d::t_d014d15af85b2c 360-361
+crates/prov-adapters/src/lib.rs
+  s_ab79b924a6f68d::t_7922981e0bbabf 73-75
+crates/prov/tests/commands.rs
+  s_ab79b924a6f68d::t_fc583ec0fe5707 206-209
+docs/commands.md
+  s_ab79b924a6f68d::t_ac95b7c7d14904 98-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "f5bf037bc2b0df4447c260312b4420b482be2a6f",
+  "prompts": {},
+  "sessions": {
+    "s_ab79b924a6f68d": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "dc96152a-2d6d-4fbd-b79f-583761572a92",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
