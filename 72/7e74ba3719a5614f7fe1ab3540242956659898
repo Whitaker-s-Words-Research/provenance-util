@@ -1,0 +1,38 @@
+Cargo.lock
+  h_dd7dcb3bf4c9d1 110-121,276-284,352,525-530
+Cargo.toml
+  h_dd7dcb3bf4c9d1 40
+PLAN.md
+  h_dd7dcb3bf4c9d1 9
+README.md
+  h_dd7dcb3bf4c9d1 102-109,127,146,193,291
+SPEC.md
+  h_dd7dcb3bf4c9d1 104,171,188,571
+crates/prov/Cargo.toml
+  h_dd7dcb3bf4c9d1 17
+crates/prov/src/complete.rs
+  h_dd7dcb3bf4c9d1 1-70
+crates/prov/src/completions.rs
+  h_dd7dcb3bf4c9d1 1-152
+crates/prov/src/finish.rs
+  h_dd7dcb3bf4c9d1 29-34,74-90,132-139
+crates/prov/src/init.rs
+  h_dd7dcb3bf4c9d1 292-295
+crates/prov/src/main.rs
+  h_dd7dcb3bf4c9d1 7-8,28-29,65,69,94,109-121,145,154,156-158,164,184,191,200,277,290,334-336,367-373
+crates/prov/src/start.rs
+  h_dd7dcb3bf4c9d1 57-62,68-73,112,174-175,177-189,223,233-243
+crates/prov/tests/commands.rs
+  h_dd7dcb3bf4c9d1 263-264,330-332,533-615
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "727e74ba3719a5614f7fe1ab3540242956659898",
+  "prompts": {},
+  "humans": {
+    "h_dd7dcb3bf4c9d1": {
+      "author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
