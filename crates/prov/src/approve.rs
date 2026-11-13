@@ -54,7 +54,7 @@ fn confirm(question: &str) -> Result<bool> {
     Ok(line.trim() == "yes")
 }
 
-pub fn run(args: Args) -> Result<bool> {
+pub fn run(args: &Args) -> Result<bool> {
     let ctx = Ctx::here()?;
     let repo = &ctx.repo;
     if let Some(var) = prov_adapters::agent_env_marker() {
@@ -88,8 +88,8 @@ pub fn run(args: Args) -> Result<bool> {
         approved: false,
     };
     let approved = match args.mode {
-        Mode::Merge => approve_merge(&ctx, &paths, &args)?,
-        Mode::Human | Mode::Ai => approve_own(&ctx, &paths, &args)?,
+        Mode::Merge => approve_merge(&ctx, &paths, args)?,
+        Mode::Human | Mode::Ai => approve_own(&ctx, &paths, args)?,
     };
     report.approved = approved;
     if args.json {
@@ -203,6 +203,10 @@ fn approve_own(ctx: &Ctx, paths: &[String], args: &Args) -> Result<bool> {
             &format!("prov-approve-{at}"),
         )?,
         _ => ctx.gitai.checkpoint_known_human(&repo.toplevel, &files, &full_version())?,
+    }
+    // The checkpoint is applied after it is received; the commit can follow at once.
+    if let Err(e) = ctx.gitai.await_notes(&repo.toplevel) {
+        crate::context::say(format!("warning: {e:#}"));
     }
     let lock = ctx.store.lock()?;
     for (path, file) in paths.iter().zip(&files) {

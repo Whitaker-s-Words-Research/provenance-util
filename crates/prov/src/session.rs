@@ -5,7 +5,7 @@ use prov_core::{now, SessionRecord, State, Store};
 use serde::Serialize;
 
 use crate::archive;
-use crate::context::Ctx;
+use crate::context::{say, Ctx};
 
 pub enum Action {
     List,
@@ -43,10 +43,10 @@ pub fn resolve(store: &Store, text: &str) -> Result<SessionRecord> {
     }
 }
 
-/// All records, with Closing sessions that cannot finish moved to Failed.
+/// All records, as they are now: a Closing session that cannot finish is Failed.
 pub fn views(ctx: &Ctx) -> Result<Vec<View>> {
     let now = now();
-    let records = ctx.store.lock()?.refresh(now)?;
+    let records = ctx.store.lock()?.sessions_at(now)?;
     Ok(records
         .iter()
         .map(|r| View {
@@ -143,7 +143,7 @@ pub fn run(action: Action, json: bool, dry_run: bool) -> Result<bool> {
                     State::Archived => println!(
                         "session {} is archived: {}",
                         after.id,
-                        after.archive_file.as_deref().map(|p| p.display().to_string()).unwrap_or_default()
+                        after.archive_file.as_deref().map_or_default(|p| p.display().to_string())
                     ),
                     State::Failed => println!(
                         "session {} is failed: {}\nCorrect the cause, then run the command again.",
@@ -152,6 +152,9 @@ pub fn run(action: Action, json: bool, dry_run: bool) -> Result<bool> {
                     ),
                     other => println!("session {} is {}", after.id, other.as_str()),
                 }
+            }
+            if !dry_run && after.worktree.is_dir() {
+                crate::procs::warn_if_busy(&after.worktree, "Stop them before another session starts there.");
             }
             Ok(dry_run || after.state == State::Archived)
         }
@@ -191,10 +194,9 @@ pub fn run(action: Action, json: bool, dry_run: bool) -> Result<bool> {
 /// here, not in a detached process. Returns the record after the step.
 pub fn close(ctx: &Ctx, id: &str, dry_run: bool) -> Result<SessionRecord> {
     let now = now();
-    {
+    let generation = {
         let lock = ctx.store.lock()?;
-        lock.refresh(now)?;
-        let Some(mut record) = lock.get(id)? else { bail!("no record of session {id}") };
+        let Some(mut record) = lock.get(id)?.map(|r| r.at(now)) else { bail!("no record of session {id}") };
         match record.state {
             State::Archived => bail!("session {id} is already archived"),
             State::Closing if record.archive_pid.is_some_and(prov_core::state::pid_alive) => {
@@ -205,12 +207,33 @@ pub fn close(ctx: &Ctx, id: &str, dry_run: bool) -> Result<SessionRecord> {
         if dry_run {
             return Ok(record);
         }
+        if record.agent_pid.is_none() {
+            // R-SESS-3, accepted limit: the step cannot wait for the agent.
+            say(format!(
+                "warning: prov does not know the process ID of the agent of session {id}, so it archives the \
+                 transcript now. If the agent still works, the archive misses its last work, until the next event \
+                 of the agent opens the session again (R-SESS-3). End the agent first if it runs."
+            ));
+        }
         record.close(now)?;
         lock.put(&record)?;
-    }
-    archive::run_in(ctx, id)?;
+        record.generation
+    };
+    // In the foreground, with a message if the step waits for the agent process.
+    archive::run_in(ctx, id, None, true)?;
     match ctx.store.get(id)? {
-        Some(record) => Ok(record),
+        Some(record) => {
+            if record.generation != generation {
+                // R-SESS-1: an event of the agent opened the session again while
+                // the step waited, and this step stopped without a change.
+                say(format!(
+                    "the agent of session {id} sent another event while prov waited, so the session went on \
+                     (now {}). It is archived when the agent ends. See: prov session show {id}",
+                    record.state.as_str()
+                ));
+            }
+            Ok(record)
+        }
         None => bail!("the record of session {id} was deleted during the archive step"),
     }
 }

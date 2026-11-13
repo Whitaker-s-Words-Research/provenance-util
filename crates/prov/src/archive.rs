@@ -10,6 +10,7 @@ use std::process::{Command, Stdio};
 use anyhow::{bail, Context, Result};
 use flate2::{Compression, GzBuilder};
 use prov_adapters::ArchiveEntry;
+use prov_core::state::pid_alive;
 use prov_core::State;
 use sha2::{Digest, Sha256};
 
@@ -17,10 +18,10 @@ use crate::context::Ctx;
 
 /// Starts `prov archive-session <id>` in its own process session, so that it
 /// continues when the agent and its hook process exit.
-pub fn spawn_detached(ctx: &Ctx, session_id: &str) -> Result<u32> {
+pub fn spawn_detached(ctx: &Ctx, session_id: &str, generation: u64) -> Result<u32> {
     let exe = std::env::current_exe().context("cannot find the prov binary")?;
     let mut cmd = Command::new(exe);
-    cmd.args(["archive-session", session_id])
+    cmd.args(["archive-session", session_id, "--generation", &generation.to_string()])
         .current_dir(&ctx.repo.toplevel)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -37,23 +38,55 @@ pub fn spawn_detached(ctx: &Ctx, session_id: &str) -> Result<u32> {
 }
 
 /// The archive step of one Closing session, for the detached process.
-pub fn run(session_id: &str) -> Result<()> {
-    run_in(&Ctx::here()?, session_id)
+pub fn run(session_id: &str, generation: Option<u64>) -> Result<()> {
+    run_in(&Ctx::here()?, session_id, generation, false)
 }
 
 /// The archive step of one Closing session. The result is in the record:
 /// Archived, or Failed with the error text.
-pub fn run_in(ctx: &Ctx, session_id: &str) -> Result<()> {
+///
+/// The step belongs to one generation of the session (`generation`, or the
+/// one of the record at the start). It writes its result only if the session
+/// is still Closing in that generation. Reason: the session can be resumed,
+/// do more work and end again while this step runs.
+///
+/// `announce` prints what the step waits for, for a person at a terminal.
+pub fn run_in(ctx: &Ctx, session_id: &str, generation: Option<u64>, announce: bool) -> Result<()> {
     let session = {
         let lock = ctx.store.lock()?;
         let Some(mut session) = lock.get(session_id)? else { bail!("no record of session {session_id}") };
         if session.state != State::Closing {
             bail!("session {session_id} is {}, not closing", session.state.as_str());
         }
+        if generation.is_some_and(|g| g != session.generation) {
+            // The session moved on. Its newer archive process does the work.
+            return Ok(());
+        }
         session.archive_pid = Some(std::process::id());
         lock.put(&session)?;
         session
     };
+    let current = |ctx: &Ctx| -> Result<bool> {
+        Ok(ctx.store.get(session_id)?.is_some_and(|r| r.state == State::Closing && r.generation == session.generation))
+    };
+
+    // Wait until the agent process has exited: until then, the transcript
+    // can grow. If prov does not know the process, it cannot wait.
+    if let Some(pid) = session.agent_pid.filter(|pid| pid_alive(*pid)) {
+        if announce {
+            crate::context::say(format!(
+                "session {session_id}: waiting for the agent process {pid} to exit. The transcript is archived after that. \
+                 End the agent, or stop this command with Ctrl-C; the session then stays closing."
+            ));
+        }
+        while pid_alive(pid) {
+            std::thread::sleep(std::time::Duration::from_millis(200));
+            if !current(ctx)? {
+                // Resumed, dropped, or closed again.
+                return Ok(());
+            }
+        }
+    }
 
     // The work happens without the lock: a transcript can be large.
     let result = (|| -> Result<(PathBuf, String)> {
@@ -65,17 +98,17 @@ pub fn run_in(ctx: &Ctx, session_id: &str) -> Result<()> {
         let config = ctx.repo.config_here()?;
         let dir = ctx.repo.base_dir().join(&config.logs_dir).join(&session.agent);
         let file = dir.join(format!("{}-{}.tar.gz", session.id, &hash[..12]));
-        write_gzip(&dir, &file, &tar)?;
+        write_gzip(&dir, &file, &tar, &hash)?;
         Ok((file, hash))
     })();
 
     let lock = ctx.store.lock()?;
-    // The record can be gone (dropped) or Open again (resumed) by now.
+    // The record can be gone (dropped), Open again (resumed), or Closing in
+    // a later generation (resumed and ended again) by now.
     let Some(mut current) = lock.get(session_id)? else { return Ok(()) };
-    if current.state != State::Closing {
+    if current.state != State::Closing || current.generation != session.generation {
         return Ok(());
     }
-    current.last_event_at = current.last_event_at.max(session.last_event_at);
     match result {
         Ok((file, hash)) => current.archived(file, hash),
         Err(e) => current.failed(format!("{e:#}")),
@@ -107,13 +140,16 @@ pub fn build_tar(mut entries: Vec<ArchiveEntry>) -> Result<Vec<u8>> {
     builder.into_inner().context("cannot finish the archive")
 }
 
-/// Writes the gzip file. An archive file is never overwritten: its name holds
-/// the hash of its content, so an existing file is the same archive.
-fn write_gzip(dir: &Path, file: &Path, tar: &[u8]) -> Result<()> {
+/// Writes the gzip file. An archive file is never overwritten. Its name
+/// holds the hash of its content: a file that exists must be that archive,
+/// and the step fails if it is not.
+fn write_gzip(dir: &Path, file: &Path, tar: &[u8], hash: &str) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
     if file.exists() {
-        return Ok(());
+        return verify_gzip(file, hash);
     }
+    // A temporary file first: a process that stops during the write leaves
+    // no file with the final name.
     let tmp = file.with_extension(format!("tmp{}", std::process::id()));
     let out = File::create(&tmp).with_context(|| format!("cannot write {}", tmp.display()))?;
     let mut gz = GzBuilder::new().mtime(0).write(out, Compression::default());
@@ -125,13 +161,31 @@ fn write_gzip(dir: &Path, file: &Path, tar: &[u8]) -> Result<()> {
     let _ = fs::remove_file(&tmp);
     match linked {
         Ok(()) => Ok(()),
-        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => Ok(()),
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => verify_gzip(file, hash),
         Err(e) => Err(e).with_context(|| format!("cannot write {}", file.display())),
     }
 }
 
+/// Checks that the decompressed content of an archive file has this hash.
+fn verify_gzip(file: &Path, hash: &str) -> Result<()> {
+    use std::io::Read;
+    let mut tar = Vec::new();
+    let read = File::open(file).and_then(|f| flate2::read::GzDecoder::new(f).read_to_end(&mut tar));
+    if read.is_ok() && hex(&Sha256::digest(&tar)) == hash {
+        return Ok(());
+    }
+    bail!(
+        "{} exists and is not the archive with the hash {hash}. prov never overwrites an archive file: move it away.",
+        file.display()
+    )
+}
+
 fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    use std::fmt::Write as _;
+    bytes.iter().fold(String::with_capacity(bytes.len() * 2), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 #[cfg(test)]
@@ -180,10 +234,23 @@ mod tests {
     fn gzip_is_not_overwritten() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("logs/claude/s-abc.tar.gz");
-        write_gzip(file.parent().unwrap(), &file, b"one").unwrap();
+        let hash = |tar: &[u8]| hex(&Sha256::digest(tar));
+        // What a process leaves that was killed during the write: a
+        // temporary file, and no file with the final name.
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(file.with_extension("tmp999"), b"half of a gz").unwrap();
+        write_gzip(file.parent().unwrap(), &file, b"one", &hash(b"one")).unwrap();
         let first = fs::read(&file).unwrap();
-        write_gzip(file.parent().unwrap(), &file, b"two").unwrap();
+        // The same archive again: the step succeeds and changes nothing.
+        write_gzip(file.parent().unwrap(), &file, b"one", &hash(b"one")).unwrap();
         assert_eq!(fs::read(&file).unwrap(), first);
-        assert_eq!(fs::read_dir(file.parent().unwrap()).unwrap().count(), 1);
+        // Another archive under that name: the step fails and changes nothing.
+        let err = write_gzip(file.parent().unwrap(), &file, b"two", &hash(b"two")).unwrap_err();
+        assert!(err.to_string().contains("never overwrites"), "{err}");
+        assert_eq!(fs::read(&file).unwrap(), first);
+        // A file that is not a gzip file at all.
+        fs::write(&file, b"cut off").unwrap();
+        assert!(write_gzip(file.parent().unwrap(), &file, b"one", &hash(b"one")).is_err());
+        assert_eq!(fs::read(&file).unwrap(), b"cut off");
     }
 }

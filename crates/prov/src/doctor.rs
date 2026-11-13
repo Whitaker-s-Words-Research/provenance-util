@@ -5,15 +5,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 use prov_core::config::CONFIG_FILE;
-use prov_core::{Config, State};
+use prov_core::{now, Config, CopyCheck, State};
 use prov_git::{shim, HOOK_NAMES};
+use prov_gitai::{Compat, BASELINE_VERSION, TESTED_VERSION};
 use serde::Serialize;
 
 use crate::context::Ctx;
 use crate::{init, session};
-
-/// The compatibility baseline of git-ai.
-const GITAI_BASELINE: (u64, u64, u64) = (1, 7, 6);
 
 #[derive(Debug, Serialize)]
 struct Check {
@@ -24,6 +22,10 @@ struct Check {
     /// Information that is not a failure.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     notes: Vec<String>,
+    /// A risk that is not a failure: the check passes, and the person should
+    /// act on it.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -40,7 +42,11 @@ impl Checks {
     }
 
     fn add_with_notes(&mut self, name: &'static str, problems: Vec<String>, notes: Vec<String>) {
-        self.0.push(Check { name, ok: problems.is_empty(), problems, notes });
+        self.add_full(name, problems, Vec::new(), notes);
+    }
+
+    fn add_full(&mut self, name: &'static str, problems: Vec<String>, warnings: Vec<String>, notes: Vec<String>) {
+        self.0.push(Check { name, ok: problems.is_empty(), problems, notes, warnings });
     }
 }
 
@@ -51,23 +57,20 @@ pub fn run(deep: bool, json: bool) -> Result<bool> {
 
     // 1. The config and the version.
     let mut problems = Vec::new();
-    let config = match std::fs::read_to_string(repo.toplevel.join(CONFIG_FILE)) {
-        Ok(text) => match Config::parse(&text) {
-            Ok(config) => {
-                if let Err(e) = config.check_version(prov_core::VERSION) {
-                    problems.push(format!("{e}. Install that version, or change required_version."));
-                }
-                Some(config)
+    let config = if let Ok(text) = std::fs::read_to_string(repo.toplevel.join(CONFIG_FILE)) { match Config::parse(&text) {
+        Ok(config) => {
+            if let Err(e) = config.check_version(prov_core::VERSION) {
+                problems.push(format!("{e}. Install that version, or change required_version."));
             }
-            Err(e) => {
-                problems.push(format!("{e:#}"));
-                None
-            }
-        },
-        Err(_) => {
-            problems.push(format!("{CONFIG_FILE} does not exist in {}. Run: prov init", repo.toplevel.display()));
+            Some(config)
+        }
+        Err(e) => {
+            problems.push(format!("{e:#}"));
             None
         }
+    } } else {
+        problems.push(format!("{CONFIG_FILE} does not exist in {}. Run: prov init", repo.toplevel.display()));
+        None
     };
     checks.add("config", problems);
     let config = config.unwrap_or_default();
@@ -139,15 +142,22 @@ pub fn run(deep: bool, json: bool) -> Result<bool> {
 
     // 6. git-ai.
     let mut problems = Vec::new();
+    let mut warnings = Vec::new();
     let mut notes = Vec::new();
     match ctx.gitai.version(&repo.toplevel) {
         Err(e) => problems.push(format!("{e:#}. Install git-ai.")),
         Ok(version) => {
-            if !parse_version(&version).is_some_and(|v| v >= GITAI_BASELINE) {
-                problems.push(format!(
-                    "git-ai is version {version}. The compatibility baseline is {}.{}.{}.",
-                    GITAI_BASELINE.0, GITAI_BASELINE.1, GITAI_BASELINE.2
-                ));
+            match prov_gitai::compat(&version) {
+                Compat::Unsupported => problems.push(format!(
+                    "git-ai is version {version}. The compatibility baseline is {BASELINE_VERSION}."
+                )),
+                Compat::Untested => warnings.push(format!(
+                    "git-ai is version {version}, newer than {TESTED_VERSION}, the newest version that the git-ai \
+                     contract tests of prov passed against. prov depends on how git-ai attributes lines; if that \
+                     changed, the gate can show wrong authors. Run the contract tests of prov against this version \
+                     (cargo test --test gitai_contract), or install git-ai {TESTED_VERSION}."
+                )),
+                Compat::Tested => {}
             }
             if !ctx.gitai.service_available(&repo.toplevel) {
                 problems.push("the git-ai service is not available. Start it: git-ai bg start".to_string());
@@ -166,7 +176,7 @@ pub fn run(deep: bool, json: bool) -> Result<bool> {
             }
         }
     }
-    checks.add_with_notes("git-ai", problems, notes);
+    checks.add_full("git-ai", problems, warnings, notes);
 
     // 7. The git-ai integration of each agent.
     let mut problems = Vec::new();
@@ -187,8 +197,25 @@ pub fn run(deep: bool, json: bool) -> Result<bool> {
     // 8. Sessions, worktrees and copies.
     let mut problems = Vec::new();
     let views = session::views(&ctx)?;
+    let mut merged = Vec::new();
     for v in &views {
         let r = &v.record;
+        // An integration deletes only the records that its trailers name. A
+        // record of another session whose branch is merged stays (R-INT-2).
+        if r.state != State::Open && !ctx.on_agent_branch() {
+            if let Some(tip) = ctx.repo.rev_parse(&format!("refs/heads/{}", r.branch))? {
+                if ctx.repo.is_ancestor(&tip, "HEAD")? {
+                    merged.push(format!(
+                        "session {} is {}, and its branch {} is merged into this branch. If its work is integrated, \
+                         delete the record: prov session drop {}",
+                        r.id,
+                        r.state.as_str(),
+                        r.branch,
+                        r.id
+                    ));
+                }
+            }
+        }
         if v.stale {
             problems.push(format!(
                 "session {} is stale (no event for 24 hours, or its agent process is gone). Close it: prov session close {}",
@@ -216,20 +243,66 @@ pub fn run(deep: bool, json: bool) -> Result<bool> {
             ids.join(", ")
         ));
     }
-    // A plan stays in `copies/` only while its check is pending or failed.
-    if let Ok(entries) = std::fs::read_dir(ctx.store.dir().join("copies")) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let failed = std::fs::read_to_string(&path)
-                .ok()
-                .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-                .is_some_and(|v| v.get("failed").and_then(|f| f.as_bool()).unwrap_or(false));
-            if failed {
-                problems.push(format!("a copy check failed: {}", path.display()));
+    // A copy stays in `copies/` until its check agrees for every file.
+    let mut notes = merged;
+    // The owner of a worktree that git no longer lists is of no use. Such a
+    // record stays when a worktree is removed without `prov finish`. This is
+    // the one thing that `prov doctor` changes.
+    let listed: Vec<PathBuf> = ctx.repo.worktrees()?.into_iter().map(|w| w.path).collect();
+    let gone: Vec<_> = ctx.store.worktree_records()?.into_iter().filter(|w| !listed.contains(&w.worktree)).collect();
+    if !gone.is_empty() {
+        let lock = ctx.store.lock()?;
+        for w in &gone {
+            lock.delete_worktree(&w.worktree)?;
+            notes.push(format!("removed the record of the worktree {}, which no longer exists", w.worktree.display()));
+        }
+    }
+    for copy in ctx.store.copies()? {
+        let staged = copy.files.iter().filter(|f| f.commit.is_none()).count();
+        if staged > 0 {
+            notes.push(format!(
+                "{staged} file(s) of the copy {} in {} are not committed yet",
+                copy.id,
+                copy.worktree.display()
+            ));
+        }
+        for file in &copy.files {
+            let detail = file.detail.as_deref().unwrap_or("no detail");
+            let commit = file.commit.as_deref().unwrap_or("");
+            match file.check {
+                Some(CopyCheck::Failed) => problems.push(format!(
+                    "the copy check failed for {} (commit {:.10}): {detail}.\nReplace its authorship: git rm the file \
+                     and commit, then copy it again with `prov cp`.",
+                    file.dest, commit
+                )),
+                Some(CopyCheck::Moved) => notes.push(format!(
+                    "{} (commit {:.10}): {detail}. The content and the counts are correct. To remove this note, delete {}",
+                    file.dest,
+                    commit,
+                    ctx.store.copy_path(&copy.id)?.display()
+                )),
+                Some(CopyCheck::Ignored) => notes.push(format!(
+                    "{} (commit {:.10}) has no line authorship: {detail}. The Copied-From trailer records its origin. \
+                     To remove this note, delete {}",
+                    file.dest,
+                    commit,
+                    ctx.store.copy_path(&copy.id)?.display()
+                )),
+                // The check waits for the note for a maximum of 60 seconds.
+                None if file.committed_at.is_some_and(|at| now().saturating_sub(at) > 120) => problems.push(format!(
+                    "the copy check for {} (commit {:.10}) did not finish. Run it: prov copy-check {}",
+                    file.dest, commit, copy.id
+                )),
+                // Agrees, or the check still runs.
+                Some(CopyCheck::Agrees) | None => {}
             }
         }
     }
-    checks.add("sessions", problems);
+    checks.add_with_notes("sessions", problems, notes);
+
+    // 9. Commits with no git-ai note, on human branches and agent branches.
+    let (problems, notes) = note_gaps(&ctx, &config)?;
+    checks.add_with_notes("git-ai notes", problems, notes);
 
     let report = Report { ok: checks.0.iter().all(|c| c.ok), checks: checks.0 };
     if json {
@@ -242,6 +315,11 @@ pub fn run(deep: bool, json: bool) -> Result<bool> {
                     println!("{}{line}", if i == 0 { "       - " } else { "         " });
                 }
             }
+            for warning in &check.warnings {
+                for (i, line) in warning.lines().enumerate() {
+                    println!("{}{line}", if i == 0 { "       warning: " } else { "         " });
+                }
+            }
             for note in &check.notes {
                 println!("       ({note})");
             }
@@ -251,14 +329,152 @@ pub fn run(deep: bool, json: bool) -> Result<bool> {
     Ok(report.ok)
 }
 
+/// The commits of the local branches that add lines and have no git-ai note.
+///
+/// git-ai writes a note for every commit that its service sees, so a commit
+/// with no note is one that git-ai did not see: the service was not running,
+/// or the commit was made where git-ai is not installed. If a commit that no
+/// branch contains has the same patch and a note, the missing note is the
+/// result of a rewrite (an amend, a rebase) that git-ai did not see.
+///
+/// Commits older than the first commit of `refs/notes/ai` are not checked:
+/// they were made before git-ai was in use. Merge commits are not checked.
+fn note_gaps(ctx: &Ctx, config: &Config) -> Result<(Vec<String>, Vec<String>)> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    let repo = &ctx.repo;
+    let mut problems = Vec::new();
+    let mut notes = Vec::new();
+    if repo.rev_parse("refs/notes/ai")?.is_none() {
+        notes.push("refs/notes/ai does not exist: git-ai has written no note in this repository yet".to_string());
+        return Ok((problems, notes));
+    }
+    // A note of a recent commit can still be on its way.
+    if ctx.gitai.service_available(&repo.toplevel) {
+        if let Err(e) = ctx.gitai.await_notes(&repo.toplevel) {
+            notes.push(format!("{e:#}. A commit of the last minute can show as a commit with no note."));
+        }
+    }
+    let since: u64 = repo
+        .git(["log", "--max-parents=0", "--format=%ct", "refs/notes/ai"])?
+        .lines()
+        .filter_map(|l| l.trim().parse().ok())
+        .min()
+        .unwrap_or(0);
+    let with_note: BTreeSet<String> = repo
+        .git(["notes", "--ref=ai", "list"])?
+        .lines()
+        .filter_map(|l| l.split_whitespace().nth(1).map(str::to_string))
+        .collect();
+    let branches: Vec<String> = repo
+        .git(["for-each-ref", "--format=%(refname:short)", "refs/heads"])?
+        .lines()
+        .map(str::to_string)
+        .collect();
+    if branches.is_empty() {
+        return Ok((problems, notes));
+    }
+    let human: Vec<&String> = branches.iter().filter(|b| !prov_core::pattern::is_agent_branch(b)).collect();
+    let on_human: BTreeSet<String> = if human.is_empty() {
+        BTreeSet::new()
+    } else {
+        let mut args = vec!["rev-list".to_string(), "--no-merges".to_string()];
+        args.extend(human.iter().map(|b| format!("refs/heads/{b}")));
+        repo.git(&args)?.lines().map(str::to_string).collect()
+    };
+
+    let mut gaps = Vec::new();
+    for line in repo.git(["log", "--branches", "--no-merges", "--format=%H %ct"])?.lines() {
+        let Some((commit, time)) = line.split_once(' ') else { continue };
+        if time.trim().parse::<u64>().unwrap_or(0) < since || with_note.contains(commit) {
+            continue;
+        }
+        if !adds_lines(repo, commit)? {
+            continue;
+        }
+        gaps.push(commit.to_string());
+    }
+    if gaps.is_empty() && config.known_gaps.is_empty() {
+        return Ok((problems, notes));
+    }
+
+    // Commits with a note that no branch contains: the old commits of a
+    // rewrite. They are found by their patch.
+    let reachable: BTreeSet<String> = repo.git(["rev-list", "--branches"])?.lines().map(str::to_string).collect();
+    let mut by_patch: BTreeMap<String, String> = BTreeMap::new();
+    if !gaps.is_empty() {
+        for old in with_note.iter().filter(|c| !reachable.contains(*c)) {
+            if !repo.git_ok(["cat-file", "-e", &format!("{old}^{{commit}}")])? {
+                continue; // the object is gone
+            }
+            if let Some(id) = patch_id(repo, old)? {
+                by_patch.entry(id).or_insert_with(|| old.clone());
+            }
+        }
+    }
+
+    let accepted = |commit: &str| config.known_gaps.iter().any(|g| commit.starts_with(&g.to_ascii_lowercase()));
+    for commit in &gaps {
+        let kind = if on_human.contains(commit) { "a human branch" } else { "an agent branch" };
+        let subject = repo.git(["log", "-1", "--format=%s", commit])?;
+        if accepted(commit) {
+            notes.push(format!("commit {commit:.10} ({subject}) has no git-ai note; known_gaps accepts it"));
+            continue;
+        }
+        let accept = format!("Or accept the gap: add \"{commit}\" to known_gaps in {CONFIG_FILE}, and commit it.");
+        let replace = "Replace the authorship of its files: git rm and commit, then prov cp.";
+        match patch_id(repo, commit)?.and_then(|id| by_patch.get(&id)) {
+            Some(old) => problems.push(format!(
+                "commit {commit:.10} on {kind} ({subject}) has no git-ai note. Commit {old:.10}, which no branch \
+                 contains, has the same patch and a note: an amend or a rebase made {commit:.10} while the git-ai \
+                 service did not see it.\nIf no one else has the branch, make the rewrite again from {old:.10} while \
+                 the service runs (`git-ai bg status`), so that git-ai moves the note.\nIf the branch is public: {replace}\n{accept}"
+            )),
+            None => problems.push(format!(
+                "commit {commit:.10} on {kind} ({subject}) has no git-ai note: git-ai did not see the commit, and \
+                 no other commit with the same patch has a note.\n{replace}\n{accept}"
+            )),
+        }
+    }
+    for gap in &config.known_gaps {
+        let gap = gap.to_ascii_lowercase();
+        if !gaps.iter().any(|c| c.starts_with(&gap)) {
+            notes.push(format!(
+                "known_gaps names {gap}, which is not a commit with no note on a local branch. You can remove it."
+            ));
+        }
+    }
+    Ok((problems, notes))
+}
+
+/// True if the commit adds at least one line, or changes a binary file.
+fn adds_lines(repo: &prov_git::Repo, commit: &str) -> Result<bool> {
+    let numstat = repo.git(["diff-tree", "--root", "--no-commit-id", "-r", "--numstat", commit])?;
+    Ok(numstat.lines().any(|l| l.split('\t').next().is_some_and(|added| added != "0")))
+}
+
+/// `git patch-id --stable` of a commit, or `None` for a commit with no diff.
+fn patch_id(repo: &prov_git::Repo, commit: &str) -> Result<Option<String>> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    let diff = repo.git_bytes(["diff-tree", "--root", "-p", commit])?;
+    let mut child = Command::new("git")
+        .arg("-C")
+        .arg(&repo.toplevel)
+        .args(["patch-id", "--stable"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()?;
+    child.stdin.take().ok_or_else(|| std::io::Error::other("no stdin"))?.write_all(&diff)?;
+    let out = child.wait_with_output()?;
+    Ok(String::from_utf8_lossy(&out.stdout).split_whitespace().next().map(str::to_string))
+}
+
 fn is_executable(path: &Path) -> bool {
     use std::os::unix::fs::PermissionsExt;
     std::fs::metadata(path).is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
-}
-
-fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
-    let mut parts = text.trim_start_matches('v').split(['.', '-', '+']);
-    Some((parts.next()?.parse().ok()?, parts.next()?.parse().ok()?, parts.next()?.parse().ok()?))
 }
 
 /// Why git-ai does not allow this repository, if it does not.
@@ -267,7 +483,7 @@ fn parse_version(text: &str) -> Option<(u64, u64, u64)> {
 /// remote URLs only. A repository with no remote is not allowed when the
 /// allow list has entries. In a repository that is not allowed, git-ai
 /// ignores checkpoints and prints only a message.
-fn allowed(ctx: &Ctx) -> Result<Option<String>> {
+pub(crate) fn allowed(ctx: &Ctx) -> Result<Option<String>> {
     let dir = &ctx.repo.toplevel;
     let allow = ctx.gitai.config_list(dir, "allow_repositories")?;
     let exclude = ctx.gitai.config_list(dir, "exclude_repositories")?;
@@ -341,13 +557,5 @@ mod tests {
         assert!(!remote_matches(pattern, "/home/me/tool"));
         assert!(remote_matches("*", "/home/me/tool"));
         assert_eq!(normalize_remote("https://example.invalid:8443/a/b.git"), "example.invalid:8443/a/b");
-    }
-
-    #[test]
-    fn versions() {
-        assert_eq!(parse_version("1.7.6"), Some((1, 7, 6)));
-        assert_eq!(parse_version("v1.10.0-beta"), Some((1, 10, 0)));
-        assert!(parse_version("1.7") < Some(GITAI_BASELINE));
-        assert!(parse_version("1.10.0") > Some(GITAI_BASELINE));
     }
 }

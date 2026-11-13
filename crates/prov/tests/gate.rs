@@ -1,5 +1,8 @@
 //! The merge gate, the rules around integration, and `prov check`.
 
+// A panic in a test is a failed test.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use std::path::Path;
@@ -95,11 +98,15 @@ fn open_session_blocks_the_integration() {
 
     env.end_session(&wt, "sess-idle");
     env.try_git(&repo, ["merge", &branch("busy")]).success();
-    // Only the session that made a commit is in the trailers. The records of
-    // both are deleted.
+    // Only the session that made a commit is in the trailers, and only its
+    // record is deleted (R-INT-2). `prov doctor` lists the other one.
     let trailers = env.trailers(&repo, "HEAD");
     assert_eq!(trailers.iter().filter(|t| t.starts_with("Prov-Session:")).count(), 1, "{trailers:?}");
     assert!(env.record(&repo, "sess-b").is_none());
+    assert_eq!(env.state(&repo, "sess-idle"), "archived");
+    let doctor = env.prov(&repo, ["doctor"]);
+    assert!(doctor.stdout.contains("prov session drop sess-idle"), "{}", doctor.stdout);
+    env.prov(&repo, ["session", "drop", "sess-idle"]).success();
     assert!(env.record(&repo, "sess-idle").is_none());
 }
 
@@ -118,9 +125,11 @@ fn two_sessions_give_two_groups_in_start_order() {
     let keys: Vec<String> = env.trailers(&repo, "HEAD").iter().map(|t| t.split(' ').take(2).collect::<Vec<_>>().join(" ")).collect();
     assert_eq!(keys[0], "Prov-Session: claude:sess-1");
     assert!(keys[1].starts_with("Prov-Transcript-SHA256:"));
-    assert_eq!(keys[2], "Prov-Session: claude:sess-2");
-    assert!(keys[3].starts_with("Prov-Transcript-SHA256:"));
-    assert!(keys[4].starts_with("Prov-Version:"));
+    assert!(keys[2].starts_with("Prov-Model:"));
+    assert_eq!(keys[3], "Prov-Session: claude:sess-2");
+    assert!(keys[4].starts_with("Prov-Transcript-SHA256:"));
+    assert!(keys[5].starts_with("Prov-Model:"));
+    assert!(keys[6].starts_with("Prov-Version:"));
     let base = env.git(&repo, ["rev-parse", "HEAD^1"]);
     env.await_notes(&repo);
     env.prov(&repo, ["check", &format!("{base}..HEAD")]).success();
@@ -161,7 +170,7 @@ fn squash_is_refused_and_fast_forward_gets_a_warning() {
 
     // A fast-forward of human commits gets no warning.
     env.git(&repo, ["branch", "feature"]);
-    let other = env.home().join("feature-wt");
+    let other = env.repos().join("feature-wt");
     env.git(&repo, ["worktree", "add", "-q", other.to_str().unwrap(), "feature"]);
     env.plain_write(&other, "f.txt", "f\n");
     env.git(&other, ["add", "-A"]);
@@ -175,7 +184,7 @@ fn a_merge_of_human_commits_is_not_an_integration() {
     let Some(env) = Env::new() else { return };
     let repo = env.repo("project");
     let base = env.git(&repo, ["rev-parse", "HEAD"]);
-    let other = env.home().join("feature-wt");
+    let other = env.repos().join("feature-wt");
     env.git(&repo, ["worktree", "add", "-q", "-b", "feature", other.to_str().unwrap()]);
     env.plain_write(&other, "f.txt", "f\n");
     env.git(&other, ["add", "-A"]);
@@ -184,7 +193,7 @@ fn a_merge_of_human_commits_is_not_an_integration() {
     // The gate does not run: no trailers.
     env.try_git(&repo, ["merge", "feature"]).success();
     assert_eq!(env.git(&repo, ["log", "-1", "--format=%P"]).split(' ').count(), 2);
-    assert!(env.trailers(&repo, "HEAD").is_empty());
+    assert_eq!(env.trailers(&repo, "HEAD"), [] as [std::string::String; 0]);
     env.await_notes(&repo);
     env.prov(&repo, ["check", &format!("{base}..HEAD")]).success();
 }
@@ -262,7 +271,7 @@ fn an_agent_branch_integrates_into_a_feature_branch() {
     let Some(env) = Env::new() else { return };
     let repo = env.repo("project");
     let base = env.git(&repo, ["rev-parse", "HEAD"]);
-    let feature = env.home().join("feature-wt");
+    let feature = env.repos().join("feature-wt");
     env.git(&repo, ["worktree", "add", "-q", "-b", "feature/x", feature.to_str().unwrap()]);
     env.plain_write(&feature, "f.txt", "f\n");
     env.git(&feature, ["add", "-A"]);
@@ -304,7 +313,7 @@ fn an_agent_branch_integrates_into_a_feature_branch() {
 
     // The merge of feature/x into main is not an integration ...
     env.try_git(&repo, ["merge", "feature/x"]).success();
-    assert!(env.trailers(&repo, "HEAD").is_empty());
+    assert_eq!(env.trailers(&repo, "HEAD"), [] as [std::string::String; 0]);
     env.await_notes(&repo);
     // ... and the range check follows feature/x: the merge on main, then the
     // human commit and the integration on feature/x.
@@ -320,7 +329,7 @@ fn check_follows_a_merged_human_branch() {
     let Some(env) = Env::new() else { return };
     let repo = env.repo("project");
     let base = env.git(&repo, ["rev-parse", "HEAD"]);
-    let feature = env.home().join("feature-wt");
+    let feature = env.repos().join("feature-wt");
     env.git(&repo, ["worktree", "add", "-q", "-b", "feature/y", feature.to_str().unwrap()]);
     archived_branch(&env, &repo, "sneak", "sess-s", "s.py");
 
@@ -403,6 +412,54 @@ fn a_conflict_resolution_on_an_agent_branch_needs_approval() {
     env.try_git(&repo, ["merge", &branch("resolve")]).failure();
     approve(&env, &repo, &["shared.txt"]);
     env.try_git(&repo, ["commit", "--no-edit"]).success();
+    env.await_notes(&repo);
+    env.prov(&repo, ["check", &format!("{base}..HEAD")]).success();
+}
+
+/// An accepted limit: the human deletes a trailer group in the editor after
+/// the gate. The commit is made. `post-commit` reads the commit that was
+/// made, so the record of the session stays (R-INT-2), and `prov check`
+/// reports the merge.
+#[test]
+fn an_edited_merge_message_keeps_the_records() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    archived_branch(&env, &repo, "edited", "sess-e", "e.py");
+    let base = env.git(&repo, ["rev-parse", "HEAD"]);
+    // An editor that deletes the trailer group of the session.
+    let editor = env.home().join("delete-group.sh");
+    std::fs::write(&editor, "#!/bin/sh\nsed -i '/^Prov-Session:/d; /^Prov-Transcript-SHA256:/d; /^Prov-Model:/d' \"$1\"\n").unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let with_editor = [("GIT_EDITOR", editor.to_str().unwrap())];
+
+    env.run(&repo, "git", ["merge", "--edit", &branch("edited")], &with_editor, None).success();
+    assert!(!env.trailers(&repo, "HEAD").iter().any(|t| t.starts_with("Prov-Session: ")));
+    assert_eq!(env.state(&repo, "sess-e"), "archived");
+    env.await_notes(&repo);
+    let check = env.prov(&repo, ["check", &format!("{base}..HEAD")]).failure();
+    assert!(check.stdout.contains("sess-e"), "{}", check.stdout);
+}
+
+/// git-ai ignores some paths, for example `**/vendor/**`: it lists no line of
+/// such a file. An agent's lines there need the approval of a human.
+#[test]
+fn a_file_that_git_ai_ignores_needs_approval() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let wt = env.worktree(&repo, "ignored");
+    env.start_session(&wt, "sess-i").success();
+    env.agent_edit(&wt, "vendor/lib.py", "x = 1\n", "sess-i");
+    env.agent_edit(&wt, "src/ok.py", "ok = True\n", "sess-i");
+    env.agent_commit(&wt, "sess-i", "Add a vendored file").success();
+    env.end_session(&wt, "sess-i");
+
+    let merge = env.try_git(&repo, ["merge", &branch("ignored")]).failure();
+    assert!(merge.stderr.contains("vendor/lib.py") && merge.stderr.contains("git-ai lists none of them"), "{}", merge.stderr);
+    assert!(!merge.stderr.contains("src/ok.py"), "{}", merge.stderr);
+    approve(&env, &repo, &["vendor/lib.py"]);
+    env.try_git(&repo, ["commit", "--no-edit"]).success();
+    let base = env.git(&repo, ["rev-parse", "HEAD^1"]);
     env.await_notes(&repo);
     env.prov(&repo, ["check", &format!("{base}..HEAD")]).success();
 }

@@ -2,6 +2,9 @@
 //! agent worktree, the merge gate, an approval written by hand, and
 //! `prov check` on the result.
 
+// A panic in a test is a failed test.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use common::{branch, Env, FIXTURE_MODEL};
@@ -24,7 +27,7 @@ fn session_merge_gate_and_check() {
     assert_eq!(record["branch"], branch("20261111-parser"));
     assert_eq!(record["worktree"], wt.to_str().unwrap());
     assert_eq!(record["model"], "claude-opus-5-5", "the model of the SessionStart payload");
-    assert_eq!(record["agent_pid"], std::process::id());
+    assert_eq!(record["agent_pid"], env.agent_pid(SESSION));
 
     let prompt = env.hook(&wt, "UserPromptSubmit", SESSION).success();
     assert_eq!(prompt.stdout, "", "output at UserPromptSubmit would enter the agent's context");
@@ -91,6 +94,7 @@ fn session_merge_gate_and_check() {
             "Prov-Approved: notes.txt ack".to_string(),
             format!("Prov-Session: claude:{SESSION}"),
             format!("Prov-Transcript-SHA256: {hash}"),
+            "Prov-Model: claude-fable-5-2".to_string(),
             format!("Prov-Version: {version}"),
         ]
     );

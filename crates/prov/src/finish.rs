@@ -28,23 +28,20 @@ struct Report {
     removed: bool,
 }
 
-pub fn run(args: Args) -> Result<bool> {
+pub fn run(args: &Args) -> Result<bool> {
     let ctx = Ctx::here()?;
     let repo = &ctx.repo;
     let worktrees = repo.worktrees()?;
 
     // A branch name first: it is exact. Then a session ID or the start of one.
     let found = worktrees.iter().find(|w| w.branch.as_deref() == Some(args.target.as_str())).cloned();
-    let (worktree, branch) = match found {
-        Some(w) => (w.path, w.branch),
-        None => {
-            let record = session::resolve(&ctx.store, &args.target).map_err(|e| {
-                anyhow::anyhow!("`{}` is not a branch with a worktree, and not a session: {e}", args.target)
-            })?;
-            match worktrees.iter().find(|w| w.path == record.worktree) {
-                Some(w) => (w.path.clone(), w.branch.clone()),
-                None => bail!("the worktree {} of session {} does not exist", record.worktree.display(), record.id),
-            }
+    let (worktree, branch) = if let Some(w) = found { (w.path, w.branch) } else {
+        let record = session::resolve(&ctx.store, &args.target).map_err(|e| {
+            anyhow::anyhow!("`{}` is not a branch with a worktree, and not a session: {e}", args.target)
+        })?;
+        match worktrees.iter().find(|w| w.path == record.worktree) {
+            Some(w) => (w.path.clone(), w.branch.clone()),
+            None => bail!("the worktree {} of session {} does not exist", record.worktree.display(), record.id),
         }
     };
     if worktrees.first().is_some_and(|main| main.path == worktree) {
@@ -83,6 +80,9 @@ pub fn run(args: Args) -> Result<bool> {
         }
         report.closed.push(v.record.id.clone());
     }
+    // R-SWEEP-4: a process that runs on writes into a worktree that is gone,
+    // or into one that `prov start --resume` creates again.
+    crate::procs::warn_if_busy(&worktree, "Stop them: the worktree is removed now.");
     if !args.dry_run {
         let mut git: Vec<&std::ffi::OsStr> = vec!["worktree".as_ref(), "remove".as_ref()];
         if args.force {
@@ -91,6 +91,8 @@ pub fn run(args: Args) -> Result<bool> {
         git.push(worktree.as_os_str());
         repo.git(git)?;
         report.removed = true;
+        // The owner of a worktree that is gone is of no use.
+        ctx.store.lock()?.delete_worktree(&worktree)?;
     }
 
     if args.json {

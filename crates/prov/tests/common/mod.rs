@@ -20,6 +20,11 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
+/// How long a test waits for a detached process or the git-ai service. It
+/// is long because the repositories can be on a slow file system
+/// (`PROV_TEST_REPOS`), where the whole suite takes ten times longer.
+pub const WAIT_SECS: u64 = 120;
+
 pub const AGENT_NAME: &str = "Claude";
 pub const AGENT_EMAIL: &str = "noreply@anthropic.com";
 pub const HUMAN_EMAIL: &str = "human@example.invalid";
@@ -47,7 +52,12 @@ impl Out {
 
 pub struct Env {
     home: tempfile::TempDir,
+    /// Set with `PROV_TEST_REPOS`: the repositories are here, not in the home.
+    repos: Option<tempfile::TempDir>,
     path: String,
+    /// A process that stands for the agent of each session. `prov` waits
+    /// for it to exit before it archives the transcript.
+    agents: std::sync::Mutex<std::collections::HashMap<String, std::process::Child>>,
 }
 
 /// The directory of a program on `PATH`.
@@ -59,6 +69,8 @@ impl Env {
     /// `None` if git-ai is not installed: the test is then skipped.
     pub fn new() -> Option<Env> {
         let Some(gitai_dir) = dir_of("git-ai") else {
+            // The local checks (ci/run.sh) set this: there, a skip is a failure.
+            assert!(std::env::var_os("PROV_TEST_REQUIRE_GITAI").is_none(), "git-ai is not installed, and PROV_TEST_REQUIRE_GITAI is set");
             eprintln!("SKIPPED: git-ai is not installed");
             return None;
         };
@@ -74,7 +86,14 @@ impl Env {
             .unwrap()
             .into_string()
             .unwrap();
-        let env = Env { home, path };
+        // `PROV_TEST_REPOS=<dir>` puts the repositories and worktrees on
+        // another file system, for example a slow shared mount. The home
+        // stays in `/tmp`: the git-ai sockets need a local, short path.
+        let repos = std::env::var_os("PROV_TEST_REPOS").map(|dir| {
+            std::fs::create_dir_all(&dir).unwrap();
+            tempfile::Builder::new().prefix("prov-r-").tempdir_in(dir).unwrap()
+        });
+        let env = Env { home, repos, path, agents: std::sync::Mutex::default() };
         let socket = env.home().join(".git-ai/internal/daemon/trace2.sock");
         // The trace2 target is what `git-ai install` writes to the global git
         // config. Through it, the service sees each commit.
@@ -94,6 +113,11 @@ impl Env {
 
     pub fn home(&self) -> &Path {
         self.home.path()
+    }
+
+    /// The directory of the test repositories and their worktrees.
+    pub fn repos(&self) -> &Path {
+        self.repos.as_ref().map_or(self.home.path(), |dir| dir.path())
     }
 
     pub fn run<I, S>(&self, dir: &Path, program: &str, args: I, envs: &[(&str, &str)], stdin: Option<&str>) -> Out
@@ -135,11 +159,20 @@ impl Env {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
+        self.prov_tty_env(dir, args, input, &[])
+    }
+
+    /// [`Env::prov_tty`] with more environment variables.
+    pub fn prov_tty_env<I, S>(&self, dir: &Path, args: I, input: &str, envs: &[(&str, &str)]) -> Out
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
         use std::os::fd::FromRawFd;
         use std::os::unix::process::CommandExt;
         let (mut master, mut slave) = (0, 0);
         // SAFETY: openpty writes two file descriptors to valid integers.
-        let rc = unsafe { libc::openpty(&mut master, &mut slave, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
+        let rc = unsafe { libc::openpty(&raw mut master, &raw mut slave, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut()) };
         assert_eq!(rc, 0, "openpty failed");
         let mut cmd = Command::new("prov");
         cmd.current_dir(dir)
@@ -150,6 +183,7 @@ impl Env {
             .env("GIT_CONFIG_NOSYSTEM", "1")
             .env("GIT_EDITOR", "true")
             .env("LC_ALL", "C")
+            .envs(envs.iter().copied())
             .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
@@ -182,7 +216,7 @@ impl Env {
     /// A repository with one human commit and nothing of `prov`: what a
     /// person has before `prov init`.
     pub fn plain_repo(&self, name: &str) -> PathBuf {
-        let dir = self.home().join(name);
+        let dir = self.repos().join(name);
         std::fs::create_dir_all(&dir).unwrap();
         self.git(&dir, ["init", "-q", "-b", "main", "."]);
         std::fs::write(dir.join("README.md"), format!("# {name}\n")).unwrap();
@@ -212,8 +246,14 @@ impl Env {
         self.run(self.home(), "git-ai", ["bg", "shutdown"], &[], None).success();
         let Some(pid) = pid else { panic!("no pid in {}", pid_file.display()) };
         let begin = std::time::Instant::now();
-        while Path::new(&format!("/proc/{pid}")).exists() {
-            assert!(begin.elapsed() < std::time::Duration::from_secs(20), "the git-ai service {pid} did not exit");
+        // A zombie has exited: where nothing reaps it (a container with no
+        // init process), it stays in /proc with the state `Z`.
+        let running = |pid: u64| {
+            std::fs::read_to_string(format!("/proc/{pid}/stat"))
+                .is_ok_and(|stat| stat.rsplit_once(')').is_some_and(|(_, rest)| !rest.trim_start().starts_with('Z')))
+        };
+        while running(pid) {
+            assert!(begin.elapsed() < std::time::Duration::from_secs(WAIT_SECS), "the git-ai service {pid} did not exit");
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
     }
@@ -269,7 +309,7 @@ impl Env {
     /// A repository with one human commit that holds `.provenance.toml`, the
     /// hook shims and the git options that `prov init` sets.
     pub fn repo(&self, name: &str) -> PathBuf {
-        let dir = self.home().join(name);
+        let dir = self.repos().join(name);
         std::fs::create_dir_all(&dir).unwrap();
         self.git(&dir, ["init", "-q", "-b", "main", "."]);
         std::fs::write(
@@ -319,7 +359,7 @@ impl Env {
 
     /// An agent worktree on the new branch `agent/claude/<name>`, from `start`.
     pub fn worktree_from(&self, repo: &Path, name: &str, start: &str) -> PathBuf {
-        let dir = self.home().join(format!("{}.worktrees", repo.file_name().unwrap().to_str().unwrap())).join(name);
+        let dir = self.repos().join(format!("{}.worktrees", repo.file_name().unwrap().to_str().unwrap())).join(name);
         self.git(repo, ["worktree", "add", "-q", "-b", &branch(name), dir.to_str().unwrap(), start]);
         dir
     }
@@ -341,7 +381,31 @@ impl Env {
 
     /// Runs `prov hook claude-code <event>` with the recorded payload of the event.
     pub fn hook(&self, cwd: &Path, event: &str, session: &str) -> Out {
-        self.hook_from(cwd, event, session, std::process::id())
+        let out = self.hook_from(cwd, event, session, self.agent_pid(session));
+        if event == "SessionEnd" {
+            // The agent exits right after its SessionEnd hook.
+            self.kill_agent(session);
+        }
+        out
+    }
+
+    /// The ID of the process that stands for the agent of a session. The
+    /// first call starts it.
+    pub fn agent_pid(&self, session: &str) -> u32 {
+        let mut agents = self.agents.lock().unwrap();
+        agents
+            .entry(session.to_string())
+            .or_insert_with(|| Command::new("sleep").arg("100000").stdin(Stdio::null()).spawn().expect("cannot run sleep"))
+            .id()
+    }
+
+    /// The agent process of a session exits, with no event: a crash, or the
+    /// end of a session whose `SessionEnd` hook already ran.
+    pub fn kill_agent(&self, session: &str) {
+        if let Some(mut child) = self.agents.lock().unwrap().remove(session) {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
     }
 
     /// The same, from an agent process with the ID `agent_pid`.
@@ -359,7 +423,7 @@ impl Env {
         self.run(cwd, "prov", ["hook", "claude-code", event], &envs, Some(&payload))
     }
 
-    /// Starts a session: the transcript and the SessionStart event.
+    /// Starts a session: the transcript and the `SessionStart` event.
     pub fn start_session(&self, worktree: &Path, session: &str) -> Out {
         self.write_transcript(session, worktree);
         self.hook(worktree, "SessionStart", session)
@@ -391,12 +455,12 @@ impl Env {
             if record["state"] == state {
                 return record;
             }
-            assert!(start.elapsed() < Duration::from_secs(20), "session {session} did not become {state}: {record}");
+            assert!(start.elapsed() < Duration::from_secs(WAIT_SECS), "session {session} did not become {state}: {record}");
             std::thread::sleep(Duration::from_millis(50));
         }
     }
 
-    fn agent_checkpoint(&self, worktree: &Path, payload: Value) {
+    pub fn agent_checkpoint(&self, worktree: &Path, payload: &Value) {
         self.run(worktree, "git-ai", ["checkpoint", "agent-v1", "--hook-input", "stdin"], &[], Some(&payload.to_string()))
             .success();
     }
@@ -408,17 +472,18 @@ impl Env {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         self.agent_checkpoint(
             worktree,
-            serde_json::json!({"type": "human", "repo_working_dir": worktree, "will_edit_filepaths": [path]}),
+            &serde_json::json!({"type": "human", "repo_working_dir": worktree, "will_edit_filepaths": [path]}),
         );
         std::fs::write(&path, content).unwrap();
         self.agent_checkpoint(
             worktree,
-            serde_json::json!({"type": "ai_agent", "repo_working_dir": worktree, "edited_filepaths": [path],
+            &serde_json::json!({"type": "ai_agent", "repo_working_dir": worktree, "edited_filepaths": [path],
                 "agent_name": "claude", "model": "unknown", "conversation_id": session}),
         );
     }
 
     /// A file that a process wrote with no checkpoint at all.
+    #[allow(clippy::unused_self)] // a method like the other edits, for readable tests
     pub fn plain_write(&self, worktree: &Path, file: &str, content: &str) {
         let path = worktree.join(file);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
@@ -450,7 +515,17 @@ impl Env {
     /// Waits until git-ai has written the notes of new commits.
     #[track_caller]
     pub fn await_notes(&self, repo: &Path) {
-        self.run(repo, "git-ai", ["await", "--timeout", "60"], &[], None).success();
+        // Under load, `git-ai await` once gave up after 6 seconds with all
+        // notes written ("could not finish (0 metrics, 0 notes remaining)").
+        let mut last = None;
+        for _ in 0..3 {
+            let out = self.run(repo, "git-ai", ["await", "--timeout", "60"], &[], None);
+            if out.ok {
+                return;
+            }
+            last = Some(out);
+        }
+        last.unwrap().success();
     }
 
     /// `git-ai diff <commit> --json`, as a list of
@@ -494,6 +569,18 @@ impl Env {
 
 impl Drop for Env {
     fn drop(&mut self) {
+        // `PROV_TEST_KEEP=1` keeps the home and the repositories of a failed test.
+        if std::thread::panicking() && std::env::var_os("PROV_TEST_KEEP").is_some() {
+            eprintln!("PROV_TEST_KEEP: kept {} and {}", self.home().display(), self.repos().display());
+            self.home.disable_cleanup(true);
+            if let Some(repos) = &mut self.repos {
+                repos.disable_cleanup(true);
+            }
+        }
+        for (_, mut child) in self.agents.lock().unwrap().drain() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
         let _ = self.run(self.home(), "git-ai", ["bg", "shutdown"], &[], None);
     }
 }
@@ -516,7 +603,11 @@ pub fn sha256_of_gunzipped(path: &Path) -> String {
     use std::io::Read;
     let mut tar = Vec::new();
     flate2::read::GzDecoder::new(std::fs::File::open(path).unwrap()).read_to_end(&mut tar).unwrap();
-    Sha256::digest(&tar).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(&tar).iter().fold(String::new(), |mut s, b| {
+        use std::fmt::Write as _;
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 /// The entry names of a `.tar.gz` file, in archive order.
