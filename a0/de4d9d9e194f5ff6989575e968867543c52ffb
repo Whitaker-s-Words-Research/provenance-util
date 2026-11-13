@@ -1,0 +1,31 @@
+crates/prov-core/src/pattern.rs
+  s_719f69acde0053::t_29f5fa3b492f47 173,178-183
+crates/prov/tests/gate.rs
+  s_719f69acde0053::t_29f5fa3b492f47 34-35,52-53,62-63,72
+docs/workflow.md
+  s_719f69acde0053::t_29f5fa3b492f47 91
+SPEC.md
+  s_719f69acde0053::t_29f5fa3b492f47 371,602
+crates/prov-core/src/config.rs
+  s_719f69acde0053::t_29f5fa3b492f47 51-58,129
+docs/configuration.md
+  s_719f69acde0053::t_29f5fa3b492f47 11
+crates/prov/tests/common/mod.rs
+  s_719f69acde0053::t_29f5fa3b492f47 318
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "a0de4d9d9e194f5ff6989575e968867543c52ffb",
+  "prompts": {},
+  "sessions": {
+    "s_719f69acde0053": {
+      "agent_id": {
+        "tool": "prov-unattributed",
+        "id": "taint-1794575183186397406-1025908",
+        "model": "unknown"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
