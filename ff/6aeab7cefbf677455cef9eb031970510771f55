@@ -1,0 +1,22 @@
+crates/prov-adapters/src/claude_code.rs
+  h_dd7dcb3bf4c9d1 56,59-68,142,156-178,341-361
+crates/prov-adapters/src/lib.rs
+  h_dd7dcb3bf4c9d1 73-75
+crates/prov/src/session.rs
+  h_dd7dcb3bf4c9d1 26-40,72,88-116,130-131,138-141,144,146-150,158-159,165-167,293-304
+crates/prov/tests/commands.rs
+  h_dd7dcb3bf4c9d1 206-209
+docs/commands.md
+  h_dd7dcb3bf4c9d1 98-99
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "ff6aeab7cefbf677455cef9eb031970510771f55",
+  "prompts": {},
+  "humans": {
+    "h_dd7dcb3bf4c9d1": {
+      "author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
