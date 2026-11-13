@@ -1,0 +1,88 @@
+crates/prov/src/git_hook.rs
+  s_d458000301c268::t_c0f3b7cb4bfb57 14,123-128,130-131,151-159,161-170,175-195,209,279-281,284-293,313-315
+  s_f524a3f3b39125::t_31aa2d9ce0c0dc 316-317
+crates/prov/tests/common/mod.rs
+  s_d458000301c268::t_c4b9f9d1af20fa 23-27,55-56,58-60,72-73,89-96,118-122,158-166,175,186,219,249-256,312,362,384-408,426,458,463,475,480,486,518-528,572-583,606-610
+crates/prov/src/procs.rs
+  s_67fd5ad0553354::t_e8a88b2ff507a1 1-163
+crates/prov/src/gate.rs
+  s_d458000301c268::t_82327c8cbb0ac1 37,39-40,55-58,87,94-105,114-120,130,174-206,241,246-258,275,310,316,359-363,369-380,414-417,419,437-439,458-465,467-474
+crates/prov/src/cp.rs
+  s_d458000301c268::t_bb214b4d19d2f7 1-814
+crates/prov/src/copy_check.rs
+  s_d458000301c268::t_650accc3960b21 1-372
+crates/prov/src/approve.rs
+  s_d458000301c268::t_4cc3432cc088e0 57,91-92,207-209
+  s_f524a3f3b39125::t_2026f4468e29f5 210
+crates/prov/tests/sessions.rs
+  s_d458000301c268::t_f2c7a74f4a40cd 3-5,76,79,141,153-154,156-159,170,175-203,213,225,232,262-408
+crates/prov/src/archive.rs
+  s_d458000301c268::t_f25e993bdf8070 13,21,24,41-42,47-54,61-64,69-89,101,106-107,109,143-146,149,151-152,164,169-182,184-188,237-242,244-249,251-254
+crates/prov/tests/gitai_contract.rs
+  s_67fd5ad0553354::t_58b8cbac5dd058 1-241
+crates/prov/src/sweep.rs
+  s_d458000301c268::t_dd57a9b9d2fdcc 1-18,21,24-25,28-54,56
+crates/prov/tests/copy.rs
+  s_d458000301c268::t_ec895fa44d2caa 1-342
+crates/prov/src/agent_hook.rs
+  s_d458000301c268::t_c3ea54c53b70e6 57,64,78,85-110,112-114,118-121
+crates/prov/src/check.rs
+  s_d458000301c268::t_bb0fc61df24c14 81,171-172,174,217-218,220,348,379
+crates/prov/src/finish.rs
+  s_d458000301c268::t_815223012b7ee3 31,38-44,83-85,94-95
+crates/prov/tests/integration.rs
+  s_d458000301c268::t_45bcde932de307 5-7,30,97
+crates/prov/tests/commands.rs
+  s_d458000301c268::t_aed959cb6138c7 4-6,104,132-176,194,217-228,277-279,327,359,381,401,404-528
+crates/prov/src/session.rs
+  s_d458000301c268::t_f849691bb0f0fb 8,46,49,146,156-158,197,199,210-217,220-223,225-236
+crates/prov/src/start.rs
+  s_d458000301c268::t_1b297eeca7cf84 23,45,64,68,80,131,145,148-149
+  s_f524a3f3b39125::t_02e80a4bc45cea 150
+crates/prov/src/main.rs
+  s_d458000301c268::t_75982d743ffea0 8-9,15,109-113,116-121,211-248,268,271,281,290,300,311-326
+crates/prov/tests/gate.rs
+  s_d458000301c268::t_5c4355377d8759 3-5,101-102,106-109,128-132,173,187,196,274,316,332,418-463,465
+  s_f524a3f3b39125::t_aaaaf40792108b 464
+crates/prov/src/trace.rs
+  s_d458000301c268::t_e1142ec1320786 15-16,40-44,127-136,145-155
+crates/prov/src/doctor.rs
+  s_d458000301c268::t_ec22b499c0881a 8,10,25-28,45-49,60-63,65-68,71-73,145,150-160,179,200,203-218,246-297,301-305,318-322,332-474,486
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "c6e44515858d991a9711f6e762012a4220cc7a89",
+  "prompts": {},
+  "humans": {
+    "h_dd7dcb3bf4c9d1": {
+      "author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  },
+  "sessions": {
+    "s_67fd5ad0553354": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fe999a82-0384-4e26-b76c-8a1cc5916107",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    },
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    },
+    "s_f524a3f3b39125": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "ed6fddda-f393-4b79-8da1-aac82db50fbe",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
