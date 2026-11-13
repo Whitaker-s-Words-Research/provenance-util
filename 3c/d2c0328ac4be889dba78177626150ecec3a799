@@ -1,0 +1,19 @@
+PLAN.md
+  s_d458000301c268::t_77346ffafe6a40 53,73,84-89,93-123,128-130,136,140,152
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "3cd2c0328ac4be889dba78177626150ecec3a799",
+  "prompts": {},
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
