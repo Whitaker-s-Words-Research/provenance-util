@@ -1,0 +1,33 @@
+.provenance.toml
+  s_719f69acde0053::t_29f5fa3b492f47 4
+CLAUDE.md
+  s_1733e838cf38a3::t_1050637bd65752 10
+  s_1733e838cf38a3::t_3ee1faf6aeec5c 1-9,11-12
+AGENTS.md
+  s_719f69acde0053::t_29f5fa3b492f47 23
+  s_1733e838cf38a3::t_cdd59ad418c375 1-22,24-64
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "295f08010b9ba0b9da983ef244bc62ac492fb785",
+  "prompts": {},
+  "sessions": {
+    "s_1733e838cf38a3": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fabfe3bd-54e1-4a11-b94e-1fe0075d2e91",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    },
+    "s_719f69acde0053": {
+      "agent_id": {
+        "tool": "prov-unattributed",
+        "id": "taint-1794575183186397406-1025908",
+        "model": "unknown"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
