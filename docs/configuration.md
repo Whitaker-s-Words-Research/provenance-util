@@ -8,7 +8,7 @@
 required_version = "=0.1.0"   # the prov version; the merge gate and prov check refuse on a mismatch
 agents = ["claude"]           # the agents in use
 logs_dir = "llm-logs"         # where transcript archives go, relative to the base directory
-protected = [".provenance.toml", ".claude/**", ".github/workflows/**"]
+protected = [".provenance.toml", ".claude/**", ".github/workflows/**", "CLAUDE.md", "AGENTS.md"]
 known_gaps = []               # commits with no git-ai note that you accept
 
 [agent.claude]                # optional; replaces the adapter's defaults

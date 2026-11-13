@@ -48,7 +48,14 @@ fn default_logs_dir() -> String {
     "llm-logs".into()
 }
 fn default_protected() -> Vec<String> {
-    vec![".provenance.toml".into(), ".claude/**".into(), ".github/workflows/**".into()]
+    vec![
+        ".provenance.toml".into(),
+        ".claude/**".into(),
+        ".github/workflows/**".into(),
+        // Agent instructions, at every level: Claude Code also reads them in subdirectories.
+        "CLAUDE.md".into(),
+        "AGENTS.md".into(),
+    ]
 }
 
 impl Default for Config {
@@ -119,7 +126,7 @@ mod tests {
 required_version = "=0.1.0"
 agents = ["claude"]
 logs_dir = "llm-logs"
-protected = [".provenance.toml", ".claude/**", ".github/workflows/**"]
+protected = [".provenance.toml", ".claude/**", ".github/workflows/**", "CLAUDE.md", "AGENTS.md"]
 
 [agent.claude]
 command = ["claude", "--model", "opus"]

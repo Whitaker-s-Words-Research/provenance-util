@@ -315,7 +315,7 @@ impl Env {
         std::fs::write(
             dir.join(".provenance.toml"),
             "required_version = \"=0.1.0\"\nagents = [\"claude\"]\nlogs_dir = \"llm-logs\"\n\
-             protected = [\".provenance.toml\", \".claude/**\", \".github/workflows/**\"]\n",
+             protected = [\".provenance.toml\", \".claude/**\", \".github/workflows/**\", \"CLAUDE.md\", \"AGENTS.md\"]\n",
         )
         .unwrap();
         std::fs::write(dir.join(".gitignore"), "/llm-logs/\n").unwrap();

@@ -170,11 +170,17 @@ mod tests {
 
     #[test]
     fn protected_defaults() {
-        let set = set(&[".provenance.toml", ".claude/**", ".github/workflows/**"]);
+        let set = set(&[".provenance.toml", ".claude/**", ".github/workflows/**", "CLAUDE.md", "AGENTS.md"]);
         assert!(set.matches(".provenance.toml"));
         assert!(set.matches(".claude/settings.json"));
         assert!(set.matches(".claude/hooks/a/b.sh"));
         assert!(set.matches(".github/workflows/ci.yml"));
+        assert!(set.matches("CLAUDE.md"));
+        assert!(set.matches("AGENTS.md"));
+        assert!(set.matches("crates/prov/CLAUDE.md"));
+        assert!(set.matches("docs/AGENTS.md"));
+        assert!(!set.matches("CLAUDE.local.md"));
+        assert!(!set.matches("docs/claude.md"));
         assert!(!set.matches(".github/CODEOWNERS"));
         assert!(!set.matches("src/main.rs"));
         assert!(!set.matches(".claude"));

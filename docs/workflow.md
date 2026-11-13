@@ -88,7 +88,7 @@ An item is **doubtful** when:
 - A line belongs to a session that no trailer names and that has no record. git-ai invents such a session, for example after `git commit --no-verify` skipped the sweep.
 - git changed a file that git-ai lists no lines for, because git-ai ignores the path (`vendor/`, lock files, `*.min.js` and others). The whole file is one item.
 - A merge commit on the agent branch changed a path relative to every parent, for example a conflict that the agent resolved.
-- A protected path changed. The defaults are `.provenance.toml`, `.claude/**` and `.github/workflows/**`, because an agent could change them to weaken the controls.
+- A protected path changed. The defaults are `.provenance.toml`, `.claude/**`, `.github/workflows/**`, and `CLAUDE.md` and `AGENTS.md` in any directory, because an agent could change them to weaken the controls.
 
 ### When the gate stops
 
