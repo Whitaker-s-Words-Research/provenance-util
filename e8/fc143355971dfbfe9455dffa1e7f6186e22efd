@@ -1,0 +1,80 @@
+tla/ProvIntegration.bug-unverified-cleanup.cfg
+  s_d458000301c268::t_a9a396c3bb46eb 1-10
+tla/ProvIntegration.reach-deleted.cfg
+  s_d458000301c268::t_a02b2c4bbe40ba 1-10
+tla/ProvIntegration.reach-committed.cfg
+  s_d458000301c268::t_7b00689e558cfb 1-10
+tla/ProvSweep.tla
+  s_d458000301c268::t_722e26071ca451 1-213
+.gitignore
+  s_d458000301c268::t_582a5ef56bd8a7 4-6
+tla/ProvSweep.bug-no-taint.cfg
+  s_d458000301c268::t_6868ffd4eaf2f8 1-11
+tla/ProvSessions.reach-stale-discard.cfg
+  s_d458000301c268::t_b55e37e7e8241d 1-12
+tla/ProvIntegration.cfg
+  s_d458000301c268::t_4797d0cc631995 1-10
+tla/ProvSweep.reach-taint.cfg
+  s_d458000301c268::t_c72a5fb28aaa66 1-11
+tla/ProvSweep.cfg
+  s_d458000301c268::t_02314d54445ed3 1-11
+tla/ProvIntegration.bug-unverified-resume.cfg
+  s_d458000301c268::t_a9d87dffc8f209 1-10
+tla/check-models.sh
+  s_d458000301c268::t_9de9efe9ed838d 1-59
+tla/ProvSessions.bug-no-wait.cfg
+  s_d458000301c268::t_669a7127f1d929 1-12
+tla/ProvSessions.reach-rearchived.cfg
+  s_d458000301c268::t_d162d55461aaf2 1-12
+tla/ProvSessions.reach-archived.cfg
+  s_d458000301c268::t_7fdda60220a626 1-12
+tla/ProvSessions.live.cfg
+  s_d458000301c268::t_a936cdb318f049 1-12
+tla/ProvIntegration.tla
+  s_d458000301c268::t_c7e1cd09a7abd8 1-175
+tla/README.md
+  s_d458000301c268::t_4d4208db2a40ab 1-42
+tla/ProvIntegration.reach-resumed.cfg
+  s_d458000301c268::t_5fec3ce1e35827 1-10
+tla/ProvSessions.limit-no-pid.cfg
+  s_d458000301c268::t_2b7868fa804df5 1-12
+tla/ProvSweep.reach-credit.cfg
+  s_d458000301c268::t_246138b6807c5a 1-11
+tla/ProvSessions.reach-stuck-closing.cfg
+  s_d458000301c268::t_d2d1e4c5cab08e 1-12
+tla/ProvIntegration.limit-incomplete-commit.cfg
+  s_d458000301c268::t_21bbc76443f5a2 1-10
+tla/ProvIntegration.bug-unverified-named.cfg
+  s_d458000301c268::t_81dbdf7f4b7377 1-10
+tla/ProvSessions.tla
+  s_d458000301c268::t_45c6d39438ece8 1-203
+tla/ProvSweep.reach-contended.cfg
+  s_d458000301c268::t_93de2991eaac53 1-11
+tla/ProvSessions.bug-state-only.cfg
+  s_d458000301c268::t_ad89f92f206d43 1-12
+tla/ProvSweep.limit-background.cfg
+  s_d458000301c268::t_1c31d59004bab8 1-11
+tla/ProvSessions.cfg
+  s_d458000301c268::t_9533fefc9ee808 1-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e8fc143355971dfbfe9455dffa1e7f6186e22efd",
+  "prompts": {},
+  "humans": {
+    "h_dd7dcb3bf4c9d1": {
+      "author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  },
+  "sessions": {
+    "s_d458000301c268": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "196bb555-8e3e-415b-a64b-e867204ce0e3",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
