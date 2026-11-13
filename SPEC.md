@@ -368,7 +368,7 @@ No doubtful line reaches a human branch without a human approval. `prov` reads e
 
 A merge commit in the incoming range is not read with `git-ai diff`. Reason: git-ai shows a merge as the difference from its first parent, which repeats the lines of the merged commits. Instead, each path that the merge commit changed relative to every parent is doubtful. This is what the author of the merge wrote, for example an agent that merged the human branch into its branch and resolved a conflict. A clean merge has no such path.
 
-A change to a protected path is also doubtful. The default protected paths are `.provenance.toml`, `.claude/**` and `.github/workflows/**`. Reason: an agent could change these files on its own branch to weaken the controls.
+A change to a protected path is also doubtful. The default protected paths are `.provenance.toml`, `.claude/**`, `.github/workflows/**`, `CLAUDE.md` and `AGENTS.md`. Reason: an agent could change these files on its own branch to weaken the controls. The instruction files `CLAUDE.md` and `AGENTS.md` have no `/`, so they match at every level: Claude Code also reads them in subdirectories (owner decision, 2026-11-13).
 
 The gate runs in `prepare-commit-msg` for each integration:
 
@@ -599,7 +599,7 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 required_version = "=0.1.0"        # exact version. The merge gate and prov check refuse on a mismatch.
 agents = ["claude"]                # the agents in use
 logs_dir = "llm-logs"              # relative to the base directory
-protected = [".provenance.toml", ".claude/**", ".github/workflows/**"]
+protected = [".provenance.toml", ".claude/**", ".github/workflows/**", "CLAUDE.md", "AGENTS.md"]
 known_gaps = []                    # commits with no git-ai note that the human accepts. See "Doctor checks".
 
 [agent.claude]                     # optional. Replaces a default of the adapter.

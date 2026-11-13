@@ -1,6 +1,6 @@
 # prov: status and open work
 
-The specification is [SPEC.md](SPEC.md); read it first. It has the rules with their reasons and the test evidence. The user-facing overview is [README.md](README.md). The history of the work is in git.
+The specification is [SPEC.md](SPEC.md); read it first. It has the rules with their reasons and the test evidence. The user-facing overview is [README.md](README.md), and the user guides are in [docs/](docs/README.md). The history of the work is in git.
 
 ## Status
 
