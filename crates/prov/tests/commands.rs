@@ -203,6 +203,10 @@ fn start_session_approve_finish_and_trace() {
     // --- prov session -------------------------------------------------------
     let list = json(&env.prov(&repo, ["session", "list", "--json"]).success().stdout);
     assert_eq!(list[0]["id"], session);
+    // The test session has no transcript, so no title.
+    assert!(list[0]["title"].is_null(), "{list}");
+    let text = env.prov(&repo, ["session", "list"]).success().stdout;
+    assert!(text.starts_with(&format!("claude  {}  open  ", &session[..8])) && text.contains(&branch), "{text}");
     assert_eq!((&list[0]["state"], &list[0]["stale"], &list[0]["contended"]), (&json("\"open\""), &json("false"), &json("false")));
     let show = env.prov(&repo, ["session", "show", "sess-fl"]).success();
     assert!(show.stdout.contains(&branch) && show.stdout.contains("state:      open"), "{}", show.stdout);

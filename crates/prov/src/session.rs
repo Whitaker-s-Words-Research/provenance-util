@@ -23,6 +23,21 @@ pub struct View {
     pub stale: bool,
     /// More than one session occupies the worktree.
     pub contended: bool,
+    /// The title that the agent gave the session. Read from the transcript
+    /// by `list` and `show` only. Not stored.
+    pub title: Option<String>,
+}
+
+impl View {
+    /// Reads the title from the transcript, if the agent has one there.
+    fn read_title(&mut self) {
+        self.title = self
+            .record
+            .transcript_path
+            .as_deref()
+            .zip(prov_adapters::by_agent_name(&self.record.agent))
+            .and_then(|(transcript, adapter)| adapter.title(transcript));
+    }
 }
 
 /// Finds a session by its ID, or by the start of its ID if only one session matches.
@@ -54,6 +69,7 @@ pub fn views(ctx: &Ctx) -> Result<Vec<View>> {
             stale: r.is_stale(now),
             contended: r.occupies(&r.worktree, now)
                 && records.iter().filter(|o| o.occupies(&r.worktree, now)).count() > 1,
+            title: None,
         })
         .collect())
 }
@@ -69,6 +85,35 @@ fn state_text(view: &View) -> String {
     text
 }
 
+/// The start of each ID that tells it apart from the others: 8 characters
+/// or more. `resolve` accepts it.
+fn short_ids<'a>(ids: &[&'a str]) -> Vec<&'a str> {
+    ids.iter()
+        .map(|id| {
+            let shared = ids
+                .iter()
+                .filter(|other| *other != id)
+                .map(|other| id.chars().zip(other.chars()).take_while(|(a, b)| a == b).count())
+                .max()
+                .unwrap_or(0);
+            let chars = shared.max(7) + 1;
+            id.char_indices().nth(chars).map_or(*id, |(end, _)| &id[..end])
+        })
+        .collect()
+}
+
+/// The path with `~` for the home directory.
+fn tilde(path: &std::path::Path) -> String {
+    match std::env::var_os("HOME").map(std::path::PathBuf::from) {
+        Some(home) if home.as_os_str().len() > 1 => match path.strip_prefix(&home) {
+            Ok(rest) if rest.as_os_str().is_empty() => "~".to_string(),
+            Ok(rest) => format!("~/{}", rest.display()),
+            Err(_) => path.display().to_string(),
+        },
+        _ => path.display().to_string(),
+    }
+}
+
 fn age(seconds: u64) -> String {
     match seconds {
         s if s < 120 => format!("{s} s"),
@@ -82,23 +127,27 @@ pub fn run(action: Action, json: bool, dry_run: bool) -> Result<bool> {
     let ctx = Ctx::here()?;
     match action {
         Action::List => {
-            let views = views(&ctx)?;
+            let mut views = views(&ctx)?;
+            views.iter_mut().for_each(View::read_title);
             if json {
                 println!("{}", serde_json::to_string_pretty(&views)?);
             } else if views.is_empty() {
                 println!("No session has a record. Integrated sessions are in the trailers of their merge commits.");
             } else {
                 let now = now();
-                for v in &views {
-                    println!(
-                        "{}:{}  [{}]  {}  last event {} ago\n    {}",
+                let ids: Vec<&str> = views.iter().map(|v| v.record.id.as_str()).collect();
+                for (v, id) in views.iter().zip(short_ids(&ids)) {
+                    let mut line = format!(
+                        "{}  {id}  {}  {} ago",
                         v.record.agent,
-                        v.record.id,
                         state_text(v),
-                        v.record.branch,
-                        age(now.saturating_sub(v.record.last_event_at)),
-                        v.record.worktree.display(),
+                        age(now.saturating_sub(v.record.last_event_at))
                     );
+                    if let Some(title) = &v.title {
+                        line.push_str("  ");
+                        line.push_str(title);
+                    }
+                    println!("{line}\n    {}   {}", v.record.branch, tilde(&v.record.worktree));
                 }
             }
             Ok(true)
@@ -106,12 +155,16 @@ pub fn run(action: Action, json: bool, dry_run: bool) -> Result<bool> {
         Action::Show(id) => {
             let record = resolve(&ctx.store, &id)?;
             let view = views(&ctx)?.into_iter().find(|v| v.record.id == record.id);
-            let Some(view) = view else { bail!("no record of a session `{id}`") };
+            let Some(mut view) = view else { bail!("no record of a session `{id}`") };
+            view.read_title();
             if json {
                 println!("{}", serde_json::to_string_pretty(&view)?);
             } else {
                 let r = &view.record;
                 println!("session:    {}:{}", r.agent, r.id);
+                if let Some(title) = &view.title {
+                    println!("title:      {title}");
+                }
                 println!("state:      {}", state_text(&view));
                 println!("branch:     {}", r.branch);
                 println!("worktree:   {}", r.worktree.display());
@@ -235,5 +288,17 @@ pub fn close(ctx: &Ctx, id: &str, dry_run: bool) -> Result<SessionRecord> {
             Ok(record)
         }
         None => bail!("the record of session {id} was deleted during the archive step"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::short_ids;
+
+    #[test]
+    fn short_ids_tell_the_sessions_apart() {
+        let ids = ["5d26531d-b3ff-4ea3", "5d26531d-c000-1111", "abcdef0123456789", "short"];
+        assert_eq!(short_ids(&ids), ["5d26531d-b", "5d26531d-c", "abcdef01", "short"]);
+        assert_eq!(short_ids(&["x"]), ["x"]);
     }
 }
