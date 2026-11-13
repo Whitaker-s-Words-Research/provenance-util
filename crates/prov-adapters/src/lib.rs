@@ -70,6 +70,9 @@ pub trait Adapter: Sync {
     fn sweeps_at(&self, kind: EventKind) -> bool;
     /// The model of the latest work, if the transcript has one.
     fn latest_model(&self, transcript: &Path) -> Option<String>;
+    /// The title that the agent gave the session, if the transcript has one.
+    /// Only a label in `prov session list`: no rule depends on it.
+    fn title(&self, transcript: &Path) -> Option<String>;
     /// The files of the transcript archive.
     fn archive_entries(&self, session_id: &str, transcript: Option<&Path>) -> Result<Vec<ArchiveEntry>>;
     /// True if text that a hook prints at this event reaches the agent's context.

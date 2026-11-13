@@ -95,6 +95,8 @@ prov session drop <id>
 ```
 
 - `list` and `show` print the session records: state, worktree, branch, model, archive.
+- `list` shows the start of each session ID, as much as tells the sessions apart. Every command that takes `<id>` accepts it.
+- `list` and `show` also show the title that Claude Code gave the session. They read it from the `ai-title` records in the transcript. Claude Code does not document these records, so a new version can drop them; the title is then missing. No rule depends on the title.
 - `close` moves an Open session to Closing and archives it, after the agent process exits. For a Failed session, it runs the archive step again.
 - `drop` deletes the record of a session. The transcript archive stays. Use it for a record that `prov doctor` says is left over after a merge.
 

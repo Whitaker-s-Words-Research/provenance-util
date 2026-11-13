@@ -53,8 +53,18 @@ struct Payload {
     model: Option<String>,
 }
 
-/// How much of the end of a transcript is read to find the latest model.
+/// How much of the end of a transcript is read to find the latest model or title.
 const TAIL_BYTES: u64 = 512 * 1024;
+
+/// The last `TAIL_BYTES` of a transcript. The first line can be cut.
+fn tail(transcript: &Path) -> Option<String> {
+    let mut file = File::open(transcript).ok()?;
+    let len = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(len.saturating_sub(TAIL_BYTES))).ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
+}
 
 impl Adapter for ClaudeCode {
     fn adapter_name(&self) -> &'static str {
@@ -129,13 +139,7 @@ impl Adapter for ClaudeCode {
         struct Message {
             model: Option<String>,
         }
-        let mut file = File::open(transcript).ok()?;
-        let len = file.metadata().ok()?.len();
-        file.seek(SeekFrom::Start(len.saturating_sub(TAIL_BYTES))).ok()?;
-        let mut bytes = Vec::new();
-        file.read_to_end(&mut bytes).ok()?;
-        let text = String::from_utf8_lossy(&bytes);
-        text.lines().rev().find_map(|line| {
+        tail(transcript)?.lines().rev().find_map(|line| {
             // A cheap test first: most lines are not assistant messages.
             if !line.contains("\"assistant\"") {
                 return None;
@@ -146,6 +150,29 @@ impl Adapter for ClaudeCode {
             }
             // Claude Code marks its own error messages with a model in `<...>`.
             parsed.message?.model.filter(|m| !m.is_empty() && !m.starts_with('<'))
+        })
+    }
+
+    /// The latest `ai-title` record. Claude Code writes one again at most
+    /// turns, so the end of the transcript has it. The record is not a
+    /// documented format: a new Claude Code version can drop it.
+    fn title(&self, transcript: &Path) -> Option<String> {
+        #[derive(Deserialize)]
+        struct Line {
+            #[serde(rename = "type")]
+            kind: Option<String>,
+            #[serde(rename = "aiTitle")]
+            ai_title: Option<String>,
+        }
+        tail(transcript)?.lines().rev().find_map(|line| {
+            if !line.contains("\"ai-title\"") {
+                return None;
+            }
+            let parsed: Line = serde_json::from_str(line).ok()?;
+            if parsed.kind.as_deref() != Some("ai-title") {
+                return None;
+            }
+            parsed.ai_title.map(|t| t.split_whitespace().collect::<Vec<_>>().join(" ")).filter(|t| !t.is_empty())
         })
     }
 
@@ -309,6 +336,27 @@ mod tests {
         .unwrap();
         assert_eq!(ClaudeCode.latest_model(&path).as_deref(), Some("claude-fable-5-2"));
         assert_eq!(ClaudeCode.latest_model(&dir.path().join("none.jsonl")), None);
+    }
+
+    #[test]
+    fn title_is_the_last_ai_title_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("t.jsonl");
+        std::fs::write(
+            &path,
+            concat!(
+                r#"{"type":"ai-title","aiTitle":"First title","sessionId":"s"}"#, "\n",
+                r#"{"type":"ai-title","aiTitle":"Outstanding  items\nin PLAN.md","sessionId":"s"}"#, "\n",
+                r#"{"type":"user","message":{"role":"user","content":"the \"ai-title\" said"}}"#, "\n",
+                r#"{"type":"ai-title","aiTitle":"  ","sessionId":"s"}"#, "\n",
+            ),
+        )
+        .unwrap();
+        // An empty title does not hide the one before it.
+        assert_eq!(ClaudeCode.title(&path).as_deref(), Some("Outstanding items in PLAN.md"));
+        std::fs::write(&path, "{\"type\":\"user\"}\n").unwrap();
+        assert_eq!(ClaudeCode.title(&path), None);
+        assert_eq!(ClaudeCode.title(&dir.path().join("none.jsonl")), None);
     }
 
     #[test]
