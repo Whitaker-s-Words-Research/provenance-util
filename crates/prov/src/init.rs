@@ -289,6 +289,10 @@ pub fn run(args: &Args) -> Result<bool> {
             println!("Commit these files on this branch: {}", report.to_commit.join(" "));
             println!("Then check the setup: prov doctor");
         }
+        // The startup file belongs to the user, not to this clone: a hint only.
+        if let Some(hint) = crate::completions::missing_hint() {
+            crate::context::say(hint);
+        }
     }
     Ok(true)
 }

@@ -4,6 +4,8 @@ mod agent_hook;
 mod approve;
 mod archive;
 mod check;
+mod complete;
+mod completions;
 mod context;
 mod copy_check;
 mod cp;
@@ -23,7 +25,8 @@ use std::io::Read;
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, CommandFactory, Parser, Subcommand};
+use clap_complete::engine::ArgValueCandidates;
 
 #[derive(Parser)]
 #[command(name = "prov", version = concat!(env!("CARGO_PKG_VERSION"), "+", env!("PROV_BUILD_SHA")), about = "Provenance for repositories where AI agents and humans commit")]
@@ -59,10 +62,11 @@ enum Cmd {
     Check {
         /// An agent branch, or `<base>..<tip>` for commits that are already
         /// on a human branch.
+        #[arg(add = ArgValueCandidates::new(complete::agent_branches))]
         target: Option<String>,
         /// The branch that the agent branch will merge into. Default: the
         /// branch that is checked out.
-        #[arg(long, value_name = "BRANCH")]
+        #[arg(long, value_name = "BRANCH", add = ArgValueCandidates::new(complete::branches))]
         into: Option<String>,
         #[arg(long)]
         json: bool,
@@ -87,6 +91,7 @@ enum Cmd {
     /// Removes the worktree of a session. The branch stays.
     Finish {
         /// A session ID, or the branch of the worktree.
+        #[arg(add = ArgValueCandidates::new(complete::finish_targets))]
         target: String,
         /// Remove the worktree also while a session in it is open. Each open session is closed first.
         #[arg(long = "override")]
@@ -101,6 +106,19 @@ enum Cmd {
     },
     /// Records a human decision about the authorship of paths.
     Approve(ApproveArgs),
+    /// Prints the line that turns on tab completion, or adds it to your shell's startup file.
+    Completions {
+        /// `bash`, `zsh` or `fish`. Default: the shell of `$SHELL`.
+        #[arg(long, value_parser = ["bash", "zsh", "fish"])]
+        shell: Option<String>,
+        /// Add the line to the startup file, if it is not there yet.
+        #[arg(long)]
+        install: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
     /// Agent Trace records.
     Trace {
         #[command(subcommand)]
@@ -124,6 +142,7 @@ enum Cmd {
 #[derive(Args)]
 struct StartArgs {
     /// The agent, for example `claude`.
+    #[arg(add = ArgValueCandidates::new(complete::agents))]
     agent: String,
     /// The `<name>` part of the branch name. Default: 4 random hex characters.
     #[arg(long, value_name = "SLUG")]
@@ -132,16 +151,17 @@ struct StartArgs {
     #[arg(long, value_name = "NAME")]
     branch: Option<String>,
     /// The start point of the new branch. Default: the branch that is checked out.
-    #[arg(long, value_name = "REF")]
+    #[arg(long, value_name = "REF", add = ArgValueCandidates::new(complete::branches))]
     from: Option<String>,
-    /// The location of the worktree.
-    #[arg(long, value_name = "DIR")]
+    /// The directory that holds the worktree. The worktree is a new
+    /// directory in it, named after the branch. Default: `../<repo>.worktrees/`.
+    #[arg(long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
     path: Option<PathBuf>,
     /// Create the worktree, print its path, and do not start the agent.
     #[arg(long)]
     no_launch: bool,
     /// Open the worktree of that session and start the agent with its resume option.
-    #[arg(long, value_name = "SESSION")]
+    #[arg(long, value_name = "SESSION", add = ArgValueCandidates::new(complete::sessions))]
     resume: Option<String>,
     #[arg(long)]
     dry_run: bool,
@@ -161,12 +181,14 @@ enum SessionCmd {
     },
     /// Shows one session.
     Show {
+        #[arg(add = ArgValueCandidates::new(complete::sessions))]
         session: String,
         #[arg(long)]
         json: bool,
     },
     /// Moves an Open session to Closing and archives it. For a Failed session: runs the archive step again.
     Close {
+        #[arg(add = ArgValueCandidates::new(complete::sessions))]
         session: String,
         #[arg(long)]
         dry_run: bool,
@@ -175,6 +197,7 @@ enum SessionCmd {
     },
     /// Deletes the record of a session. The transcript archive stays.
     Drop {
+        #[arg(add = ArgValueCandidates::new(complete::sessions))]
         session: String,
         #[arg(long)]
         dry_run: bool,
@@ -251,6 +274,7 @@ enum TraceCmd {
     /// Writes Agent Trace 0.1.0 records as JSON Lines, one record for each commit with a note.
     Export {
         /// A git range, for example `main..HEAD`. Default: the branch that is checked out.
+        #[arg(add = ArgValueCandidates::new(complete::branches))]
         range: Option<String>,
     },
 }
@@ -263,7 +287,7 @@ fn main() -> ExitCode {
         [hook, adapter, event, rest @ ..] if hook == "hook" && !adapter.starts_with('-') && !event.starts_with('-') => {
             run_hook(adapter, event, rest)
         }
-        _ => match Cli::parse().command {
+        _ => match parse_cli().command {
             Cmd::Hook { adapter, event, args } => run_hook(&adapter, &event, &args),
             Cmd::Init { agents, force, dry_run, json } => init::run(&init::Args { agents, force, dry_run, json }),
             Cmd::Doctor { deep, json } => doctor::run(deep, json),
@@ -307,6 +331,9 @@ fn main() -> ExitCode {
                     })
                 })
             }
+            Cmd::Completions { shell, install, dry_run, json } => {
+                completions::run(&completions::Args { shell, install, dry_run, json })
+            }
             Cmd::Trace { action: TraceCmd::Export { range } } => trace::run(range.as_deref()),
             Cmd::Cp(a) => cp::run(&cp::Args {
                 from: a.from,
@@ -335,6 +362,13 @@ fn main() -> ExitCode {
             ExitCode::from(1)
         }
     }
+}
+
+/// The command line. With `COMPLETE=<shell>` set, this prints the shell's
+/// completion script or the candidates for the shell instead, and exits.
+fn parse_cli() -> Cli {
+    clap_complete::CompleteEnv::with_factory(Cli::command).complete();
+    Cli::parse()
 }
 
 fn run_hook(adapter: &str, event: &str, args: &[String]) -> anyhow::Result<bool> {

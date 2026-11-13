@@ -54,11 +54,21 @@ fn random_name() -> Result<String> {
     Ok(format!("{:02x}{:02x}", bytes[0], bytes[1]))
 }
 
-/// `../<repo>.worktrees/`, from the base directory.
-fn worktrees_dir(ctx: &Ctx) -> Result<PathBuf> {
+/// The directory that holds the worktree: `--path`, or `../<repo>.worktrees/`
+/// from the base directory.
+fn worktrees_dir(ctx: &Ctx, path: Option<&Path>) -> Result<PathBuf> {
+    if let Some(path) = path {
+        return absolute(path);
+    }
     let base = ctx.repo.base_dir();
     let name = base.file_name().and_then(|n| n.to_str()).context("the base directory has no name")?;
     Ok(base.parent().context("the base directory has no parent")?.join(format!("{name}.worktrees")))
+}
+
+/// The directory name of a worktree: the branch without `agent/`, with `-`
+/// for `/`. `agent/claude/20261112-71fe` gives `claude-20261112-71fe`.
+fn worktree_name(branch: &str) -> String {
+    branch.strip_prefix("agent/").unwrap_or(branch).replace('/', "-")
 }
 
 pub fn run(args: &Args) -> Result<bool> {
@@ -99,10 +109,7 @@ pub fn run(args: &Args) -> Result<bool> {
         if repo.rev_parse(&from)?.is_none() {
             bail!("no branch or commit `{from}`");
         }
-        let worktree = match &args.path {
-            Some(path) => absolute(path)?,
-            None => worktrees_dir(&ctx)?.join(format!("{}-{date}-{name}", args.agent)),
-        };
+        let worktree = worktrees_dir(&ctx, args.path.as_deref())?.join(worktree_name(&branch));
         if worktree.exists() {
             bail!("{} exists", worktree.display());
         }
@@ -164,8 +171,22 @@ pub fn run(args: &Args) -> Result<bool> {
     Err(error).with_context(|| format!("cannot start `{}`", command[0]))
 }
 
+/// The absolute path, with `.` and `..` removed by text, not by following
+/// links: `--path ../x` from `/r/project` gives `/r/x`.
 fn absolute(path: &Path) -> Result<PathBuf> {
-    Ok(if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) })
+    use std::path::Component;
+    let joined = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) };
+    let mut out = PathBuf::new();
+    for c in joined.components() {
+        match c {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                out.pop();
+            }
+            other => out.push(other),
+        }
+    }
+    Ok(out)
 }
 
 /// The worktree of a session to resume. If the worktree was removed, it is
@@ -198,12 +219,8 @@ fn resume(ctx: &Ctx, args: &Args, session: &str) -> Result<Report> {
         }
     }
     let worktree = match (&args.path, &record) {
-        (Some(path), _) => absolute(path)?,
         (None, Some(record)) => record.worktree.clone(),
-        (None, None) => {
-            let name = branch.strip_prefix("agent/").unwrap_or(&branch).replace('/', "-");
-            worktrees_dir(ctx)?.join(name)
-        }
+        (path, _) => worktrees_dir(ctx, path.as_deref())?.join(worktree_name(&branch)),
     };
     if worktree.exists() {
         bail!("{} exists, and it does not have the branch `{branch}` checked out", worktree.display());
@@ -212,4 +229,15 @@ fn resume(ctx: &Ctx, args: &Args, session: &str) -> Result<Report> {
         repo.git(["worktree".as_ref(), "add".as_ref(), "-q".as_ref(), worktree.as_os_str(), branch.as_ref()])?;
     }
     Ok(Report { dry_run: args.dry_run, branch, worktree, created: true, from: None, command: None })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::worktree_name;
+
+    #[test]
+    fn worktree_name_comes_from_the_branch() {
+        assert_eq!(worktree_name("agent/claude/20261112-71fe"), "claude-20261112-71fe");
+        assert_eq!(worktree_name("agent/claude/fix/parser"), "claude-fix-parser");
+    }
 }

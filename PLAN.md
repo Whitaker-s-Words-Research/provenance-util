@@ -6,7 +6,7 @@ The specification is [SPEC.md](SPEC.md); read it first. It has the rules with th
 
 - Phase 1 is done and merged into `main`: the core (sessions, hooks, sweep, merge gate, `prov check`), the commands, `prov cp`, and the rules from the TLA+ model review.
 - Version 0.1.0, not released. There is no release process yet (SPEC, "Build and release").
-- Checks: 97 tests (`ci/dev.sh test --workspace --locked`), 23 TLA+ model configs (`ci/dev.sh --models`), clippy with `-D warnings`.
+- Checks: 101 tests (`ci/dev.sh test --workspace --locked`), 23 TLA+ model configs (`ci/dev.sh --models`), clippy with `-D warnings`.
 - OpenCode is phase 2, in "Appendix: phase 2, OpenCode" in the spec. Phase 1 rules must stay general; the appendix lists the six that must.
 
 ## Not tested yet
