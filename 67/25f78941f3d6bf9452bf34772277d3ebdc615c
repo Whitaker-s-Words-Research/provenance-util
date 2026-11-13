@@ -1,0 +1,18 @@
+.claude/settings.json
+  h_dd7dcb3bf4c9d1 1-53
+.gitignore
+  h_dd7dcb3bf4c9d1 7
+.provenance.toml
+  h_dd7dcb3bf4c9d1 1-4
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "6725f78941f3d6bf9452bf34772277d3ebdc615c",
+  "prompts": {},
+  "humans": {
+    "h_dd7dcb3bf4c9d1": {
+      "author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
