@@ -1,0 +1,36 @@
+# The image for the local checks (ci/run.sh). Every tool is pinned:
+# Ubuntu 26.04 (git 2.53, the tested version), the Rust toolchain of
+# rust-toolchain.toml, tla2tools 1.7.4 and git-ai 1.7.6, each download with
+# its SHA-256. Podman caches the layers, so only the first build downloads.
+FROM docker.io/library/ubuntu:26.04
+
+RUN apt-get update -qq \
+ && DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends \
+      ca-certificates curl git build-essential openjdk-17-jre-headless \
+ && rm -rf /var/lib/apt/lists/*
+
+# git-ai refuses to run as root by default, and the tests need it: a normal user.
+RUN useradd --create-home ci
+USER ci
+WORKDIR /home/ci
+ENV PATH=/home/ci/.cargo/bin:/home/ci/bin:$PATH
+
+# git-ai 1.7.6. The binary must be named git-ai: under another name it acts as git.
+RUN mkdir -p bin && arch=$(uname -m) && case "$arch" in \
+      x86_64)  a=x64;   sum=f6cda0cb43c1c9a3d68e7efe2d79577680ea6f382c31bf36a2162906f93f6c1c ;; \
+      aarch64) a=arm64; sum=1326abd5547636e6b6b297ad79afc955e57e82361efac320d4f860147b95a87a ;; \
+      *) echo "no git-ai binary for $arch" >&2; exit 1 ;; esac \
+ && curl -fsSL -o bin/git-ai "https://github.com/git-ai-project/git-ai/releases/download/v1.7.6/git-ai-linux-$a" \
+ && echo "$sum  bin/git-ai" | sha256sum -c - \
+ && chmod +x bin/git-ai && bin/git-ai --version
+
+# tla2tools 1.7.4 for the TLA+ models.
+RUN curl -fsSL -o tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar \
+ && echo "936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  tla2tools.jar" | sha256sum -c -
+
+# The Rust toolchain that rust-toolchain.toml names, with clippy.
+COPY rust-toolchain.toml /home/ci/rust-toolchain.toml
+RUN mkdir -p /home/ci/.cargo/registry \
+ && curl -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none \
+ && cd /home/ci && rustup toolchain install "$(sed -n 's/^channel = "\(.*\)"/\1/p' rust-toolchain.toml)" --profile minimal --component clippy \
+ && cargo --version && cargo clippy --version
