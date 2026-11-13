@@ -1,4 +1,4 @@
-//! `.provenance.toml`: four keys and the optional `[agent.<name>]` sections.
+//! `.provenance.toml`: five keys and the optional `[agent.<name>]` sections.
 
 use std::collections::BTreeMap;
 
@@ -25,6 +25,11 @@ pub struct Config {
     pub protected: Vec<String>,
     #[serde(default)]
     pub agent: BTreeMap<String, AgentSection>,
+    /// Commits with no git-ai note that the human accepts. `prov doctor`
+    /// lists them and does not fail. A commit ID or a prefix of 7 or more
+    /// hex characters.
+    #[serde(default)]
+    pub known_gaps: Vec<String>,
 }
 
 /// Replaces defaults of an adapter.
@@ -54,6 +59,7 @@ impl Default for Config {
             logs_dir: default_logs_dir(),
             protected: default_protected(),
             agent: BTreeMap::new(),
+            known_gaps: Vec::new(),
         }
     }
 }
@@ -71,6 +77,11 @@ impl Config {
                 .with_context(|| format!("{CONFIG_FILE}: invalid required_version `{req}`"))?;
         }
         self.protected_set()?;
+        for gap in &self.known_gaps {
+            if gap.len() < 7 || !gap.bytes().all(|b| b.is_ascii_hexdigit()) {
+                anyhow::bail!("{CONFIG_FILE}: known_gaps: `{gap}` is not a commit ID of 7 or more hex characters");
+            }
+        }
         Ok(())
     }
 

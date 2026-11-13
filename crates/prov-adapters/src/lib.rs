@@ -123,7 +123,7 @@ pub fn by_agent_name(name: &str) -> Option<&'static dyn Adapter> {
 /// The commit identity of an agent: the adapter's default, with the
 /// replacements from the `[agent.<name>]` section.
 pub fn identity(config: &Config, agent: &str) -> Option<Identity> {
-    let default = by_agent_name(agent).map(|a| a.default_identity());
+    let default = by_agent_name(agent).map(Adapter::default_identity);
     let section = config.agent_section(agent);
     let name = section.and_then(|s| s.author.clone()).or_else(|| default.as_ref().map(|d| d.name.clone()));
     let email = section.and_then(|s| s.email.clone()).or_else(|| default.as_ref().map(|d| d.email.clone()));

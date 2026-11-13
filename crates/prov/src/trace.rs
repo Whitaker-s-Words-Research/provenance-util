@@ -12,6 +12,8 @@ use prov_gitai::{AddedRange, Author};
 use serde_json::{json, Map, Value};
 use sha1::{Digest, Sha1};
 
+use prov_core::trailer;
+
 use crate::context::Ctx;
 use crate::schema;
 
@@ -35,7 +37,11 @@ pub fn record_id(name: &str) -> String {
     b.copy_from_slice(&hash[..16]);
     b[6] = (b[6] & 0x0f) | 0x50;
     b[8] = (b[8] & 0x3f) | 0x80;
-    let hex: String = b.iter().map(|x| format!("{x:02x}")).collect();
+    let hex = b.iter().fold(String::with_capacity(32), |mut s, x| {
+        use std::fmt::Write as _;
+        let _ = write!(s, "{x:02x}");
+        s
+    });
     format!("{}-{}-{}-{}-{}", &hex[0..8], &hex[8..12], &hex[12..16], &hex[16..20], &hex[20..32])
 }
 
@@ -118,6 +124,16 @@ pub fn run(range: Option<&str>) -> Result<bool> {
         .lines()
         .filter_map(|line| line.split_whitespace().nth(1).map(String::from))
         .collect();
+    // The model of each integrated session, from the `Prov-Model` trailers of
+    // the integrations in this clone. Used where the note says `unknown`.
+    let mut models: std::collections::BTreeMap<(String, String), String> = std::collections::BTreeMap::new();
+    for commit in repo.commits(["--merges", "--all"])? {
+        if trailer::has(&commit.trailers, trailer::PROV_VERSION) {
+            for (session, model) in trailer::session_models(&commit.trailers) {
+                models.insert((session.agent, session.id), model);
+            }
+        }
+    }
     let log = repo.git(["log", "--reverse", "--topo-order", "--format=%H %cI", range, "--"])?;
     let stdout = std::io::stdout();
     let mut out = stdout.lock();
@@ -126,8 +142,17 @@ pub fn run(range: Option<&str>) -> Result<bool> {
         if !noted.contains(sha) {
             continue;
         }
-        let authorship = ctx.gitai.diff(&repo.toplevel, sha)?;
-        let record = record(sha, timestamp, authorship.added);
+        let mut added = ctx.gitai.diff(&repo.toplevel, sha)?.added;
+        for range in &mut added {
+            if let Author::Ai(session) = &mut range.author {
+                if session.model == "unknown" {
+                    if let Some(model) = models.get(&(session.tool.clone(), session.id.clone())) {
+                        session.model.clone_from(model);
+                    }
+                }
+            }
+        }
+        let record = record(sha, timestamp, added);
         schema::validate(&schema, &record)
             .map_err(|e| anyhow!("the record of commit {sha} is not valid Agent Trace 0.1.0: {e}"))?;
         writeln!(out, "{}", serde_json::to_string(&record)?)?;

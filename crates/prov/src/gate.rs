@@ -34,8 +34,10 @@ pub fn is_integration(repo: &Repo, base: &str, tip: &str, agent_emails: &[String
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Reason {
-    /// No range gives the lines a session or a human, or the commit has no note.
+    /// No range gives the lines a session or a human.
     Untracked,
+    /// The agent commit has no git-ai note, so no line of it has an author.
+    NoNote,
     /// A range gives the lines a human. In an agent commit, this label comes
     /// from git-ai's fallback, not from a person.
     Human,
@@ -50,6 +52,10 @@ pub enum Reason {
     /// every parent: the author of the merge wrote the result, for example to
     /// resolve a conflict. git-ai gives no usable line record for a merge.
     MergeResolution,
+    /// git shows added lines for the file, and git-ai lists no range of it.
+    /// git-ai ignores some paths, for example `**/vendor/**` and lock files:
+    /// it drops their checkpoints and lists none of their lines.
+    NoRanges,
 }
 
 /// Something that the human must approve before the integration.
@@ -78,12 +84,24 @@ impl Item {
     }
 
     pub fn describe(&self) -> String {
-        let commit = self.commit.as_deref().map(|c| &c[..c.len().min(10)]).unwrap_or("?");
+        let commit = self.commit.as_deref().map_or("?", |c| &c[..c.len().min(10)]);
         match self.reason {
             Reason::Protected => format!("{}: protected path changed", self.path),
             Reason::MergeResolution => format!(
                 "{}: changed by the merge commit {commit} on the incoming branch (a conflict resolution?)",
                 self.path
+            ),
+            Reason::NoRanges => format!(
+                "{}: commit {commit} adds lines, and git-ai lists none of them (a path that git-ai ignores, for \
+                 example vendor/ or a lock file?)",
+                self.path
+            ),
+            Reason::UnknownSession if self.session.as_deref().is_some_and(|s| s.starts_with(prov_gitai::UNATTRIBUTED_TOOL)) => format!(
+                "{}: lines {}-{} of commit {commit} changed while the occupant of the agent worktree changed (a session \
+                 that crashed or ended with no Stop, or two sessions at once). prov does not know which session wrote them.",
+                self.path,
+                self.start_line.unwrap_or(0),
+                self.end_line.unwrap_or(0),
             ),
             Reason::UnknownSession => format!(
                 "{}: lines {}-{} of commit {commit} belong to the session {}, which has no Prov-Session trailer and \
@@ -92,6 +110,13 @@ impl Item {
                 self.start_line.unwrap_or(0),
                 self.end_line.unwrap_or(0),
                 self.session.as_deref().unwrap_or("?"),
+            ),
+            Reason::NoNote => format!(
+                "{}: lines {}-{} of commit {commit} have no author: the commit has no git-ai note (was the git-ai \
+                 service running at the commit?)",
+                self.path,
+                self.start_line.unwrap_or(0),
+                self.end_line.unwrap_or(0),
             ),
             reason => format!(
                 "{}: lines {}-{} of commit {} {}",
@@ -102,7 +127,7 @@ impl Item {
                 if reason == Reason::Human {
                     "are attributed to a human, in an agent commit"
                 } else {
-                    "have no author (untracked, or the commit has no note)"
+                    "have no author (untracked)"
                 },
             ),
         }
@@ -146,6 +171,39 @@ impl Analysis {
     }
 }
 
+/// True if the commit has a git-ai note. This reads git; the content of the
+/// note comes only from git-ai.
+fn has_note(repo: &Repo, commit: &str) -> Result<bool> {
+    repo.git_ok(["notes", "--ref=ai", "list", commit])
+}
+
+/// True if the commit has a note, after a wait for a recent commit.
+///
+/// The caller ran `git-ai await` before. If a commit of the last two
+/// minutes still has no note, this waits for it, up to the time limit of
+/// `git-ai await`. An older commit with no note will not get one: there is
+/// no wait. Reason: on a slow file system under load, a test once saw a
+/// commit with no note after the await; the cause is not known.
+fn wait_for_note(repo: &Repo, commit: &str) -> Result<bool> {
+    if has_note(repo, commit)? {
+        return Ok(true);
+    }
+    let committed: u64 = repo.git(["log", "-1", "--format=%ct", commit])?.trim().parse().unwrap_or(0);
+    if prov_core::now().saturating_sub(committed) > 120 {
+        return Ok(false);
+    }
+    let begin = std::time::Instant::now();
+    let limit = std::time::Duration::from_secs(u64::from(prov_gitai::AWAIT_TIMEOUT_SECS));
+    while begin.elapsed() < limit {
+        std::thread::sleep(std::time::Duration::from_millis(250));
+        if has_note(repo, commit)? {
+            say(format!("note: the git-ai note of commit {commit} came {:?} after `git-ai await` returned", begin.elapsed()));
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// Reads each agent commit of `base..tip` with `git-ai diff <commit> --json`.
 /// `config` supplies the protected paths.
 pub fn analyze(repo: &Repo, gitai: &GitAi, config: &Config, base: &str, tip: &str) -> Result<Analysis> {
@@ -180,9 +238,23 @@ pub fn analyze(repo: &Repo, gitai: &GitAi, config: &Config, base: &str, tip: &st
             }
             continue;
         }
+        let has_note = wait_for_note(repo, &commit.sha)?;
         let authorship = gitai.diff(&repo.toplevel, &commit.sha)?;
         for s in &authorship.sessions {
             add(&mut sessions, SessionRef::new(&s.tool, &s.id));
+        }
+        // A file with added lines that git-ai does not list at all.
+        for path in repo.paths_with_added_lines(&commit.sha)? {
+            if !authorship.added.iter().any(|r| r.path == path) {
+                items.push(Item {
+                    path,
+                    reason: Reason::NoRanges,
+                    commit: Some(commit.sha.clone()),
+                    start_line: None,
+                    end_line: None,
+                    session: None,
+                });
+            }
         }
         for range in authorship.added {
             let item = |reason, session| Item {
@@ -200,6 +272,7 @@ pub fn analyze(repo: &Repo, gitai: &GitAi, config: &Config, base: &str, tip: &st
                     ai_ranges.push((session, item(Reason::UnknownSession, Some(text))));
                 }
                 Author::Human => items.push(item(Reason::Human, None)),
+                Author::Untracked if !has_note => items.push(item(Reason::NoNote, None)),
                 Author::Untracked => items.push(item(Reason::Untracked, None)),
             }
         }
@@ -234,13 +307,13 @@ pub fn check_sessions(ctx: &Ctx, analysis: &Analysis) -> Result<(Vec<SessionReco
     let mut problems = Vec::new();
     for session in &analysis.sessions {
         // An ID that cannot be a record name has no record.
-        let record = ctx.store.get(&session.id).ok().flatten().filter(|r| r.agent == session.agent);
+        let record = ctx.store.get(&session.id).ok().flatten().filter(|r| r.agent == session.agent).map(|r| r.at(prov_core::now()));
         match record {
             None => problems.push(format!(
                 "session {session} has no record in this clone. A session is integrated from the clone that ran it."
             )),
             Some(r) if r.state == State::Archived && r.archive_sha256.as_deref().is_some_and(trailer::is_sha256) => {
-                records.push(r)
+                records.push(r);
             }
             Some(r) => problems.push(match r.state {
                 State::Open => format!("session {session} is open. Close it first: prov session close {}", r.id),
@@ -283,9 +356,26 @@ pub fn integration_trailers(records: &[SessionRecord]) -> Result<Vec<Trailer>> {
         out.push(Trailer::new(trailer::PROV_SESSION, SessionRef::new(&r.agent, &r.id).to_string())?);
         let hash = r.archive_sha256.clone().context("an archived session has no transcript hash")?;
         out.push(Trailer::new(trailer::PROV_TRANSCRIPT_SHA256, hash)?);
+        // The note can lack the model: git-ai takes it only from a checkpoint
+        // that records a change, and the agent's own hooks give none.
+        if !r.model.is_empty() && r.model != "unknown" {
+            out.push(Trailer::new(trailer::PROV_MODEL, r.model.clone())?);
+        }
     }
     out.push(Trailer::new(trailer::PROV_VERSION, full_version())?);
     Ok(out)
+}
+
+/// Removes the integration trailers from a message file, so that they can go
+/// in again as one complete block.
+fn strip_integration_trailers(message_file: &Path) -> Result<()> {
+    let text = std::fs::read_to_string(message_file).with_context(|| format!("cannot read {}", message_file.display()))?;
+    let keys = [trailer::PROV_SESSION, trailer::PROV_TRANSCRIPT_SHA256, trailer::PROV_MODEL, trailer::PROV_VERSION];
+    let kept: Vec<&str> =
+        text.lines().filter(|line| !keys.iter().any(|k| line.strip_prefix(k).is_some_and(|rest| rest.starts_with(':')))).collect();
+    let mut out = kept.join("\n");
+    out.push('\n');
+    std::fs::write(message_file, out).with_context(|| format!("cannot write {}", message_file.display()))
 }
 
 /// The gate, for the merge in progress. Returns false to refuse the commit.
@@ -321,10 +411,12 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
         return Ok(false);
     }
 
-    // 2. git-ai writes a note some seconds after a commit.
+    // 2. git-ai writes a note some seconds after a commit. Under load,
+    // `git-ai await` once gave up early with all notes written. The gate does
+    // not depend on it: `analyze` waits for the note of each recent commit,
+    // and a commit with no note gives items that need an approval.
     if let Err(e) = ctx.gitai.await_notes(&repo.toplevel) {
-        say(format!("the integration fails: {e:#}.\nRun the commit again: git commit"));
-        return Ok(false);
+        say(format!("warning: {e:#}. prov checks the note of each commit instead."));
     }
 
     // 3. The sessions.
@@ -342,7 +434,9 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
         for p in &problems {
             say(format!("  session: {p}"));
         }
-        if !open.is_empty() {
+        if open.is_empty() {
+            say("The merge is still in progress. Correct the sessions, then run: git commit");
+        } else {
             say("  these items need the approval of a human:");
             for item in &open {
                 say(format!("    {}", item.describe()));
@@ -356,16 +450,28 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
                 paths.iter().map(|p| shell_quote(p)).collect::<Vec<_>>().join(" ")
             ));
             say("  2. git commit");
-        } else {
-            say("The merge is still in progress. Correct the sessions, then run: git commit");
         }
         say("To stop instead: git merge --abort");
         return Ok(false);
     }
 
+    // The message is complete if it has one group for each session, with
+    // the hash of the record, and `Prov-Version`.
+    let groups = trailer::session_groups(&message);
+    let complete = trailer::has(&message, trailer::PROV_VERSION)
+        && groups.len() == records.len()
+        && records.iter().all(|r| {
+            groups.iter().any(|(s, hash)| s.id == r.id && s.agent == r.agent && hash.as_deref() == r.archive_sha256.as_deref())
+        });
     // The gate can run twice on one message, for example when the editor
-    // stops the first commit. The trailers go in once.
-    if !trailer::has(&message, trailer::PROV_VERSION) {
+    // stops the first commit. The trailers go in once, as one block. The
+    // human can still change the message in the editor: `post-commit`
+    // reads the commit that was made, and `prov check` reports a merge with
+    // a missing group (an accepted limit).
+    if !complete {
+        if !groups.is_empty() || trailer::has(&message, trailer::PROV_VERSION) {
+            strip_integration_trailers(message_file)?;
+        }
         repo.add_trailers(message_file, &integration_trailers(&records)?)?;
     }
     Ok(true)

@@ -5,11 +5,14 @@ mod approve;
 mod archive;
 mod check;
 mod context;
+mod copy_check;
+mod cp;
 mod doctor;
 mod finish;
 mod gate;
 mod git_hook;
 mod init;
+mod procs;
 mod schema;
 mod session;
 mod start;
@@ -103,9 +106,19 @@ enum Cmd {
         #[command(subcommand)]
         action: TraceCmd,
     },
+    /// Copies files from a commit of a local clone, with an author for every line.
+    Cp(CpArgs),
+    /// Runs the deferred check of a copy. Started by `prov` itself.
+    #[command(hide = true)]
+    CopyCheck { id: String },
     /// Runs the archive step of a Closing session. Started by `prov` itself.
     #[command(hide = true)]
-    ArchiveSession { session: String },
+    ArchiveSession {
+        session: String,
+        /// The generation of the session that this process belongs to.
+        #[arg(long)]
+        generation: Option<u64>,
+    },
 }
 
 #[derive(Args)]
@@ -195,6 +208,44 @@ struct ApproveArgs {
     json: bool,
 }
 
+#[derive(Args)]
+struct CpArgs {
+    /// The path of a local clone: the source repository.
+    #[arg(long, value_name = "REPO")]
+    from: Option<PathBuf>,
+    /// The source commit. Default: `HEAD` of the source.
+    #[arg(long, value_name = "REV")]
+    rev: Option<String>,
+    /// The paths in the source, relative to its root, and then the destination.
+    #[arg(value_name = "PATH")]
+    paths: Vec<String>,
+    /// The author of every line: `human` or `ai`. The source's notes are ignored.
+    #[arg(long, value_name = "AUTHOR")]
+    all: Option<String>,
+    /// The author of every line that has none from the source: `human` or `ai`.
+    #[arg(long, value_name = "AUTHOR")]
+    missing: Option<String>,
+    /// With `ai`: the tool. Default: `unknown`.
+    #[arg(long, value_name = "TOOL")]
+    agent: Option<String>,
+    /// With `ai`: the model. Default: `unknown`.
+    #[arg(long)]
+    model: Option<String>,
+    /// With `--all ai`: the conversation ID. Default: the plan ID.
+    #[arg(long, value_name = "ID")]
+    session: Option<String>,
+    /// Write the plan to a file and stop.
+    #[arg(long, value_name = "FILE")]
+    plan: Option<PathBuf>,
+    /// Apply a plan file.
+    #[arg(long, value_name = "FILE")]
+    apply: Option<PathBuf>,
+    #[arg(long)]
+    dry_run: bool,
+    #[arg(long)]
+    json: bool,
+}
+
 #[derive(Subcommand)]
 enum TraceCmd {
     /// Writes Agent Trace 0.1.0 records as JSON Lines, one record for each commit with a note.
@@ -214,10 +265,10 @@ fn main() -> ExitCode {
         }
         _ => match Cli::parse().command {
             Cmd::Hook { adapter, event, args } => run_hook(&adapter, &event, &args),
-            Cmd::Init { agents, force, dry_run, json } => init::run(init::Args { agents, force, dry_run, json }),
+            Cmd::Init { agents, force, dry_run, json } => init::run(&init::Args { agents, force, dry_run, json }),
             Cmd::Doctor { deep, json } => doctor::run(deep, json),
             Cmd::Check { target, into, json } => check::run(target.as_deref(), into.as_deref(), json),
-            Cmd::Start(a) => start::run(start::Args {
+            Cmd::Start(a) => start::run(&start::Args {
                 agent: a.agent,
                 name: a.name,
                 branch: a.branch,
@@ -227,7 +278,7 @@ fn main() -> ExitCode {
                 resume: a.resume,
                 dry_run: a.dry_run,
                 json: a.json,
-                agent_args: a.agent_args,
+                passthrough: a.agent_args,
             }),
             Cmd::Session { action } => match action {
                 SessionCmd::List { json } => session::run(session::Action::List, json, false),
@@ -236,7 +287,7 @@ fn main() -> ExitCode {
                 SessionCmd::Drop { session, dry_run, json } => session::run(session::Action::Drop(session), json, dry_run),
             },
             Cmd::Finish { target, override_, force, dry_run, json } => {
-                finish::run(finish::Args { target, r#override: override_, force, dry_run, json })
+                finish::run(&finish::Args { target, r#override: override_, force, dry_run, json })
             }
             Cmd::Approve(a) => {
                 let mode = match (a.merge, a.human, a.ai) {
@@ -246,7 +297,7 @@ fn main() -> ExitCode {
                     _ => Err(anyhow::anyhow!("give exactly one of --merge, --human and --ai")),
                 };
                 mode.and_then(|mode| {
-                    approve::run(approve::Args {
+                    approve::run(&approve::Args {
                         paths: a.paths,
                         mode,
                         agent: a.agent,
@@ -257,7 +308,22 @@ fn main() -> ExitCode {
                 })
             }
             Cmd::Trace { action: TraceCmd::Export { range } } => trace::run(range.as_deref()),
-            Cmd::ArchiveSession { session } => archive::run(&session).map(|()| true),
+            Cmd::Cp(a) => cp::run(&cp::Args {
+                from: a.from,
+                rev: a.rev,
+                paths: a.paths,
+                all: a.all,
+                missing: a.missing,
+                agent: a.agent,
+                model: a.model,
+                session: a.session,
+                plan: a.plan,
+                apply: a.apply,
+                dry_run: a.dry_run,
+                json: a.json,
+            }),
+            Cmd::CopyCheck { id } => copy_check::run(&id).map(|()| true),
+            Cmd::ArchiveSession { session, generation } => archive::run(&session, generation).map(|()| true),
         },
     };
     match result {

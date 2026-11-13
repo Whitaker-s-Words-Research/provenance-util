@@ -54,15 +54,14 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
     let now = now();
     let (session, open_here) = {
         let lock = ctx.store.lock()?;
-        lock.refresh(now)?;
-        let mut session = match lock.get(&event.session_id)? {
+        let mut session = match lock.get(&event.session_id)?.map(|s| s.at(now)) {
             Some(mut session) => {
                 if event.kind != EventKind::End {
                     // A resumed session returns to Open.
                     session.touch(now);
                 }
                 // A session finds its record by its worktree.
-                session.worktree = ctx.repo.toplevel.clone();
+                session.worktree.clone_from(&ctx.repo.toplevel);
                 session.branch = branch;
                 session
             }
@@ -76,31 +75,52 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
             session.transcript_path = Some(path.clone());
         }
         if let Some(model) = &event.model {
-            session.model = model.clone();
+            session.model.clone_from(model);
         }
         if event.kind == EventKind::WorkDone {
             if let Some(model) = session.transcript_path.as_deref().and_then(|t| adapter.latest_model(t)) {
                 session.model = model;
             }
         }
-        if event.kind == EventKind::End && matches!(session.state, State::Open | State::Failed) {
-            session.last_event_at = now;
-            session.close(now)?;
-            lock.put(&session)?;
-            // The agent gives this hook little time: a detached process does the archive step.
-            match archive::spawn_detached(&ctx, &session.id) {
-                Ok(pid) => session.archive_pid = Some(pid),
-                Err(e) => session.failed(format!("cannot start the archive step: {e:#}")),
+        if event.kind == EventKind::End {
+            // The sweep at the end: for the session that ends, while it is
+            // still the only occupant. A session can end with no Stop, and its
+            // changes would then have no checkpoint.
+            if session.state == State::Open {
+                let occupants = lock.open_in(&ctx.repo.toplevel)?;
+                let swept = sweep::observe(&ctx, &lock, &occupants).and_then(|()| {
+                    if matches!(occupants.as_slice(), [only] if only.id == session.id) {
+                        sweep::sweep(&ctx, &session)?;
+                    }
+                    Ok(())
+                });
+                if let Err(e) = swept {
+                    out.push(format!("prov: warning: the sweep failed: {e:#}"));
+                }
             }
+            if matches!(session.state, State::Open | State::Failed) {
+                session.last_event_at = now;
+                session.close(now)?;
+                lock.put(&session)?;
+                // The agent gives this hook little time: a detached process does the archive step.
+                match archive::spawn_detached(&ctx, &session.id, session.generation) {
+                    Ok(pid) => session.archive_pid = Some(pid),
+                    Err(e) => session.failed(format!("cannot start the archive step: {e:#}")),
+                }
+                lock.put(&session)?;
+            }
+            // An End of a session that is not Open changes nothing.
+            out.flush();
+            return Ok(());
         }
         lock.put(&session)?;
         let open_here = lock.open_in(&ctx.repo.toplevel)?;
+        // Every hook looks at the worktree first: a change of the occupant taints what is changed now.
+        if let Err(e) = sweep::observe(&ctx, &lock, &open_here) {
+            out.push(format!("prov: warning: {e:#}"));
+        }
         (session, open_here)
     };
-
-    if event.kind == EventKind::End {
-        return Ok(());
-    }
 
     if open_here.len() > 1 {
         // prov cannot stop the second session. The worktree is contended.

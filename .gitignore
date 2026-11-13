@@ -2,3 +2,5 @@
 /crates/
 /target/
 /vendor/
+# tla2tools.jar, downloaded for tla/check-models.sh
+/tla/tools/

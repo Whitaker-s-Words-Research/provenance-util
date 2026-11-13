@@ -1,4 +1,4 @@
-//! Claude Code. Events: SessionStart, UserPromptSubmit, Stop, SessionEnd.
+//! Claude Code. Events: `SessionStart`, `UserPromptSubmit`, Stop, `SessionEnd`.
 
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -166,8 +166,8 @@ impl Adapter for ClaudeCode {
         Ok(entries)
     }
 
-    /// Claude Code adds the output of a SessionStart hook to the context. It
-    /// does the same at UserPromptSubmit, which is why `prov` prints nothing there.
+    /// Claude Code adds the output of a `SessionStart` hook to the context. It
+    /// does the same at `UserPromptSubmit`, which is why `prov` prints nothing there.
     fn message_reaches_agent(&self, kind: EventKind) -> bool {
         kind == EventKind::Start
     }
@@ -333,7 +333,7 @@ mod tests {
     fn settings_merge_keeps_other_keys_and_is_stable() {
         let identity = ClaudeCode.default_identity();
         let existing = r#"{"model": "opus", "env": {"FOO": "1"}, "hooks": {"Stop": [{"hooks": [{"type": "command", "command": "other"}]}]}}"#;
-        assert!(!ClaudeCode.settings_problems(Some(existing), &identity).is_empty());
+        assert_ne!(ClaudeCode.settings_problems(Some(existing), &identity), [] as [std::string::String; 0]);
         let merged = ClaudeCode.merge_settings(Some(existing), &identity).unwrap();
         let v: Value = serde_json::from_str(&merged).unwrap();
         assert_eq!(v["model"], "opus");
@@ -342,12 +342,12 @@ mod tests {
         assert_eq!(v["env"]["GIT_CONFIG_KEY_0"], "commit.gpgsign");
         assert_eq!(v["hooks"]["Stop"].as_array().unwrap().len(), 2);
         assert_eq!(v["hooks"]["SessionEnd"][0]["hooks"][0]["command"], "prov hook claude-code SessionEnd");
-        assert!(ClaudeCode.settings_problems(Some(&merged), &identity).is_empty());
+        assert_eq!(ClaudeCode.settings_problems(Some(&merged), &identity), [] as [std::string::String; 0]);
         // A second merge changes nothing.
         assert_eq!(ClaudeCode.merge_settings(Some(&merged), &identity).unwrap(), merged);
         // A new file.
         let new = ClaudeCode.merge_settings(None, &identity).unwrap();
-        assert!(ClaudeCode.settings_problems(Some(&new), &identity).is_empty());
+        assert_eq!(ClaudeCode.settings_problems(Some(&new), &identity), [] as [std::string::String; 0]);
         assert_eq!(ClaudeCode.settings_problems(None, &identity).len(), 1);
         assert!(ClaudeCode.merge_settings(Some("[]"), &identity).is_err());
     }

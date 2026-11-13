@@ -1,6 +1,9 @@
 //! The commands: `prov init`, `prov doctor`, `prov start`, `prov finish`,
 //! `prov session`, `prov approve` and `prov trace export`.
 
+// A panic in a test is a failed test.
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 mod common;
 
 use std::path::{Path, PathBuf};
@@ -98,7 +101,7 @@ fn init_sets_up_a_clone_and_doctor_passes() {
     let doctor = env.prov(&repo, ["doctor", "--json"]).success();
     let doctor = json(&doctor.stdout);
     assert_eq!(doctor["ok"], true, "{doctor}");
-    assert_eq!(doctor["checks"].as_array().unwrap().len(), 8, "{doctor}");
+    assert_eq!(doctor["checks"].as_array().unwrap().len(), 9, "{doctor}");
 
     // A second run changes nothing.
     let again = json(&env.prov(&repo, ["init", "--json"]).success().stdout);
@@ -126,6 +129,51 @@ fn init_sets_up_a_clone_and_doctor_passes() {
     env.prov(&repo, ["doctor"]).success();
 }
 
+/// A git-ai that reports `version` and passes every other command to the real git-ai.
+fn gitai_reporting(env: &Env, version: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = env.home().join(format!("git-ai-{version}"));
+    std::fs::write(
+        &path,
+        format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo {version}; exit 0; fi\nexec git-ai \"$@\"\n"),
+    )
+    .unwrap();
+    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    path
+}
+
+/// The supported git-ai range: older than the baseline fails; newer than the
+/// tested version passes with a warning.
+#[test]
+fn doctor_checks_the_git_ai_version_range() {
+    let Some(env) = Env::new() else { return };
+    let repo = init_repo(&env, "project");
+    let doctor = |version: &str| {
+        let wrapper = gitai_reporting(&env, version);
+        env.run(&repo, "prov", ["doctor", "--json"], &[("PROV_GIT_AI", wrapper.to_str().unwrap())], None)
+    };
+    let check = |out: &common::Out| {
+        json(&out.stdout)["checks"].as_array().unwrap().iter().find(|c| c["name"] == "git-ai").cloned().unwrap()
+    };
+
+    let tested = doctor(prov_gitai::TESTED_VERSION).success();
+    assert!(check(&tested).get("warnings").is_none(), "{}", tested.stdout);
+
+    let newer = doctor("99.0.0").success();
+    let git_ai = check(&newer);
+    assert_eq!(git_ai["ok"], true, "{git_ai}");
+    let warning = git_ai["warnings"][0].as_str().unwrap();
+    assert!(warning.contains("99.0.0") && warning.contains(prov_gitai::TESTED_VERSION), "{warning}");
+
+    let older = doctor("1.0.0").failure();
+    assert_eq!(check(&older)["ok"], false, "{}", older.stdout);
+
+    // The text output marks the warning.
+    let wrapper = gitai_reporting(&env, "99.0.0");
+    let text = env.run(&repo, "prov", ["doctor"], &[("PROV_GIT_AI", wrapper.to_str().unwrap())], None).success();
+    assert!(text.stdout.contains("warning: git-ai is version 99.0.0"), "{}", text.stdout);
+}
+
 #[test]
 fn start_session_approve_finish_and_trace() {
     let Some(env) = Env::new() else { return };
@@ -143,7 +191,7 @@ fn start_session_approve_finish_and_trace() {
     let session = "sess-flow";
     let (wt, branch) = started_session(&env, &repo, "flow", session);
     assert!(branch.starts_with("agent/claude/") && branch.ends_with("-flow"), "{branch}");
-    assert_eq!(wt.parent().unwrap(), env.home().join("project.worktrees"));
+    assert_eq!(wt.parent().unwrap(), env.repos().join("project.worktrees"));
     // The worktree has the tracked settings and config from the commit.
     assert!(wt.join(".claude/settings.json").is_file() && wt.join(".provenance.toml").is_file());
     // The branch exists now.
@@ -166,7 +214,18 @@ fn start_session_approve_finish_and_trace() {
     assert!(wt.is_dir());
     env.prov(&repo, ["session", "close", session, "--dry-run"]).success();
     assert_eq!(env.state(&repo, session), "open");
-    let closed = json(&env.prov(&repo, ["session", "close", session, "--json"]).success().stdout);
+    // The agent still runs: the archive step waits for its process, and
+    // says so. Here the agent exits one second later.
+    let closed = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            std::thread::sleep(std::time::Duration::from_secs(1));
+            assert_eq!(env.state(&repo, session), "closing");
+            env.kill_agent(session);
+        });
+        env.prov(&repo, ["session", "close", session, "--json"]).success()
+    });
+    assert!(closed.stderr.contains("waiting for the agent process"), "{}", closed.stderr);
+    let closed = json(&closed.stdout);
     assert_eq!(closed["state"], "archived");
     let archive = PathBuf::from(closed["archive_file"].as_str().unwrap());
     assert_eq!(common::sha256_of_gunzipped(&archive), closed["archive_sha256"].as_str().unwrap());
@@ -215,6 +274,9 @@ fn start_session_approve_finish_and_trace() {
     assert_eq!(first["tool"], serde_json::json!({"name": "prov", "version": "0.1.0"}));
     assert_eq!(first["files"][0]["path"], "flow.py");
     assert_eq!(first["files"][0]["conversations"][0]["contributor"]["type"], "ai");
+    // The agent's own hooks recorded the model `unknown`. The `Prov-Model`
+    // trailer of the integration gives it.
+    assert_eq!(first["files"][0]["conversations"][0]["contributor"]["model_id"], "anthropic/claude-fable-5-2");
     let notes = records.iter().find(|r| r["files"][0]["path"] == "notes.txt").expect("a record for notes.txt");
     assert_eq!(notes["files"][0]["conversations"][0]["contributor"]["type"], "human");
     // Two exports of the same range give identical bytes.
@@ -262,6 +324,7 @@ fn finish_with_override_and_resume() {
     let dry = json(&env.prov(&repo, ["finish", session, "--override", "--dry-run", "--json"]).success().stdout);
     assert_eq!((&dry["removed"], &dry["closed"][0]), (&json("false"), &json("\"sess-over\"")));
     assert!(wt.is_dir());
+    env.kill_agent(session); // the human ended the agent; no SessionEnd arrived
     env.prov(&repo, ["finish", session, "--override"]).success();
     assert!(!wt.exists());
     assert_eq!(env.state(&repo, session), "archived");
@@ -293,7 +356,7 @@ fn approve_human_and_ai_before_a_commit() {
     let repo = init_repo(&env, "project");
     let base = env.git(&repo, ["rev-parse", "HEAD"]);
     let approvals = repo.join(".git/provenance/approvals");
-    let pending = || std::fs::read_dir(&approvals).map(|d| d.count()).unwrap_or(0);
+    let pending = || std::fs::read_dir(&approvals).map_or(0, std::iter::Iterator::count);
 
     // The output of a generator that the human ran.
     env.plain_write(&repo, "gen/table.txt", "1\n2\n");
@@ -315,7 +378,7 @@ fn approve_human_and_ai_before_a_commit() {
     env.plain_write(&repo, "other.txt", "o\n");
     env.git(&repo, ["add", "other.txt"]);
     env.git(&repo, ["commit", "-q", "-m", "Other"]);
-    assert!(env.trailers(&repo, "HEAD").is_empty());
+    assert_eq!(env.trailers(&repo, "HEAD"), [] as [std::string::String; 0]);
     assert_eq!(pending(), 1);
     env.git(&repo, ["add", "-A"]);
     env.git(&repo, ["commit", "-q", "-m", "Add pasted code"]);
@@ -335,6 +398,131 @@ fn approve_human_and_ai_before_a_commit() {
     env.git(&repo, ["add", "-A"]);
     let commit = env.try_git(&repo, ["commit", "-q", "-m", "Late"]).success();
     assert!(commit.stderr.contains("late.txt changed after `prov approve --human`"), "{}", commit.stderr);
-    assert!(env.trailers(&repo, "HEAD").is_empty());
+    assert_eq!(env.trailers(&repo, "HEAD"), [] as [std::string::String; 0]);
     assert_eq!(pending(), 0);
+}
+
+/// The `git-ai notes` check of `prov doctor`, from its JSON output.
+fn notes_check(env: &Env, repo: &Path) -> Value {
+    let doctor = json(&env.prov(repo, ["doctor", "--json"]).stdout);
+    doctor["checks"].as_array().unwrap().iter().find(|c| c["name"] == "git-ai notes").cloned().expect("no git-ai notes check")
+}
+
+/// Starts the git-ai service of the environment again and waits until it runs.
+fn start_service(env: &Env, repo: &Path) {
+    env.run(repo, "git-ai", ["bg", "start"], &[], None);
+    let begin = std::time::Instant::now();
+    while !env.run(repo, "git-ai", ["bg", "status", "--repo", repo.to_str().unwrap()], &[], None).ok {
+        assert!(begin.elapsed() < std::time::Duration::from_secs(120), "the git-ai service did not start");
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    }
+}
+
+#[test]
+fn doctor_finds_commits_with_no_note_on_human_and_agent_branches() {
+    let Some(env) = Env::new() else { return };
+    let repo = init_repo(&env, "gaps");
+    env.human_edit(&repo, "h.txt", "h\n");
+    env.git(&repo, ["add", "-A"]);
+    env.git(&repo, ["commit", "-q", "-m", "Add h"]);
+    env.await_notes(&repo);
+    let ok = notes_check(&env, &repo);
+    assert_eq!(ok["ok"], true, "{ok}");
+    let old = env.git(&repo, ["rev-parse", "HEAD"]);
+
+    // While the service does not run: an amend on the human branch, and a
+    // commit on an agent branch. pre-commit refuses both, so --no-verify.
+    env.stop_service();
+    env.git(&repo, ["commit", "-q", "--amend", "--no-verify", "-m", "Add h, amended"]);
+    let amended = env.git(&repo, ["rev-parse", "HEAD"]);
+    env.git(&repo, ["switch", "-q", "-c", "agent/claude/20261112-gaps"]);
+    env.plain_write(&repo, "a.txt", "a\n");
+    env.git(&repo, ["add", "-A"]);
+    env.git(&repo, ["commit", "-q", "--no-verify", "-m", "Add a"]);
+    let agent = env.git(&repo, ["rev-parse", "HEAD"]);
+    env.git(&repo, ["switch", "-q", "main"]);
+    start_service(&env, &repo);
+
+    let check = notes_check(&env, &repo);
+    assert_eq!(check["ok"], false, "{check}");
+    let problems: Vec<&str> = check["problems"].as_array().unwrap().iter().map(|p| p.as_str().unwrap()).collect();
+    assert_eq!(problems.len(), 2, "{check}");
+    let human = problems.iter().find(|p| p.contains(&amended[..10])).expect("the amended commit");
+    assert!(human.contains("on a human branch") && human.contains(&format!("Commit {}", &old[..10])), "{human}");
+    let on_agent = problems.iter().find(|p| p.contains(&agent[..10])).expect("the agent commit");
+    assert!(on_agent.contains("on an agent branch") && on_agent.contains("git-ai did not see the commit"), "{on_agent}");
+
+    // The human accepts both gaps in the config.
+    let config = std::fs::read_to_string(repo.join(".provenance.toml")).unwrap();
+    std::fs::write(repo.join(".provenance.toml"), format!("{config}known_gaps = [\"{}\", \"{}\"]\n", &amended[..12], agent)).unwrap();
+    env.git(&repo, ["commit", "-q", "-am", "Accept two gaps"]);
+    env.await_notes(&repo);
+    let accepted = notes_check(&env, &repo);
+    assert_eq!(accepted["ok"], true, "{accepted}");
+    assert_eq!(accepted["notes"].as_array().unwrap().len(), 2, "{accepted}");
+}
+
+/// The accepted limits warn where a person acts: R-SESS-3 (no agent process
+/// ID) at close, and R-SWEEP-4 (processes in the worktree) at close, resume
+/// and finish.
+#[test]
+fn close_resume_and_finish_warn_about_the_accepted_limits() {
+    let Some(env) = Env::new() else { return };
+    let repo = init_repo(&env, "project");
+    let start = json(&env.prov(&repo, ["start", "claude", "--no-launch", "--name", "limits", "--json"]).success().stdout);
+    let wt = PathBuf::from(start["worktree"].as_str().unwrap());
+    let branch = start["branch"].as_str().unwrap().to_string();
+    let session = "sess-limits";
+    // `CLAUDE_PID=0`: prov does not know the agent process.
+    env.write_transcript(session, &wt);
+    env.hook_from(&wt, "SessionStart", session, 0).success();
+    assert!(env.record(&repo, session).unwrap()["agent_pid"].is_null());
+
+    // A development server that the agent started, still running.
+    let mut server = std::process::Command::new("sleep")
+        .arg("300")
+        .current_dir(&wt)
+        .stdin(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let listed = format!("{} sleep", server.id());
+
+    let close = env.prov(&repo, ["session", "close", session]).success();
+    assert!(close.stderr.contains("does not know the process ID of the agent of session sess-limits"), "{}", close.stderr);
+    assert!(close.stderr.contains("processes still run in the worktree"), "{}", close.stderr);
+    assert!(close.stderr.contains(&listed), "{}", close.stderr);
+
+    let resume = env.prov(&repo, ["start", "claude", "--resume", session, "--no-launch"]).success();
+    assert!(resume.stderr.contains(&listed) && resume.stderr.contains("its sweep takes their changes"), "{}", resume.stderr);
+
+    let finish = env.prov(&repo, ["finish", &branch]).success();
+    assert!(finish.stderr.contains(&listed) && finish.stderr.contains("the worktree is removed now"), "{}", finish.stderr);
+
+    server.kill().unwrap();
+    server.wait().unwrap();
+
+    // With no process in the worktree, and a known agent process, no warning.
+    let (wt, _) = started_session(&env, &repo, "quiet", "sess-quiet");
+    env.kill_agent("sess-quiet");
+    let quiet = env.prov(&repo, ["session", "close", "sess-quiet"]).success();
+    assert!(!quiet.stderr.contains("warning"), "{}", quiet.stderr);
+    assert!(wt.is_dir());
+}
+
+/// A worktree removed with `git worktree remove`, not `prov finish`, leaves
+/// its owner record. `prov doctor` removes it.
+#[test]
+fn doctor_removes_the_record_of_a_removed_worktree() {
+    let Some(env) = Env::new() else { return };
+    let repo = init_repo(&env, "project");
+    let (wt, _) = started_session(&env, &repo, "gone", "sess-gone");
+    env.end_session(&wt, "sess-gone");
+    let records = || std::fs::read_dir(repo.join(".git/provenance/worktrees")).map_or(0, Iterator::count);
+    assert_eq!(records(), 1);
+    env.git(&repo, ["worktree", "remove", "--force", wt.to_str().unwrap()]);
+    let doctor = env.prov(&repo, ["doctor"]);
+    assert!(doctor.stdout.contains("which no longer exists"), "{}", doctor.stdout);
+    assert_eq!(records(), 0);
+    // A second run has nothing to remove.
+    assert!(!env.prov(&repo, ["doctor"]).stdout.contains("which no longer exists"));
 }

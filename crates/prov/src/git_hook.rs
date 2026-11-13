@@ -11,7 +11,7 @@ use prov_core::trailer::{self, SessionRef, Trailer};
 use prov_core::{Config, State};
 
 use crate::context::{say, Ctx};
-use crate::{gate, sweep};
+use crate::{copy_check, gate, sweep};
 
 /// Returns false to make the hook fail.
 pub fn run(name: &str, args: &[String]) -> Result<bool> {
@@ -120,9 +120,15 @@ fn pre_commit(ctx: &Ctx) -> Result<bool> {
             return Ok(false);
         }
         if !ctx.gitai.service_available(&repo.toplevel) {
-            say("warning: the git-ai service is not available. This commit gets no checkpoints. Start it: git-ai bg start");
+            // Without the service, the commit gets no note, and an amend
+            // leaves the note on the old commit. Nothing reports it later.
+            say("refused: the git-ai service is not available, so this commit would get no git-ai note \
+                 (and an amend would leave the note on the old commit). Start it with `git-ai bg start`, \
+                 check it with `git-ai bg status`, then commit again.");
+            return Ok(false);
         }
-        return Ok(true);
+        // The copy guard: a file of `prov cp` is committed as it was copied.
+        return copy_check::guard(ctx);
     }
 
     // An agent worktree.
@@ -142,12 +148,49 @@ fn pre_commit(ctx: &Ctx) -> Result<bool> {
              Start it with `git-ai bg start`, and commit where the service is reachable (not in a sandbox that blocks it).");
         return Ok(false);
     }
-    // With no Open session there is no sweep: prov must not attribute a change
-    // to a session that did not make it. Such lines become doubtful lines.
+    // Every hook looks at the worktree first: if the occupant is not the
+    // session that prov saw here last, what is changed now is tainted. With
+    // no occupant, that is every change: prov must not attribute a change to
+    // a session that did not make it. Such lines become doubtful lines.
+    {
+        let lock = ctx.store.lock()?;
+        let open = lock.open_in(&repo.toplevel)?;
+        sweep::observe(ctx, &lock, &open).context("the taint checkpoint failed")?;
+    }
     if let [session] = open.as_slice() {
-        sweep::sweep(ctx, session).context("the sweep failed")?;
+        let session = refresh_model(ctx, session)?;
+        sweep::sweep(ctx, &session).context("the sweep failed")?;
+    }
+    // `git-ai checkpoint` returns when the service has received the
+    // checkpoint, not when it has applied it. A commit right after can be
+    // recorded first, and its lines then go to a session that git-ai invents.
+    // Seen in a container: the sweep's checkpoint was applied 50 ms after the
+    // commit. Wait until the service has done its work.
+    if let Err(e) = ctx.gitai.await_notes(&repo.toplevel) {
+        say(format!("warning: {e:#}. The checkpoints of this commit may not be applied yet."));
     }
     Ok(true)
+}
+
+/// The latest model of the session, from its transcript, before the sweep.
+///
+/// The sweep checkpoint gives git-ai the model of the session, and git-ai
+/// keeps one model per session. An agent can commit before its first Stop,
+/// where `prov` otherwise reads the model; and with `claude -p` the record
+/// had no model from `SessionStart`. The assistant message that runs
+/// `git commit` is in the transcript before the command runs. git-ai takes
+/// the model only from a checkpoint that records a change, so this helps
+/// only when the sweep has changes.
+fn refresh_model(ctx: &Ctx, session: &prov_core::SessionRecord) -> Result<prov_core::SessionRecord> {
+    let latest = prov_adapters::by_agent_name(&session.agent)
+        .zip(session.transcript_path.as_deref())
+        .and_then(|(adapter, transcript)| adapter.latest_model(transcript));
+    let Some(model) = latest.filter(|m| *m != session.model) else { return Ok(session.clone()) };
+    let lock = ctx.store.lock()?;
+    let Some(mut record) = lock.get(&session.id)? else { return Ok(session.clone()) };
+    record.model = model;
+    lock.put(&record)?;
+    Ok(record)
 }
 
 fn prepare_commit_msg(ctx: &Ctx, args: &[String]) -> Result<bool> {
@@ -163,6 +206,7 @@ fn prepare_commit_msg(ctx: &Ctx, args: &[String]) -> Result<bool> {
             return Ok(false);
         }
         add_own_approvals(ctx, &message_file)?;
+        copy_check::add_trailers(ctx, &message_file)?;
         return Ok(true);
     }
 
@@ -232,19 +276,21 @@ fn post(ctx: &Ctx, post_merge: bool) -> Result<bool> {
 
     // After an integration: delete the live state of its sessions.
     if head.parents.len() == 2 && trailer::has(&head.trailers, trailer::PROV_VERSION) {
-        let named = trailer::sessions(&head.trailers);
-        let incoming = repo.git(["rev-list", &format!("{}..{}", head.parents[0], head.parents[1])])?;
-        let incoming: Vec<&str> = incoming.lines().collect();
+        // The trailers of the commit that was made: the human can change the
+        // message after the gate.
+        let groups = trailer::session_groups(&head.trailers);
         let lock = ctx.store.lock()?;
         for r in lock.sessions()? {
-            let is_named = named.iter().any(|s| s.id == r.id && s.agent == r.agent);
-            // Also the other sessions on that branch that no trailer or note
-            // names. Their transcript archives stay.
-            let on_branch = r.state != State::Open
-                && repo
-                    .rev_parse(&format!("refs/heads/{}", r.branch))?
-                    .is_some_and(|tip| incoming.contains(&tip.as_str()));
-            if is_named || on_branch {
+            let group = groups.iter().find(|(s, _)| s.id == r.id && s.agent == r.agent);
+            // A session of the integration: only if it is Archived and the
+            // commit records its transcript hash. It can be Open again by
+            // now, or archived again with another transcript.
+            let is_named = group.is_some_and(|(_, hash)| {
+                r.state == State::Archived && hash.is_some() && *hash == r.archive_sha256
+            });
+            // No other record is deleted: `prov doctor` lists a record whose
+            // branch is merged, and `prov session drop` removes it.
+            if is_named {
                 lock.delete(&r.id)?;
             }
         }
@@ -262,6 +308,11 @@ fn post(ctx: &Ctx, post_merge: bool) -> Result<bool> {
                 }
             }
         }
+    }
+
+    // A copy of `prov cp` in this commit: start the deferred check.
+    if !post_merge {
+        copy_check::committed(ctx, &head.sha)?;
     }
 
     if post_merge {

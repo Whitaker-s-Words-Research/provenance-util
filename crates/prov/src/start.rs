@@ -20,7 +20,7 @@ pub struct Args {
     pub resume: Option<String>,
     pub dry_run: bool,
     pub json: bool,
-    pub agent_args: Vec<String>,
+    pub passthrough: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -42,7 +42,7 @@ fn local_date() -> String {
     let now = prov_core::now() as libc::time_t;
     // SAFETY: localtime_r writes only to `tm`, which is a valid, zeroed struct.
     let mut tm: libc::tm = unsafe { std::mem::zeroed() };
-    unsafe { libc::localtime_r(&now, &mut tm) };
+    unsafe { libc::localtime_r(&raw const now, &raw mut tm) };
     format!("{:04}{:02}{:02}", tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday)
 }
 
@@ -61,11 +61,11 @@ fn worktrees_dir(ctx: &Ctx) -> Result<PathBuf> {
     Ok(base.parent().context("the base directory has no parent")?.join(format!("{name}.worktrees")))
 }
 
-pub fn run(args: Args) -> Result<bool> {
+pub fn run(args: &Args) -> Result<bool> {
     let ctx = Ctx::here()?;
     let repo = &ctx.repo;
     let config = repo.config_here()?;
-    if !config.agents.iter().any(|a| *a == args.agent) {
+    if !config.agents.contains(&args.agent) {
         bail!("the agent `{}` is not in `agents` of .provenance.toml ({})", args.agent, config.agents.join(", "));
     }
     let adapter =
@@ -77,7 +77,7 @@ pub fn run(args: Args) -> Result<bool> {
     }
 
     let mut report = if let Some(session) = &args.resume {
-        resume(&ctx, &args, session)?
+        resume(&ctx, args, session)?
     } else {
         let date = local_date();
         let name = match &args.name {
@@ -128,7 +128,7 @@ pub fn run(args: Args) -> Result<bool> {
         if let Some(session) = &args.resume {
             command.extend(adapter.resume_args(session));
         }
-        command.extend(args.agent_args.iter().cloned());
+        command.extend(args.passthrough.iter().cloned());
         report.command = Some(command);
     }
 
@@ -142,8 +142,11 @@ pub fn run(args: Args) -> Result<bool> {
             if args.dry_run { "dry run: " } else { "" },
             if report.created { "created" } else { "exists" },
             report.branch,
-            report.from.as_ref().map(|f| format!(", from {f}")).unwrap_or_default(),
+            report.from.as_ref().map_or_default(|f| format!(", from {f}")),
         );
+    }
+    if args.resume.is_some() && !report.created {
+        crate::procs::warn_if_busy(&report.worktree, "Stop them before the session goes on, or its sweep takes their changes.");
     }
     let Some(command) = &report.command else { return Ok(true) };
     if args.dry_run {

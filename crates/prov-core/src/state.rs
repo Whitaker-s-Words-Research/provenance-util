@@ -41,6 +41,10 @@ pub struct SessionRecord {
     /// The agent's name, for example `claude`.
     pub agent: String,
     pub state: State,
+    /// Increases by 1 each time the session enters Open or Closing. An
+    /// archive process writes its result only for its own generation.
+    #[serde(default)]
+    pub generation: u64,
     pub worktree: PathBuf,
     pub branch: String,
     pub model: String,
@@ -71,6 +75,7 @@ impl SessionRecord {
             id: id.to_string(),
             agent: agent.to_string(),
             state: State::Open,
+            generation: 1,
             worktree: worktree.to_path_buf(),
             branch: branch.to_string(),
             model: "unknown".to_string(),
@@ -92,6 +97,7 @@ impl SessionRecord {
     pub fn touch(&mut self, now: u64) {
         if self.state != State::Open {
             self.state = State::Open;
+            self.generation += 1;
             self.archive_file = None;
             self.archive_sha256 = None;
             self.archive_pid = None;
@@ -101,17 +107,19 @@ impl SessionRecord {
         self.last_event_at = now;
     }
 
-    /// Open -> Closing. Also Failed -> Closing, to run the archive step again.
+    /// Open -> Closing. Also Failed -> Closing, to run the archive step
+    /// again, and Closing -> Closing, when its archive process is gone. Each
+    /// is a new generation: an archive process of an earlier one writes nothing.
     pub fn close(&mut self, now: u64) -> Result<()> {
         match self.state {
-            State::Open | State::Failed => {
+            State::Open | State::Failed | State::Closing => {
                 self.state = State::Closing;
+                self.generation += 1;
                 self.closing_at = Some(now);
                 self.archive_pid = None;
                 self.error = None;
                 Ok(())
             }
-            State::Closing => Ok(()),
             State::Archived => bail!("session {} is already archived", self.id),
         }
     }
@@ -136,6 +144,19 @@ impl SessionRecord {
         self.state == State::Open
             && (now.saturating_sub(self.last_event_at) >= STALE_AFTER_SECS
                 || self.agent_pid.is_some_and(|pid| !pid_alive(pid)))
+    }
+
+    /// The record as it is at `now`: a Closing session whose archive step can
+    /// no longer finish is Failed. Calculated when read, like stale, never
+    /// stored. Reason: no process then writes the record, so this rule needs
+    /// no generation check and cannot race with an archive step or a resume.
+    #[must_use]
+    pub fn at(mut self, now: u64) -> Self {
+        if self.closing_timed_out(now) {
+            self.state = State::Failed;
+            self.error = Some("the archive step did not finish in 5 minutes".into());
+        }
+        self
     }
 
     /// A Closing session whose archive step can no longer finish.
@@ -178,14 +199,116 @@ impl ApprovalRecord {
 fn approval_key(worktree: &Path, path: &str) -> String {
     // FNV-1a, 64 bit, of the worktree and the path. Only a file name: a
     // collision would replace one pending approval with another.
-    let mut hash = [0xcbf29ce484222325u64, 0x84222325cbf29ce4u64];
-    for (i, seed) in hash.iter_mut().enumerate() {
-        for byte in worktree.as_os_str().as_encoded_bytes().iter().chain([0u8, i as u8].iter()).chain(path.as_bytes()) {
+    let mut hash = [0xcbf2_9ce4_8422_2325_u64, 0x8422_2325_cbf2_9ce4_u64];
+    for (seed, i) in hash.iter_mut().zip(0u8..) {
+        for byte in worktree.as_os_str().as_encoded_bytes().iter().chain([0u8, i].iter()).chain(path.as_bytes()) {
             *seed ^= u64::from(*byte);
-            *seed = seed.wrapping_mul(0x100000001b3);
+            *seed = seed.wrapping_mul(0x0100_0000_01b3);
         }
     }
     format!("{:016x}{:016x}", hash[0], hash[1])
+}
+
+/// What `prov` knows of one agent worktree between hooks (R-SWEEP-2).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WorktreeRecord {
+    pub worktree: PathBuf,
+    /// The session that `prov` last saw as the only occupant.
+    #[serde(default)]
+    pub owner: Option<String>,
+}
+
+impl WorktreeRecord {
+    /// One hook's look at the worktree. `occupants` are the IDs of the Open
+    /// sessions that are not stale. If they are not exactly the owner, the
+    /// changes that the worktree holds now are tainted: `taint` gives them a
+    /// checkpoint that names no session. Then the owner becomes the single
+    /// occupant, or none. Returns true if the record changed.
+    ///
+    /// Reason: `prov` cannot see who made a change. When the occupant
+    /// changes, the changes before that can belong to the session before.
+    /// If `taint` fails, the owner stays, and the next hook tries again.
+    pub fn observe(&mut self, occupants: &[&str], taint: impl FnOnce() -> Result<()>) -> Result<bool> {
+        if let (Some(owner), [only]) = (&self.owner, occupants) {
+            if owner == only {
+                return Ok(false);
+            }
+        }
+        taint()?;
+        let owner = match occupants {
+            [only] => Some(only.to_string()),
+            _ => None,
+        };
+        let changed = self.owner != owner;
+        self.owner = owner;
+        Ok(changed)
+    }
+}
+
+/// One copy of `prov cp`: the plan, the blob ID of each copied file and the
+/// check result of each file. It stays until the copy check agrees for every file.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CopyRecord {
+    /// The plan ID.
+    pub id: String,
+    pub worktree: PathBuf,
+    pub created_at: u64,
+    /// The `<source>` of the `Copied-From` trailers: the remote URL of the
+    /// source repository, or its absolute path.
+    pub source: String,
+    pub source_commit: String,
+    pub files: Vec<CopyFile>,
+    /// True if the copy check failed for a file. `prov doctor` reports it.
+    #[serde(default)]
+    pub failed: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CopyFile {
+    /// Relative to the root of the source.
+    pub path: String,
+    /// Relative to the root of the worktree.
+    pub dest: String,
+    /// The git blob ID of the copied bytes.
+    pub blob: String,
+    /// The git file mode: `100644`, `100755` or `120000`.
+    pub mode: String,
+    /// False for a binary file and a symbolic link: no line authorship.
+    pub text: bool,
+    pub ranges: Vec<crate::plan::Range>,
+    /// The commit that holds the file. `None` until the human commits it.
+    #[serde(default)]
+    pub commit: Option<String>,
+    #[serde(default)]
+    pub committed_at: Option<u64>,
+    /// The result of the copy check.
+    #[serde(default)]
+    pub check: Option<CopyCheck>,
+    /// What the check found, for `moved` and `failed`.
+    #[serde(default)]
+    pub detail: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CopyCheck {
+    /// Each line has the author of the plan.
+    Agrees,
+    /// Authors moved between identical lines. The counts agree.
+    Moved,
+    /// git-ai lists no line of the file, because it ignores the path. The
+    /// file has no line authorship.
+    Ignored,
+    Failed,
+}
+
+impl CopyRecord {
+    /// Sets `failed` from the files. Returns true if the record is done:
+    /// every file is checked and none failed or moved.
+    pub fn settle(&mut self) -> bool {
+        self.failed = self.files.iter().any(|f| f.check == Some(CopyCheck::Failed));
+        self.files.iter().all(|f| f.check == Some(CopyCheck::Agrees))
+    }
 }
 
 /// True if a process with this ID exists.
@@ -254,6 +377,83 @@ impl Store {
         }
         out.sort_by(|a, b| a.path.cmp(&b.path));
         Ok(out)
+    }
+
+    fn worktree_path(&self, worktree: &Path) -> PathBuf {
+        self.dir.join("worktrees").join(format!("{}.json", approval_key(worktree, "")))
+    }
+
+    /// The record of one agent worktree. A worktree with no record has no
+    /// owner and no tainted file.
+    pub fn worktree(&self, worktree: &Path) -> Result<WorktreeRecord> {
+        let path = self.worktree_path(worktree);
+        match fs::read(&path) {
+            Ok(bytes) => serde_json::from_slice(&bytes).with_context(|| format!("{} does not parse", path.display())),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                Ok(WorktreeRecord { worktree: worktree.to_path_buf(), owner: None })
+            }
+            Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
+        }
+    }
+
+    /// The records of all agent worktrees.
+    pub fn worktree_records(&self) -> Result<Vec<WorktreeRecord>> {
+        let mut out = Vec::new();
+        let entries = match fs::read_dir(self.dir.join("worktrees")) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+            Err(e) => return Err(e).context("cannot read the worktree records"),
+        };
+        for entry in entries {
+            let path = entry?.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            match fs::read(&path) {
+                Ok(bytes) => out.push(
+                    serde_json::from_slice(&bytes).with_context(|| format!("{} does not parse", path.display()))?,
+                ),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+            }
+        }
+        Ok(out)
+    }
+
+    fn copies_dir(&self) -> PathBuf {
+        self.dir.join("copies")
+    }
+
+    /// The copy records of all worktrees, oldest first.
+    pub fn copies(&self) -> Result<Vec<CopyRecord>> {
+        let mut out = Vec::new();
+        let entries = match fs::read_dir(self.copies_dir()) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
+            Err(e) => return Err(e).context("cannot read the copy records"),
+        };
+        for entry in entries {
+            let path = entry?.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
+            match fs::read(&path) {
+                Ok(bytes) => out.push(
+                    serde_json::from_slice::<CopyRecord>(&bytes)
+                        .with_context(|| format!("{} does not parse", path.display()))?,
+                ),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+                Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+            }
+        }
+        out.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
+        Ok(out)
+    }
+
+    /// The path of the record of one copy.
+    pub fn copy_path(&self, id: &str) -> Result<PathBuf> {
+        check_id(id)?;
+        Ok(self.copies_dir().join(format!("{id}.json")))
     }
 
     /// Takes the advisory lock. All writes go through the returned guard.
@@ -377,17 +577,59 @@ impl Locked<'_> {
         }
     }
 
-    /// Moves each Closing session whose archive step can no longer finish to
-    /// Failed. Returns all records, in start order.
-    pub fn refresh(&self, now: u64) -> Result<Vec<SessionRecord>> {
-        let mut sessions = self.sessions()?;
-        for s in &mut sessions {
-            if s.closing_timed_out(now) {
-                s.failed("the archive step did not finish in 5 minutes");
-                self.put(s)?;
-            }
+    pub fn copies(&self) -> Result<Vec<CopyRecord>> {
+        self.store.copies()
+    }
+
+    pub fn worktree(&self, worktree: &Path) -> Result<WorktreeRecord> {
+        self.store.worktree(worktree)
+    }
+
+    pub fn put_worktree(&self, record: &WorktreeRecord) -> Result<()> {
+        let path = self.store.worktree_path(&record.worktree);
+        let dir = path.parent().context("no directory")?;
+        fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        let tmp = path.with_extension("json.tmp");
+        let mut file = File::create(&tmp).with_context(|| format!("cannot write {}", tmp.display()))?;
+        file.write_all(&serde_json::to_vec_pretty(record)?)?;
+        file.write_all(b"\n")?;
+        drop(file);
+        fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
+    }
+
+    pub fn delete_worktree(&self, worktree: &Path) -> Result<()> {
+        match fs::remove_file(self.store.worktree_path(worktree)) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e).context("cannot delete the worktree record"),
         }
-        Ok(sessions)
+    }
+
+    pub fn put_copy(&self, record: &CopyRecord) -> Result<()> {
+        let path = self.store.copy_path(&record.id)?;
+        let dir = self.store.copies_dir();
+        fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        let tmp = path.with_extension("json.tmp");
+        let mut file = File::create(&tmp).with_context(|| format!("cannot write {}", tmp.display()))?;
+        file.write_all(&serde_json::to_vec_pretty(record)?)?;
+        file.write_all(b"\n")?;
+        drop(file);
+        fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
+    }
+
+    pub fn delete_copy(&self, id: &str) -> Result<bool> {
+        let path = self.store.copy_path(id)?;
+        match fs::remove_file(&path) {
+            Ok(()) => Ok(true),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+            Err(e) => Err(e).with_context(|| format!("cannot delete {}", path.display())),
+        }
+    }
+
+    /// All records as they are at `now` (see [`SessionRecord::at`]), in start
+    /// order. Nothing is written.
+    pub fn sessions_at(&self, now: u64) -> Result<Vec<SessionRecord>> {
+        Ok(self.sessions()?.into_iter().map(|s| s.at(now)).collect())
     }
 }
 
@@ -426,6 +668,38 @@ mod tests {
         s.touch(500); // resumed
         assert_eq!(s.state, State::Open);
         assert!(s.archive_sha256.is_none());
+        // Open, Closing, Closing again, Open: each is a new generation.
+        assert_eq!(s.generation, 4);
+        s.touch(600); // an event of an Open session is not one
+        assert_eq!(s.generation, 4);
+    }
+
+    #[test]
+    fn a_change_of_occupant_taints_the_changes() {
+        let mut w = WorktreeRecord { worktree: PathBuf::from("/w/a"), owner: None };
+        let count = std::cell::Cell::new(0);
+        let taint = || {
+            count.set(count.get() + 1);
+            Ok(())
+        };
+        let never = || -> Result<()> { panic!("the owner is the only occupant: nothing is tainted") };
+        // The first session becomes the owner.
+        assert!(w.observe(&["a"], taint).unwrap());
+        assert_eq!((w.owner.as_deref(), count.get()), (Some("a"), 1));
+        assert!(!w.observe(&["a"], never).unwrap());
+        // The owner is gone, and another session is there.
+        assert!(w.observe(&["b"], taint).unwrap());
+        assert_eq!((w.owner.as_deref(), count.get()), (Some("b"), 2));
+        // Contended: no owner. Each hook taints what is changed then.
+        assert!(w.observe(&["b", "c"], taint).unwrap());
+        assert!(!w.observe(&["b", "c"], taint).unwrap());
+        assert_eq!((w.owner.as_deref(), count.get()), (None, 4));
+        // No occupant: the same.
+        assert!(!w.observe(&[], taint).unwrap());
+        assert_eq!(count.get(), 5);
+        // A taint that fails leaves the owner, so the next hook tries again.
+        assert!(w.observe(&["b"], || anyhow::bail!("no service")).is_err());
+        assert_eq!(w.owner, None);
     }
 
     #[test]
@@ -445,7 +719,7 @@ mod tests {
     fn store_round_trip_and_contention() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::new(dir.path());
-        assert!(store.sessions().unwrap().is_empty());
+        assert_eq!(store.sessions().unwrap().len(), 0);
         {
             let lock = store.lock().unwrap();
             let now = crate::now();
@@ -477,9 +751,10 @@ mod tests {
         let mut s = record("s1", 0);
         s.close(10).unwrap();
         lock.put(&s).unwrap();
-        assert_eq!(lock.refresh(10 + CLOSING_TIMEOUT_SECS - 1).unwrap()[0].state, State::Closing);
-        assert_eq!(lock.refresh(10 + CLOSING_TIMEOUT_SECS).unwrap()[0].state, State::Failed);
-        assert_eq!(store.get("s1").unwrap().unwrap().state, State::Failed);
+        assert_eq!(lock.sessions_at(10 + CLOSING_TIMEOUT_SECS - 1).unwrap()[0].state, State::Closing);
+        assert_eq!(lock.sessions_at(10 + CLOSING_TIMEOUT_SECS).unwrap()[0].state, State::Failed);
+        // Calculated, never stored.
+        assert_eq!(store.get("s1").unwrap().unwrap().state, State::Closing);
     }
 
     #[test]
@@ -493,7 +768,7 @@ mod tests {
             content_hash: "abc".into(),
             approved_at: 1,
         };
-        assert!(store.approvals(Path::new("/w/a")).unwrap().is_empty());
+        assert_eq!(store.approvals(Path::new("/w/a")).unwrap().len(), 0);
         let lock = store.lock().unwrap();
         lock.put_approval(&approval("/w/a", "b.txt", "human")).unwrap();
         lock.put_approval(&approval("/w/a", "a.txt", "human")).unwrap();

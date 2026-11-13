@@ -78,7 +78,7 @@ pub fn run(target: Option<&str>, into: Option<&str>, json: bool) -> Result<bool>
                 bail!("--into has no meaning with a range");
             }
             let (base, tip) = t.split_once("..").unwrap_or_default();
-            check_range(&ctx, base, tip, &mut report)?
+            check_range(&ctx, base, tip, &mut report)?;
         }
         Some(t) => {
             let into = merge_target(&ctx, into)?;
@@ -168,9 +168,10 @@ fn list_branches(ctx: &Ctx, human: &str, report: &mut Report) -> Result<()> {
     };
     // git-ai writes a note some seconds after a commit. Without the note,
     // every line of a new commit would count as doubtful.
+    // As in the gate: a failed await is not fatal. A commit with no note
+    // gives items that need an approval.
     if let Err(e) = ctx.gitai.await_notes(&repo.toplevel) {
-        report.fail(None, format!("{e:#}"));
-        return Ok(());
+        crate::context::say(format!("warning: {e:#}. prov checks the note of each commit instead."));
     }
     let refs = repo.git(["for-each-ref", "--format=%(refname:short)", "refs/heads/"])?;
     for branch in refs.lines().filter(|b| is_agent_branch(b)) {
@@ -213,9 +214,10 @@ fn check_branch(ctx: &Ctx, branch: &str, human: &str, report: &mut Report) -> Re
     if let Err(e) = config.check_version(prov_core::VERSION) {
         report.fail(None, e.to_string());
     }
+    // As in the gate: a failed await is not fatal. A commit with no note
+    // gives items that need an approval.
     if let Err(e) = ctx.gitai.await_notes(&repo.toplevel) {
-        report.fail(None, format!("{e:#}"));
-        return Ok(());
+        crate::context::say(format!("warning: {e:#}. prov checks the note of each commit instead."));
     }
     let mut analysis = gate::analyze(repo, &ctx.gitai, &config, human, branch)?;
     analysis.drop_unknown_sessions(|s| gate::has_record(ctx, s));
@@ -343,7 +345,7 @@ fn check_merge(
         match groups.iter().find(|(s, _)| s == session) {
             None => report.fail(Some(commit), format!("has no trailer group for the session {session}")),
             Some((_, hash)) if !hash.as_deref().is_some_and(trailer::is_sha256) => {
-                report.fail(Some(commit), format!("has no valid Prov-Transcript-SHA256 for the session {session}"))
+                report.fail(Some(commit), format!("has no valid Prov-Transcript-SHA256 for the session {session}"));
             }
             Some(_) => {}
         }
@@ -374,7 +376,7 @@ fn check_ordinary(ctx: &Ctx, commit: &CommitInfo, report: &mut Report) -> Result
             .trailers
             .iter()
             .filter(|t| t.key == trailer::COPIED_FROM)
-            .filter_map(|t| trailer::copied_from_path(&t.value))
+            .filter_map(|t| trailer::copied_from_dest(&t.value))
             .map(String::from),
     );
     let mut reported: Vec<(String, String)> = Vec::new();

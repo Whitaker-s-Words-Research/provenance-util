@@ -1,0 +1,18 @@
+#!/bin/bash
+# git pre-push hook: runs ci/run.sh for each commit that this push sends.
+# Install it once in each clone:  cp ci/pre-push "$(git rev-parse --git-path hooks)/pre-push"
+# To push without the checks:     git push --no-verify
+set -euo pipefail
+zero=0000000000000000000000000000000000000000
+root=$(git rev-parse --show-toplevel)
+checked=" "
+while read -r local_ref local_sha _remote_ref _remote_sha; do
+  # A deletion sends no commit. git-ai's notes are not code.
+  [ "$local_sha" = "$zero" ] && continue
+  case "$local_ref" in refs/heads/*|refs/tags/*) ;; *) continue ;; esac
+  commit=$(git rev-parse --verify "$local_sha^{commit}" 2>/dev/null) || continue
+  case "$checked" in *" $commit "*) continue ;; esac
+  echo "pre-push: checking $local_ref ($(git log -1 --format=%h "$commit")) in Podman" >&2
+  "$root/ci/run.sh" "$commit" </dev/null
+  checked="$checked$commit "
+done

@@ -122,7 +122,7 @@ fn glob(pattern: &[char], text: &[char]) -> bool {
 #[allow(clippy::type_complexity)]
 fn class(pattern: &[char]) -> Option<(Vec<(char, char)>, bool, &[char])> {
     let mut i = 0;
-    let negated = matches!(pattern.first(), Some('!') | Some('^'));
+    let negated = matches!(pattern.first(), Some('!' | '^'));
     if negated {
         i += 1;
     }
@@ -147,7 +147,7 @@ fn class(pattern: &[char]) -> Option<(Vec<(char, char)>, bool, &[char])> {
 /// True if a branch name matches `agent/**`.
 pub fn is_agent_branch(name: &str) -> bool {
     // The pattern is a constant, so the build cannot fail.
-    PathSet::new(&[AGENT_BRANCH_PATTERN]).map(|s| s.matches(name)).unwrap_or(false)
+    PathSet::new(&[AGENT_BRANCH_PATTERN]).is_ok_and(|s| s.matches(name))
 }
 
 #[cfg(test)]
