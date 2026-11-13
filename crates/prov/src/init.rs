@@ -88,7 +88,7 @@ fn config_text(agents: &[String]) -> String {
     )
 }
 
-pub fn run(args: Args) -> Result<bool> {
+pub fn run(args: &Args) -> Result<bool> {
     let ctx = Ctx::here()?;
     let repo = &ctx.repo;
     if let Some(var) = prov_adapters::agent_env_marker() {

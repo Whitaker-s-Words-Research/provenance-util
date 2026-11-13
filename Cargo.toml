@@ -6,7 +6,23 @@ members = ["crates/prov-core", "crates/prov-git", "crates/prov-adapters", "crate
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-rust-version = "1.89"
+rust-version = "1.100.0"
+repository = "https://github.com/Whitaker-s-Words-Research/provenance-util"
+# Released as binaries on GitHub, not on crates.io.
+publish = false
+
+# One set of lints for local runs and CI. CI fails on any warning.
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+# For a library API; these crates are internal to the binary.
+missing_errors_doc = "allow"
+must_use_candidate = "allow"
+# Each command's `run` is one long sequence of steps; command-line flags are bools.
+too_many_lines = "allow"
+struct_excessive_bools = "allow"
+# A panic in a git or agent hook is the worst way to fail. Tests may unwrap.
+unwrap_used = "warn"
+expect_used = "warn"
 
 [workspace.dependencies]
 anyhow = "1"

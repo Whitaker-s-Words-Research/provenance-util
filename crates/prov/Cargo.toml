@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Provenance for git repositories where AI agents and humans commit"
 build = "build.rs"
 
 [dependencies]
@@ -25,3 +28,6 @@ prov-gitai.workspace = true
 [dev-dependencies]
 tempfile.workspace = true
 serde_json.workspace = true
+
+[lints]
+workspace = true
