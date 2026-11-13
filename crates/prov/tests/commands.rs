@@ -260,6 +260,8 @@ fn start_session_approve_finish_and_trace() {
     // --- prov finish ---------------------------------------------------------
     let finish = env.prov(&repo, ["finish", &branch]).success();
     assert!(finish.stdout.contains("The branch") && finish.stdout.contains("stays"), "{}", finish.stdout);
+    // The branch is merged: `-d` deletes it. prov does not run the command.
+    assert!(finish.stdout.contains(&format!("To delete it: git branch -d {branch}")), "{}", finish.stdout);
     assert!(!wt.exists());
     assert_eq!(env.git(&repo, ["branch", "--list", &branch]).trim(), branch);
 
@@ -325,7 +327,9 @@ fn finish_with_override_and_resume() {
     assert_eq!((&dry["removed"], &dry["closed"][0]), (&json("false"), &json("\"sess-over\"")));
     assert!(wt.is_dir());
     env.kill_agent(session); // the human ended the agent; no SessionEnd arrived
-    env.prov(&repo, ["finish", session, "--override"]).success();
+    let finish = env.prov(&repo, ["finish", session, "--override"]).success();
+    assert!(finish.stdout.contains("not merged into feature/x"), "{}", finish.stdout);
+    assert!(finish.stdout.contains(&format!("git branch -D {branch}")), "{}", finish.stdout);
     assert!(!wt.exists());
     assert_eq!(env.state(&repo, session), "archived");
 
@@ -525,4 +529,87 @@ fn doctor_removes_the_record_of_a_removed_worktree() {
     assert_eq!(records(), 0);
     // A second run has nothing to remove.
     assert!(!env.prov(&repo, ["doctor"]).stdout.contains("which no longer exists"));
+}
+
+#[test]
+fn start_path_is_the_parent_and_completion_offers_branches() {
+    let Some(env) = Env::new() else { return };
+    let repo = init_repo(&env, "project");
+
+    // --path names the directory that holds the worktree; the worktree's own
+    // name comes from the branch.
+    let parent = env.repos().join("elsewhere");
+    let start = json(
+        &env.prov(&repo, ["start", "claude", "--no-launch", "--name", "p1", "--path", parent.to_str().unwrap(), "--json"])
+            .success()
+            .stdout,
+    );
+    let branch = start["branch"].as_str().unwrap().to_string();
+    let wt = PathBuf::from(start["worktree"].as_str().unwrap());
+    assert_eq!(wt, parent.join(branch.strip_prefix("agent/").unwrap().replace('/', "-")));
+    assert!(wt.is_dir());
+    // A custom --branch also names the directory.
+    let custom = json(
+        &env.prov(&repo, ["start", "claude", "--no-launch", "--branch", "agent/claude/fix/x", "--path", "../elsewhere", "--json"])
+            .success()
+            .stdout,
+    );
+    assert_eq!(PathBuf::from(custom["worktree"].as_str().unwrap()), parent.join("claude-fix-x"));
+
+    // Tab completion: the candidates come from the repository.
+    let complete = |words: &[&str]| {
+        let mut args = vec!["--", "prov"];
+        args.extend_from_slice(words);
+        env.run(&repo, "prov", args, &[("COMPLETE", "fish")], None).success().stdout
+    };
+    let finish = complete(&["finish", ""]);
+    assert!(finish.lines().any(|l| l.starts_with(&format!("{branch}\t"))), "{finish}");
+    assert!(finish.lines().any(|l| l.starts_with("agent/claude/fix/x\t")), "{finish}");
+    let prefixed = complete(&["finish", "agent/claude/f"]);
+    assert_eq!(prefixed.lines().map(|l| l.split('\t').next().unwrap()).collect::<Vec<_>>(), ["agent/claude/fix/x"]);
+    let from = complete(&["start", "claude", "--from", ""]);
+    assert!(from.lines().any(|l| l == "main"), "{from}");
+    assert_eq!(complete(&["start", ""]).lines().next(), Some("claude"));
+    // The registration script for the shell's startup file.
+    let script = env.run(&repo, "prov", Vec::<&str>::new(), &[("COMPLETE", "bash")], None).success().stdout;
+    assert!(script.contains("complete") && script.contains("prov"), "{script}");
+}
+
+#[test]
+fn completions_install_once_and_init_hints() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.plain_repo("project");
+    env.install_gitai_integration();
+    let bash = [("SHELL", "/bin/bash")];
+    let rc = env.home().join(".bashrc");
+    std::fs::write(&rc, "alias ll='ls -l'").unwrap(); // no newline at the end
+
+    // prov init changes nothing outside the clone. It says what is missing.
+    let init = env.run(&repo, "prov", ["init"], &bash, None).success();
+    assert!(init.stderr.contains("prov completions --install"), "{}", init.stderr);
+    assert_eq!(std::fs::read_to_string(&rc).unwrap(), "alias ll='ls -l'");
+
+    // With no flag: the line alone on standard output.
+    let print = env.run(&repo, "prov", ["completions"], &bash, None).success();
+    assert_eq!(print.stdout.trim(), "source <(COMPLETE=bash prov)");
+    env.run(&repo, "prov", ["completions", "--install", "--dry-run"], &bash, None).success();
+    assert_eq!(std::fs::read_to_string(&rc).unwrap(), "alias ll='ls -l'");
+
+    let install = env.run(&repo, "prov", ["completions", "--install"], &bash, None).success();
+    assert!(install.stdout.starts_with("added to"), "{}", install.stdout);
+    let text = std::fs::read_to_string(&rc).unwrap();
+    assert_eq!(text, "alias ll='ls -l'\n\n# Tab completion for prov\nsource <(COMPLETE=bash prov)\n");
+    // A second install adds nothing, and init says nothing.
+    let again = env.run(&repo, "prov", ["completions", "--install"], &bash, None).success();
+    assert!(again.stdout.starts_with("already in"), "{}", again.stdout);
+    assert_eq!(std::fs::read_to_string(&rc).unwrap(), text);
+    let init = env.run(&repo, "prov", ["init"], &bash, None).success();
+    assert!(!init.stderr.contains("completions"), "{}", init.stderr);
+
+    // --shell overrides $SHELL; fish's file is created with its directory.
+    let fish = json(&env.run(&repo, "prov", ["completions", "--shell", "fish", "--install", "--json"], &bash, None).success().stdout);
+    assert_eq!(fish["added"], true);
+    assert!(std::fs::read_to_string(env.home().join(".config/fish/config.fish")).unwrap().contains("COMPLETE=fish prov | source"));
+    // An unknown shell: an error, not a guess.
+    env.run(&repo, "prov", ["completions"], &[("SHELL", "/bin/tcsh")], None).failure();
 }

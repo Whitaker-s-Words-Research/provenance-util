@@ -37,6 +37,7 @@ flate2 = "1"
 tar = { version = "0.4", default-features = false }
 libc = "0.2"
 clap = { version = "4", features = ["derive"] }
+clap_complete = { version = "4", features = ["unstable-dynamic"] }
 tempfile = "3"
 prov-core = { path = "crates/prov-core" }
 prov-git = { path = "crates/prov-git" }

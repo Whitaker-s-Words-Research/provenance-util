@@ -101,7 +101,7 @@ prov start <agent> [options] [-- <agent arguments>]
 | `--name <slug>` | 4 random hex characters | The `<name>` part of the branch name. Letters, digits and `-` only. |
 | `--branch <name>` | `agent/<agent>/<YYYYMMDD>-<name>` | Full branch name. It must match `agent/**`. |
 | `--from <ref>` | the branch that is checked out | Start point of the new branch. |
-| `--path <dir>` | `../<repo>.worktrees/<agent>-<YYYYMMDD>-<name>`, from the base directory | Location of the worktree. `<repo>` is the name of the base directory. |
+| `--path <dir>` | `../<repo>.worktrees/`, from the base directory | The directory that holds the worktree. `<repo>` is the name of the base directory. The worktree is the directory `<dir>/<branch>`, with the leading `agent/` removed and each `/` replaced by `-`: `agent/claude/20261112-71fe` gives `claude-20261112-71fe`. With `--resume`, this applies when `--path` is given or the session has no record. |
 | `--no-launch` | off | Create the worktree, print its path, and do not start the agent. Use this for agents in an IDE. |
 | `--resume <session>` | none | Open the worktree of that session and start the agent with its resume option. If the worktree was removed, `prov` creates it again on the session's branch. If the session has no record, also give `--branch`. |
 
@@ -168,7 +168,7 @@ git-ai takes a model only from a checkpoint that records a change. When every ed
 0. **[R-SESS-3]** Wait until the agent process has exited, if `prov` knows its process ID. While the process runs, the session stays Closing, and the archive process counts as live for the 5-minute rule. If the agent sends an event meanwhile, the session returns to Open (R-SESS-1), and this process ends without a change (R-SESS-2). If `prov` does not know the process ID, the step does not wait. This is an accepted limit: a session that the human closes while its agent works can then be Archived with a transcript that does not cover the last work, until the next event of the agent returns it to Open. The model `ProvSessions.limit-no-pid` records it. Reason for the wait: `prov session close` and `prov finish --override` can close a session while its agent still works, and an archive made then misses the agent's last work (`ProvSessions.bug-no-wait`).
 1. Build the archive through the adapter. The adapter decides how it gets the transcript. The archive is a tar file that `prov` builds:
     - Claude Code: the file at the transcript path from the hook payload, as `transcript.jsonl`, and every file of the directory `<session ID>/` next to the transcript, with its relative path. Reason: Claude Code stores large tool results in `<session ID>/tool-results/` and the messages of subagents in `<session ID>/subagents/`, not in the transcript.
-    - The entries are sorted by name, and each entry has modification time 0, owner 0 and mode 0644, so the same files always give the same bytes.
+    - The entries are sorted by name, and each entry has modification time 0, owner 0 and mode 0644, so the same files always give the same bytes. `tar -tv` therefore shows each entry with the date 1970-01-01 (owner decision, 2026-11-12: kept). A real time would make two archives of the same transcript differ, and R-ARCH-1 would then fail a retry.
 2. Calculate SHA-256 of the tar bytes, before compression. The hash therefore covers the transcript, the tool results and the subagent sessions. To check an archive: decompress it and hash the result.
 3. **[R-ARCH-1]** Write the archive, gzip-compressed, to a temporary file in the same directory, flush it, and give it the name `<logs_dir>/<agent>/<session>-<first 12 hex characters of the hash>.tar.gz` with an operation that fails if the name exists. If the name exists and its decompressed content has the same hash, the step succeeds. If it exists with another hash, the step fails. `prov` never overwrites an archive file. Reason: a process that stops during the write would otherwise leave part of a file under the final name, and every later attempt would fail.
 4. Set the state to Archived. If a step fails, set the state to Failed and store the error text.
@@ -185,6 +185,7 @@ Every session that ends is archived, also a session that made no commit.
 - `prov finish` warns about processes that still run in the worktree (R-SWEEP-4). It does not refuse.
 - `prov finish` keeps the session records. Reason: a later integration of the branch needs the transcript hash. The records are deleted only by the integration or by `prov session drop`.
 - `prov` never deletes a branch. Reason: `git branch -d` checks the branch's upstream, not the human branch that it started from, so it can delete a branch that is not integrated.
+- `prov finish` prints a command that deletes the branch, and does not run it. If the branch is merged into `HEAD` of the worktree where `prov finish` runs, the command is `git branch -d <branch>`. Otherwise it is `git branch -D <branch>`, and `prov finish` says that the branch is not merged. `--json` gives `merged` and `delete_command`.
 
 ## Commit identity
 
@@ -567,6 +568,7 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 | `prov hook <adapter> <event>` | Shims only | Handles an agent or git event. |
 | `prov session list` / `show <id>` / `close <id>` / `drop <id>` | Human | Shows sessions, closes one, or deletes the record of one. |
 | `prov finish <session or branch> [--override]` | Human | See "Finishing". |
+| `prov completions [--shell <bash\|zsh\|fish>] [--install]` | Human | Prints the line that turns on tab completion (`source <(COMPLETE=bash prov)`). `--install` appends it to the shell's startup file (`~/.bashrc`, `$ZDOTDIR/.zshrc`, `$XDG_CONFIG_HOME/fish/config.fish`) unless a line with `COMPLETE=<shell> prov` is there. The default shell is `$SHELL`. `prov init` never changes the startup file, because it belongs to the user, not to the clone; it prints a hint when the line is missing (owner decision, 2026-11-12). Completion candidates come from the repository of the current directory: branches and session IDs. |
 | `prov approve <path>...` | Human | See "Approval". |
 | `prov cp --from <repo> [--rev <rev>] <path>... <dest>` | Human | See "Copying files". |
 | `prov trace export [<range>]` | Human | See "Trace export". |

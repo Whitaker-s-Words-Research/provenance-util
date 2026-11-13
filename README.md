@@ -99,6 +99,14 @@ cargo install --path crates/prov --locked
 
 Install it outside the repositories that use it: the git hooks run `prov` from your `PATH`.
 
+Tab completion, with branch names and session IDs from the repository you are in, for bash, zsh and fish:
+
+```sh
+prov completions --install     # adds one line to your shell's startup file, once
+```
+
+`prov completions` alone prints the line, if you prefer to add it yourself. `prov init` does not change your startup file; it says when the line is missing.
+
 ## A first session
 
 Set up the repository once:
@@ -116,7 +124,7 @@ Start an agent in its own worktree:
 prov start claude --name parser-tests
 ```
 
-This creates the branch `agent/claude/<date>-parser-tests`, a worktree for it, and starts Claude Code there. The agent works and commits as usual. When you end the session, `prov` archives its transcript.
+This creates the branch `agent/claude/<date>-parser-tests`, a worktree for it in `../<repo>.worktrees/claude-<date>-parser-tests`, and starts Claude Code there. `--path <dir>` puts the worktree in another directory; its name still comes from the branch. The agent works and commits as usual. When you end the session, `prov` archives its transcript.
 
 See what is waiting, then merge it:
 
@@ -135,7 +143,7 @@ git commit                         # finishes the merge
 
 To give up instead, run `git merge --abort`.
 
-Remove the worktree when you are done. The branch stays as a record.
+Remove the worktree when you are done. The branch stays as a record. `prov finish` prints the command that deletes the branch: `git branch -d` when the branch is merged into the branch you have checked out, `git branch -D` with a warning when it is not.
 
 ```sh
 prov finish agent/claude/20261111-parser-tests
@@ -182,6 +190,7 @@ git-ai blame src/parse.py
 | `prov session list` / `show` / `close` / `drop` | Shows sessions, ends one that did not end by itself, or deletes the record of one. |
 | `prov finish <branch>` | Removes an agent worktree and keeps the branch. |
 | `prov cp` | Copies files from another repository, with an author for every line. |
+| `prov completions [--install]` | Prints the line that turns on tab completion, or adds it to your shell's startup file. |
 | `prov trace export` | Writes the authorship record in the Agent Trace format. Optional. |
 
 Every command that changes something accepts `--dry-run`. Every command that shows something accepts `--json`.
@@ -279,6 +288,7 @@ Everything else is a fixed convention:
 - The git hooks cannot stop an agent that wants to avoid them. The controls that count are the merge gate, which runs when a person merges, and `prov check` in CI.
 - `prov` tells an agent commit from a person's commit by the author email. For a stronger control, require signed commits on the main branch in your forge.
 - Transcript archives are files on your disk. `prov` records their hashes in git, but it does not back them up or publish them.
+- Every file in a transcript archive has the date 1970-01-01. This is on purpose: the same transcript always gives the same archive and the same hash. The times of the messages are in the transcript itself.
 - `prov` waits for the agent process to exit before it archives a transcript. If it does not know the process ID, it archives at once, and the archive can miss the agent's last work. `prov session close` and `prov finish` warn when that is the case.
 - `prov` depends on how git-ai attributes lines. `prov doctor` warns when git-ai is newer than the version that `prov` is tested with.
 

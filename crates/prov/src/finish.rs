@@ -26,6 +26,12 @@ struct Report {
     /// Sessions that `--override` closed.
     closed: Vec<String>,
     removed: bool,
+    /// True if the branch is merged into the branch checked out here.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    merged: Option<bool>,
+    /// A command that deletes the branch. `prov` does not run it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    delete_command: Option<String>,
 }
 
 pub fn run(args: &Args) -> Result<bool> {
@@ -65,7 +71,23 @@ pub fn run(args: &Args) -> Result<bool> {
         );
     }
 
-    let mut report = Report { dry_run: args.dry_run, worktree: worktree.clone(), branch, closed: Vec::new(), removed: false };
+    // Merged into HEAD here: `git branch -d` then deletes it, if the branch
+    // has no upstream. Otherwise only `-D` does, and the work is gone.
+    let merged = match &branch {
+        Some(b) => Some(repo.is_ancestor(&format!("refs/heads/{b}"), "HEAD")?),
+        None => None,
+    };
+    let delete_command =
+        branch.as_ref().zip(merged).map(|(b, m)| format!("git branch {} {b}", if m { "-d" } else { "-D" }));
+    let mut report = Report {
+        dry_run: args.dry_run,
+        worktree: worktree.clone(),
+        branch,
+        closed: Vec::new(),
+        removed: false,
+        merged,
+        delete_command,
+    };
     // The records stay: a later integration of the branch needs the transcript hash.
     for v in busy.iter().filter(|v| v.record.state == State::Open) {
         if !args.dry_run {
@@ -107,6 +129,14 @@ pub fn run(args: &Args) -> Result<bool> {
             worktree.display(),
             report.branch.as_deref().unwrap_or("(detached)"),
         );
+        if let (Some(command), Some(merged)) = (&report.delete_command, report.merged) {
+            let here = repo.branch.as_deref().unwrap_or("HEAD");
+            if merged {
+                println!("It is merged into {here}. To delete it: {command}");
+            } else {
+                println!("It is not merged into {here}. To delete it anyway, with its commits: {command}");
+            }
+        }
     }
     Ok(true)
 }
