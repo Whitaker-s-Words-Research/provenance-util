@@ -1,0 +1,52 @@
+SPEC.md
+  s_d4ed4b211c62ce::t_821be6fabbe1c8 104,171,188
+  s_d4ed4b211c62ce::t_3fbd3162e35440 571
+crates/prov/src/main.rs
+  s_d4ed4b211c62ce::t_acbb564383b2a3 7,28-29,65,69,94,145,154,156-158,164,184,191,200,277,290,367-371
+  s_d4ed4b211c62ce::t_7ec4aa74ed83e2 8,109-121,334-335
+  s_d4ed4b211c62ce::t_73ea2f67ea48ea 372-373
+  s_d4ed4b211c62ce::t_0604662165af75 336
+PLAN.md
+  s_d4ed4b211c62ce::t_3fbd3162e35440 9
+crates/prov/tests/commands.rs
+  s_d4ed4b211c62ce::t_acbb564383b2a3 263-264,330-332,533-575
+  s_d4ed4b211c62ce::t_73ea2f67ea48ea 576,615
+  s_d4ed4b211c62ce::t_7ec4aa74ed83e2 577-614
+crates/prov/src/init.rs
+  s_d4ed4b211c62ce::t_d5ad714b0ee8e6 292-295
+Cargo.toml
+  s_d4ed4b211c62ce::t_8f0eed97a38424 40
+crates/prov/src/completions.rs
+  s_d4ed4b211c62ce::t_77f84abbbcded8 1-152
+README.md
+  s_d4ed4b211c62ce::t_3fbd3162e35440 102,105,108-109,193
+  s_d4ed4b211c62ce::t_821be6fabbe1c8 103-104,106-107,127,146,291
+crates/prov/src/start.rs
+  s_d4ed4b211c62ce::t_73ea2f67ea48ea 243
+  s_d4ed4b211c62ce::t_acbb564383b2a3 57-62,68-73,112,174-175,177-189,223,233-242
+crates/prov/src/finish.rs
+  s_d4ed4b211c62ce::t_acbb564383b2a3 29-34,74-90,132-139
+crates/prov/Cargo.toml
+  s_d4ed4b211c62ce::t_acbb564383b2a3 17
+crates/prov/src/complete.rs
+  s_d4ed4b211c62ce::t_59d723586c5804 1-19,21-68,70
+  s_d4ed4b211c62ce::t_acbb564383b2a3 20,69
+Cargo.lock
+  s_d4ed4b211c62ce::t_55ee092a79fe1e 110-121,276-284,352,525-530
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d21890fa03cc162a4c618ca14edc06dda861cd93",
+  "prompts": {},
+  "sessions": {
+    "s_d4ed4b211c62ce": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9e27d983-6919-456e-b255-0e838aa184d8",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
