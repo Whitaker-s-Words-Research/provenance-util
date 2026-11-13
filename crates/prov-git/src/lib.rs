@@ -56,6 +56,26 @@ fn normalize(path: &Path) -> PathBuf {
     out
 }
 
+/// The branch in the `HEAD` file of a git directory: `Some(None)` for a
+/// detached `HEAD`, and `None` if the file does not answer the question.
+///
+/// Every command of `prov` needs the branch. Reading the file saves one git
+/// process, which matters in a hook on a slow file system: there, each git
+/// process costs tens of milliseconds.
+#[allow(clippy::option_option)] // three cases, as the comment says
+fn head_branch(git_dir: &Path) -> Option<Option<String>> {
+    let text = std::fs::read_to_string(git_dir.join("HEAD")).ok()?;
+    let text = text.trim_end();
+    match text.strip_prefix("ref: ") {
+        Some(target) => {
+            let branch = target.trim().strip_prefix("refs/heads/")?;
+            // With the reftable format, the file holds a placeholder.
+            (!branch.is_empty() && branch != ".invalid").then(|| Some(branch.to_string()))
+        }
+        None => (text.len() >= 40 && text.bytes().all(|b| b.is_ascii_hexdigit())).then_some(None),
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CommitInfo {
     pub sha: String,
@@ -94,7 +114,10 @@ impl Repo {
             common_dir: PathBuf::from(common_dir),
             branch: None,
         };
-        repo.branch = repo.git_opt(["symbolic-ref", "-q", "--short", "HEAD"])?;
+        repo.branch = match head_branch(&repo.git_dir) {
+            Some(branch) => branch,
+            None => repo.git_opt(["symbolic-ref", "-q", "--short", "HEAD"])?,
+        };
         Ok(Some(repo))
     }
 
@@ -132,6 +155,20 @@ impl Repo {
     }
 
     /// As [`Repo::git`], but `None` when git exits with an error.
+    /// The output of git as bytes: the content of a file can be any bytes.
+    pub fn git_bytes<I, S>(&self, args: I) -> Result<Vec<u8>>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        let mut cmd = self.command(args);
+        let out = cmd.output().context("cannot run git")?;
+        if !out.status.success() {
+            bail!("{:?} failed: {}", cmd.get_args().collect::<Vec<_>>(), String::from_utf8_lossy(&out.stderr).trim());
+        }
+        Ok(out.stdout)
+    }
+
     pub fn git_opt<I, S>(&self, args: I) -> Result<Option<String>>
     where
         I: IntoIterator<Item = S>,
@@ -244,6 +281,23 @@ impl Repo {
     }
 
     /// The paths that differ between the merge base of `base` and `tip`, and `tip`.
+    /// The paths of text files to which a commit adds lines, by
+    /// `git diff-tree --numstat`. Not for a merge commit.
+    pub fn paths_with_added_lines(&self, commit: &str) -> Result<Vec<String>> {
+        let text = self.git(["diff-tree", "--no-commit-id", "--numstat", "--no-renames", "-r", "--root", "-z", commit])?;
+        let mut out = Vec::new();
+        for record in text.split('\0') {
+            // `<added>\t<deleted>\t<path>`; `-` for a binary file.
+            let mut parts = record.splitn(3, '\t');
+            if let (Some(added), Some(_), Some(path)) = (parts.next(), parts.next(), parts.next()) {
+                if added.parse::<u64>().is_ok_and(|n| n > 0) {
+                    out.push(path.to_string());
+                }
+            }
+        }
+        Ok(out)
+    }
+
     pub fn changed_paths(&self, base: &str, tip: &str) -> Result<Vec<String>> {
         let text = self.git(["diff", "--name-only", "--no-renames", "-z", &format!("{base}...{tip}")])?;
         Ok(text.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())
@@ -345,5 +399,28 @@ impl Repo {
         args.push(file.as_os_str().to_os_string());
         self.git(args)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reads_the_branch_from_the_head_file() {
+        let dir = std::env::temp_dir().join(format!("prov-head-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let head = |text: &str| {
+            std::fs::write(dir.join("HEAD"), text).unwrap();
+            head_branch(&dir)
+        };
+        assert_eq!(head("ref: refs/heads/agent/claude/x\n"), Some(Some("agent/claude/x".into())));
+        assert_eq!(head(&format!("{}\n", "a".repeat(40))), Some(None));
+        // Not answered here: git decides.
+        assert_eq!(head("ref: refs/heads/.invalid\n"), None);
+        assert_eq!(head("ref: refs/tags/v1\n"), None);
+        assert_eq!(head("garbage\n"), None);
+        std::fs::remove_dir_all(&dir).unwrap();
+        assert_eq!(head_branch(&dir), None);
     }
 }
