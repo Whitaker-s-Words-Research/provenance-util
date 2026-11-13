@@ -1,0 +1,53 @@
+{
+  "env": {
+    "GIT_AUTHOR_NAME": "Claude",
+    "GIT_AUTHOR_EMAIL": "noreply@anthropic.com",
+    "GIT_COMMITTER_NAME": "Claude",
+    "GIT_COMMITTER_EMAIL": "noreply@anthropic.com",
+    "GIT_CONFIG_COUNT": "1",
+    "GIT_CONFIG_KEY_0": "commit.gpgsign",
+    "GIT_CONFIG_VALUE_0": "false"
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "prov hook claude-code SessionStart"
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "prov hook claude-code UserPromptSubmit"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "prov hook claude-code Stop"
+          }
+        ]
+      }
+    ],
+    "SessionEnd": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "prov hook claude-code SessionEnd"
+          }
+        ]
+      }
+    ]
+  }
+}

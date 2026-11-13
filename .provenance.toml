@@ -1,0 +1,4 @@
+required_version = "=0.1.0"
+agents = ["claude"]
+logs_dir = "llm-logs"
+protected = [".provenance.toml", ".claude/**", ".github/workflows/**"]
