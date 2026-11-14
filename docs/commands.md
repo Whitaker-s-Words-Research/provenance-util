@@ -49,7 +49,7 @@ prov start <agent> [options] [-- <agent arguments>]
 | `--name <slug>` | 4 random hex characters | The `<name>` part of the branch name. Letters, digits and `-`. |
 | `--branch <name>` | `agent/<agent>/<YYYYMMDD>-<name>` | The full branch name. It must match `agent/**`. |
 | `--from <ref>` | the branch that is checked out | The start point of the new branch. |
-| `--path <dir>` | `../<repo>.worktrees/` | The directory that holds the worktree. The worktree's name comes from the branch. |
+| `--path <dir>` | `../<repo>.worktrees/` | The directory that holds the worktree. The worktree's name comes from the branch. A leading `~` is the home directory. |
 | `--no-launch` | off | Create the worktree, print its path, and do not start the agent. |
 | `--resume <session>` | none | Open the worktree of that session (create it again if it was removed) and start the agent with its resume option. If the session has no record, also give `--branch`. |
 

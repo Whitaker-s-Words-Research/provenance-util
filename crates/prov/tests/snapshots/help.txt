@@ -69,7 +69,7 @@ Options:
       --name <SLUG>       The `<name>` part of the branch name. Default: 4 random hex characters
       --branch <NAME>     The full branch name. It must match `agent/**`
       --from <REF>        The start point of the new branch. Default: the branch that is checked out
-      --path <DIR>        The directory that holds the worktree. The worktree is a new directory in it, named after the branch. Default: `../<repo>.worktrees/`
+      --path <DIR>        The directory that holds the worktree. The worktree is a new directory in it, named after the branch. A leading `~` is the home directory. Default: `../<repo>.worktrees/`
       --no-launch         Create the worktree, print its path, and do not start the agent
       --resume <SESSION>  Open the worktree of that session and start the agent with its resume option
       --dry-run           
