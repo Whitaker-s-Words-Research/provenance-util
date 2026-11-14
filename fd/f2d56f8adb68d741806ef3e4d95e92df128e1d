@@ -1,0 +1,26 @@
+crates/prov/tests/copy.rs
+  s_4ffffd06031ed5::t_5895dc1364c4e3 438-440
+SPEC.md
+  s_4ffffd06031ed5::t_331812d5c77036 944
+  s_4ffffd06031ed5::t_ccced4095b9b93 66,640
+CHANGELOG.md
+  s_4ffffd06031ed5::t_ccced4095b9b93 97
+crates/prov/src/copy_check.rs
+  s_4ffffd06031ed5::t_ccced4095b9b93 224-226
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "fdf2d56f8adb68d741806ef3e4d95e92df128e1d",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
