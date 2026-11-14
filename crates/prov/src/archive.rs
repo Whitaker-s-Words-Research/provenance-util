@@ -3,9 +3,8 @@
 
 use std::fs::{self, File};
 use std::io::Write;
-use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use anyhow::{bail, Context, Result};
 use prov_messages as msg;
@@ -23,17 +22,8 @@ pub fn spawn_detached(ctx: &Ctx, session_id: &str, generation: u64) -> Result<u3
     let exe = std::env::current_exe().context(msg::archive::NO_BINARY)?;
     let mut cmd = Command::new(exe);
     cmd.args(["archive-session", session_id, "--generation", &generation.to_string()])
-        .current_dir(&ctx.repo.toplevel)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null());
-    // SAFETY: setsid is async-signal-safe and touches no memory of the parent.
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
-    }
+        .current_dir(&ctx.repo.toplevel);
+    crate::detach::detach(&mut cmd);
     let child = cmd.spawn().context(msg::archive::CANNOT_SPAWN)?;
     Ok(child.id())
 }

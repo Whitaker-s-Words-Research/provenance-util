@@ -170,6 +170,56 @@ impl Repo {
         Ok(out.stdout)
     }
 
+    /// The blob ID of each file of a commit, by path: one `git ls-tree`.
+    pub fn tree_blobs(&self, commit: &str) -> Result<std::collections::HashMap<String, String>> {
+        let text = self.git(["ls-tree", "-r", "-z", "--full-tree", commit])?;
+        Ok(text
+            .split('\0')
+            .filter_map(|entry| {
+                // `<mode> <type> <id>\t<path>`
+                let (meta, path) = entry.split_once('\t')?;
+                let id = meta.split(' ').nth(2)?;
+                Some((path.to_string(), id.to_string()))
+            })
+            .collect())
+    }
+
+    /// The content of each blob, by ID: one `git cat-file --batch`.
+    pub fn blobs(&self, ids: &[&str]) -> Result<std::collections::HashMap<String, Vec<u8>>> {
+        use std::io::Write;
+        let mut cmd = self.command(["cat-file", "--batch"]);
+        cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().context(msg::run::CANNOT_RUN_GIT)?;
+        let mut stdin = child.stdin.take().context(msg::run::CANNOT_RUN_GIT)?;
+        let mut input = ids.join("\n");
+        input.push('\n');
+        // A thread writes, so that a large output cannot block the write.
+        let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+        let out = child.wait_with_output().context(msg::run::CANNOT_RUN_GIT)?;
+        writer.join().map_err(|_| anyhow::anyhow!(msg::run::CANNOT_RUN_GIT))?.context(msg::run::CANNOT_RUN_GIT)?;
+        if !out.status.success() {
+            bail!(msg::git::failed(["cat-file", "--batch"], String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        // `<id> blob <size>\n<content>\n` for each ID, or `<id> missing\n`.
+        let mut blobs = std::collections::HashMap::new();
+        let mut rest = out.stdout.as_slice();
+        while let Some(end) = rest.iter().position(|b| *b == b'\n') {
+            let header = String::from_utf8_lossy(&rest[..end]).into_owned();
+            rest = &rest[end + 1..];
+            let mut words = header.split(' ');
+            let (Some(id), Some(kind), Some(size)) = (words.next(), words.next(), words.next()) else { continue };
+            let Ok(size) = size.parse::<usize>() else { continue };
+            if rest.len() < size + 1 {
+                bail!(msg::git::failed(["cat-file", "--batch"], msg::git::CUT_OFF));
+            }
+            if kind == "blob" {
+                blobs.insert(id.to_string(), rest[..size].to_vec());
+            }
+            rest = &rest[size + 1..];
+        }
+        Ok(blobs)
+    }
+
     pub fn git_opt<I, S>(&self, args: I) -> Result<Option<String>>
     where
         I: IntoIterator<Item = S>,

@@ -9,6 +9,7 @@ mod completions;
 mod context;
 mod copy_check;
 mod cp;
+mod detach;
 mod discard;
 mod doctor;
 mod finish;

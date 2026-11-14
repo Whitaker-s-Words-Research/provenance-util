@@ -348,3 +348,145 @@ fn the_guard_refuses_a_changed_copy_and_a_failed_check_is_replaced() {
     assert!(records.is_empty(), "{records:?}");
     env.prov(&repo, ["doctor"]).success();
 }
+
+/// An editor that needs the terminal: it checks that its standard input and
+/// output are a terminal, and reads what the human types there.
+#[test]
+fn an_editor_that_needs_the_terminal() {
+    let Some(env) = Env::new() else { return };
+    let src = source_repo(&env);
+    let repo = dest_repo(&env, "project");
+    let editor = env.home().join("tty-editor.sh");
+    std::fs::write(
+        &editor,
+        "#!/bin/sh\n[ -t 0 ] && [ -t 1 ] || { echo 'not a terminal' >&2; exit 1; }\nprintf 'author? '\nread answer\n\
+         sed -i \"s/author = \\\"?\\\"/author = \\\"$answer\\\"/\" \"$1\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = env.prov_tty_env(&repo, ["cp", "--from", src.to_str().unwrap(), "lib/deep", "deep"], "human\n", &[("GIT_EDITOR", editor.to_str().unwrap())]);
+    assert!(out.ok, "{}{}", out.stdout, out.stderr);
+    assert!(out.stdout.contains("deep/human.txt  2 line(s)  human: 2"), "{}", out.stdout);
+}
+
+/// A clean filter in the source, as Git LFS uses: `prov cp` copies the blob,
+/// the filtered content, not the file of the source's worktree. A filter of
+/// the destination that changes the bytes at `git add` gives a note, and the
+/// deferred check still agrees.
+#[test]
+fn copies_the_blob_of_a_filtered_file() {
+    let Some(env) = Env::new() else { return };
+    let src = env.plain_repo("filtered");
+    std::fs::write(src.join(".gitattributes"), "*.dat filter=redact\n").unwrap();
+    env.git(&src, ["config", "filter.redact.clean", "sed s/secret/REDACTED/"]);
+    env.git(&src, ["config", "filter.redact.smudge", "cat"]);
+    ai_edit(&env, &src, "data.dat", "key = secret\nother = 1\n", "claude", "m1", "s1");
+    env.git(&src, ["add", "-A"]);
+    env.git(&src, ["commit", "-q", "-m", "Data"]);
+    env.await_notes(&src);
+    assert_eq!(std::fs::read_to_string(src.join("data.dat")).unwrap(), "key = secret\nother = 1\n");
+
+    let repo = dest_repo(&env, "project");
+    env.prov(&repo, ["cp", "--from", src.to_str().unwrap(), "data.dat", "data.dat", "--missing", "human"]).success();
+    assert_eq!(std::fs::read_to_string(repo.join("data.dat")).unwrap(), "key = REDACTED\nother = 1\n");
+
+    // A filter in the destination that changes the bytes at `git add`.
+    std::fs::write(repo.join(".gitattributes"), "*.txt filter=upper\n").unwrap();
+    env.git(&repo, ["config", "filter.upper.clean", "tr a-z A-Z"]);
+    env.git(&repo, ["config", "filter.upper.smudge", "cat"]);
+    env.git(&repo, ["add", ".gitattributes"]);
+    env.git(&repo, ["commit", "-q", "-m", "Attributes"]);
+    let out = env.prov(&repo, ["cp", "--from", src.to_str().unwrap(), "data.dat", "copy.txt", "--missing", "human"]).success();
+    eprintln!("{}", out.stdout);
+    env.git(&repo, ["commit", "-q", "-m", "Copy"]);
+    let records = wait_checked(&repo);
+    eprintln!("copy records after the check: {records:?}");
+}
+
+/// A copy of 2,000 files: the time of the plan, the copy and the deferred
+/// check. About two minutes, so it runs only on request:
+/// `ci/dev.sh test -p prov --test copy -- --ignored --nocapture`.
+#[test]
+#[ignore = "slow: about two minutes"]
+fn copies_two_thousand_files() {
+    let Some(env) = Env::new() else { return };
+    let src = env.plain_repo("many");
+    for i in 0..2000 {
+        env.plain_write(&src, &format!("lib/d{}/f{i}.txt", i % 20), &format!("line one of {i}\nline two\n"));
+    }
+    env.git(&src, ["add", "-A"]);
+    env.git(&src, ["commit", "-q", "-m", "Many"]);
+    env.await_notes(&src);
+    let repo = dest_repo(&env, "project");
+
+    let begin = Instant::now();
+    let out = env.prov(&repo, ["cp", "--from", src.to_str().unwrap(), "lib", "lib", "--missing", "human", "--json"]);
+    let copy = begin.elapsed();
+    assert!(out.ok, "{}", out.stderr);
+    let begin = Instant::now();
+    env.git(&repo, ["commit", "-q", "-m", "Copy many"]);
+    let commit = begin.elapsed();
+    let begin = Instant::now();
+    while !env.try_git(&repo, ["notes", "--ref=ai", "list", "HEAD"]).ok && begin.elapsed() < Duration::from_secs(120) {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let note = begin.elapsed();
+    let records = wait_checked(&repo);
+    let check = begin.elapsed();
+    eprintln!("2,000 files: the note arrived after {note:?}");
+    eprintln!("2,000 files: prov cp {copy:?}, git commit {commit:?}, deferred check {check:?}");
+    assert_eq!(records, [] as [Value; 0], "the check agrees for every file");
+    assert_eq!(env.git(&repo, ["ls-files", "lib"]).lines().count(), 2000);
+}
+
+/// A source with Git LFS. The blob of an LFS file is the pointer, so
+/// `prov cp` copies the pointer, not the content: in a destination without
+/// LFS the pointer is an ordinary file, and in one that tracks the same
+/// pattern the object is missing. LFS refuses to install its hooks over the
+/// shims; with `--force` and `prov init` again, both run. A commit with an
+/// LFS file once waited 60 seconds for the detached copy check, which held a
+/// pipe of `git-lfs filter-process`; the check then found no note.
+#[test]
+fn copies_from_a_source_with_git_lfs() {
+    let Some(env) = Env::new() else { return };
+    let src = env.plain_repo("lfs");
+    env.git(&src, ["lfs", "install", "--local"]);
+    env.git(&src, ["lfs", "track", "*.bin"]);
+    std::fs::write(src.join("big.bin"), b"\x00\x01 the real content\n").unwrap();
+    env.git(&src, ["add", "-A"]);
+    env.git(&src, ["commit", "-q", "-m", "LFS file"]);
+    env.await_notes(&src);
+    let pointer = env.git(&src, ["cat-file", "blob", "HEAD:big.bin"]);
+    assert!(pointer.starts_with("version https://git-lfs.github.com/spec/v1"), "{pointer}");
+    let from = src.to_str().unwrap();
+
+    // A destination without LFS: the pointer text is copied as a file.
+    let plain = dest_repo(&env, "plain");
+    env.prov(&plain, ["cp", "--from", from, "big.bin", "big.bin", "--missing", "human"]).success();
+    assert_eq!(std::fs::read_to_string(plain.join("big.bin")).unwrap().trim_end(), pointer);
+
+    // A destination that tracks the same pattern.
+    let tracked = dest_repo(&env, "tracked");
+    let refused = env.try_git(&tracked, ["lfs", "install", "--local"]);
+    assert!(!refused.ok && refused.stderr.contains("Hook already exists"), "{}", refused.stderr);
+    env.git(&tracked, ["lfs", "install", "--local", "--force"]);
+    env.prov(&tracked, ["init"]).success();
+    let hooks = env.hooks_dir(&tracked);
+    for name in ["post-commit", "post-merge"] {
+        assert!(std::fs::read_to_string(hooks.join(name)).unwrap().contains("prov hook git"), "{name}");
+        assert!(std::fs::read_to_string(hooks.join(format!("{name}.local"))).unwrap().contains("git lfs"), "{name}.local");
+    }
+    env.prov(&tracked, ["doctor"]).success();
+    env.git(&tracked, ["lfs", "track", "*.bin"]);
+    env.git(&tracked, ["add", ".gitattributes"]);
+    env.git(&tracked, ["commit", "-q", "-m", "Track"]);
+    env.prov(&tracked, ["cp", "--from", from, "big.bin", "big.bin", "--missing", "human"]).success();
+    let begin = Instant::now();
+    env.git(&tracked, ["commit", "-q", "-m", "Copy"]);
+    assert!(begin.elapsed() < Duration::from_secs(10), "the commit waited {:?}", begin.elapsed());
+    assert_eq!(wait_checked(&tracked), [] as [Value; 0], "the check agrees");
+    // The object is not in the destination: a clone has the pointer only.
+    let fresh = env.repos().join("tracked-clone");
+    env.git(env.repos(), ["clone", "-q", tracked.to_str().unwrap(), fresh.to_str().unwrap()]);
+    assert_eq!(std::fs::read_to_string(fresh.join("big.bin")).unwrap().trim_end(), pointer);
+}

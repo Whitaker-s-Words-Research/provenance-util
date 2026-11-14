@@ -5,6 +5,8 @@ use std::fmt::{Debug, Display};
 pub const PATH_NOT_UTF8: &str = "git printed a path that is not UTF-8";
 pub const OUTPUT_NOT_UTF8: &str = "git output is not UTF-8";
 
+pub const CUT_OFF: &str = "the output is cut off";
+
 pub fn failed(args: impl Debug, stderr: impl Display) -> String {
     format!("{args:?} failed: {stderr}")
 }

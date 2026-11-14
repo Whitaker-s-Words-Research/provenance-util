@@ -462,8 +462,11 @@ fn an_archive_process_killed_during_its_write() {
                 assert!(name.contains(&hash[..12]), "round {round}: {name} is cut off");
             }
         }
-        // The step again: the session is archived, with a complete archive.
-        env.prov(&repo, ["session", "archive", &session]).success();
+        // The step again, unless the kill came after its end: the session is
+        // archived, with a complete archive.
+        if env.state(&repo, &session) != "archived" {
+            env.prov(&repo, ["session", "archive", &session]).success();
+        }
         let archived = env.record(&repo, &session).unwrap();
         assert_eq!(archived["state"], "archived", "round {round}");
         let file = PathBuf::from(archived["archive_file"].as_str().unwrap());

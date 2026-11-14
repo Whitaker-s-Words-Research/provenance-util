@@ -1,7 +1,7 @@
 # The image for the local checks (ci/run.sh). Every tool is pinned:
 # Ubuntu 26.04 (git 2.53, the tested version), the Rust toolchain of
-# rust-toolchain.toml, tla2tools 1.7.4 and git-ai 1.7.6, each download with
-# its SHA-256. Podman caches the layers, so only the first build downloads.
+# rust-toolchain.toml, tla2tools 1.7.4, git-ai 1.7.6 and git-lfs 3.7.1, each
+# download with its SHA-256. Podman caches the layers, so only the first build downloads.
 FROM docker.io/library/ubuntu:26.04
 
 RUN apt-get update -qq \
@@ -23,6 +23,17 @@ RUN mkdir -p bin && arch=$(uname -m) && case "$arch" in \
  && curl -fsSL -o bin/git-ai "https://github.com/git-ai-project/git-ai/releases/download/v1.7.6/git-ai-linux-$a" \
  && echo "$sum  bin/git-ai" | sha256sum -c - \
  && chmod +x bin/git-ai && bin/git-ai --version
+
+# git-lfs 3.7.1, for the tests of `prov cp` with an LFS source. A test runs
+# `git lfs install --local` in its own repository; nothing is set up here.
+RUN arch=$(uname -m) && case "$arch" in \
+      x86_64)  a=amd64; sum=1c0b6ee5200ca708c5cebebb18fdeb0e1c98f1af5c1a9cba205a4c0ab5a5ec08 ;; \
+      aarch64) a=arm64; sum=73a9c90eeb4312133a63c3eaee0c38c019ea7bfa0953d174809d25b18588dd8d ;; \
+      *) echo "no git-lfs binary for $arch" >&2; exit 1 ;; esac \
+ && curl -fsSL -o git-lfs.tar.gz "https://github.com/git-lfs/git-lfs/releases/download/v3.7.1/git-lfs-linux-$a-v3.7.1.tar.gz" \
+ && echo "$sum  git-lfs.tar.gz" | sha256sum -c - \
+ && tar -xzf git-lfs.tar.gz -O git-lfs-3.7.1/git-lfs > bin/git-lfs \
+ && chmod +x bin/git-lfs && rm git-lfs.tar.gz && bin/git-lfs version
 
 # tla2tools 1.7.4 for the TLA+ models.
 RUN curl -fsSL -o tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar \
