@@ -1,0 +1,39 @@
+crates/prov/tests/snapshots/help.txt
+  s_4ffffd06031ed5::t_f5ce7f076351cb 206,212
+docs/record.md
+  s_4ffffd06031ed5::t_f5ce7f076351cb 41
+docs/commands.md
+  s_4ffffd06031ed5::t_f5ce7f076351cb 93,96,98-99,101
+crates/prov-messages/src/revise.rs
+  s_4ffffd06031ed5::t_d1abc152d94be0 65-74,79
+  s_4ffffd06031ed5::t_5a21627c8d2bf5 43-45,48-57,61-64,75-76,78
+crates/prov/src/revise.rs
+  s_4ffffd06031ed5::t_4a273c319f07e6 1-2,4-9,11,22,26-49,61-67,70-77,83,91-95,97-99,107,109-114,135-140,142-143,145,155,160,166-184,186-192,195-197,200,207,209-213,216,229-239,247-285,289-314,317-321,327-332,339,347-348,353,356-361,388-394,404-405
+  s_4ffffd06031ed5::t_bb1184e42f5686 349-352
+crates/prov/src/main.rs
+  s_4ffffd06031ed5::t_5a21627c8d2bf5 135-137,139-140,143
+CHANGELOG.md
+  s_4ffffd06031ed5::t_f5ce7f076351cb 88
+SPEC.md
+  s_4ffffd06031ed5::t_88f3a5e32cc098 411,519,526,531,533-540,546-547,932
+docs/workflow.md
+  s_4ffffd06031ed5::t_f5ce7f076351cb 122
+crates/prov/tests/revise.rs
+  s_4ffffd06031ed5::t_933e835ea507f1 41,44-56,58-59,66-67,73-74,102-103,106-108,110-111,117-154
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "7a89b7ec2e7260f8e906ababc32aba4c99292648",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
