@@ -32,6 +32,15 @@ pub fn agent_branches() -> Vec<CompletionCandidate> {
     local_branches(&ctx).into_iter().filter(|b| is_agent_branch(b)).map(CompletionCandidate::new).collect()
 }
 
+/// The agent branches and the session IDs: what `prov discard` takes.
+pub fn discard_targets() -> Vec<CompletionCandidate> {
+    let Some(ctx) = ctx() else { return Vec::new() };
+    let mut out: Vec<CompletionCandidate> =
+        local_branches(&ctx).into_iter().filter(|b| is_agent_branch(b)).map(CompletionCandidate::new).collect();
+    out.extend(session_candidates(&ctx));
+    out
+}
+
 fn session_candidates(ctx: &Ctx) -> Vec<CompletionCandidate> {
     ctx.store
         .sessions()

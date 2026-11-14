@@ -6,11 +6,12 @@ The specification is [SPEC.md](SPEC.md); read it first. It has the rules with th
 
 - Phase 1 is done and merged into `main`: the core (sessions, hooks, sweep, merge gate, `prov check`), the commands, `prov cp`, and the rules from the TLA+ model review.
 - Version 0.1.0, not released. There is no release process yet (SPEC, "Build and release").
-- Checks: 101 tests (`ci/dev.sh test --workspace --locked`), 23 TLA+ model configs (`ci/dev.sh --models`), clippy with `-D warnings`.
+- Checks: 106 tests (`ci/dev.sh test --workspace --locked`), 29 TLA+ model configs (`ci/dev.sh --models`), clippy with `-D warnings`.
 - OpenCode is phase 2, in "Appendix: phase 2, OpenCode" in the spec. Phase 1 rules must stay general; the appendix lists the six that must.
 
 ## Not tested yet
 
+- `prov discard` racing a real merge or a resume. The model `ProvDiscard` checks the order; the tests run each refusal one at a time.
 - Contended worktrees with two real Claude Code processes. Only recorded hook payloads were tested.
 - A real session resumed between the gate and `post-commit`, or while the merge editor is open. Premise P4 of `tla/ProvIntegration.tla` is reasoned, not tested.
 - macOS, entirely. This includes the process scan with `lsof` (the warning of R-SWEEP-4).
@@ -24,6 +25,7 @@ The specification is [SPEC.md](SPEC.md); read it first. It has the rules with th
 
 Each goes to the owner as a question with a recommendation.
 
+- `prov discard` (SPEC, "Discarding", R-DISC-1): the owner decided every question on 2026-11-13 (the name; the only command that deletes a branch and a transcript archive; it refuses whenever another ref names one of its sessions; the merge gate takes the lock). Implemented, not committed yet.
 - A config key for the worktrees directory, so that agent worktrees can live on a local disk when the repository is on a slow mount.
 - Choices from session 2 that the spec does not fix, never confirmed by the owner:
     - `prov approve` reads the typed `yes` from `/dev/tty`. With no terminal it refuses. `--dry-run` shows the items with no prompt.

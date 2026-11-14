@@ -83,6 +83,8 @@ prov finish agent/claude/20261111-parser-tests
 
 `prov finish` prints the command that deletes the branch, and does not run it: `git branch -d` when the branch is merged into the branch you have checked out, `git branch -D` with a warning when it is not.
 
+To throw away a branch whose work did not work out, use `prov discard <branch>` instead. It lists what it deletes, and deletes it with `--yes`. See [Discarding](workflow.md#discarding).
+
 ## Next
 
 - [Workflow](workflow.md): what each step does, and what to do when it stops.

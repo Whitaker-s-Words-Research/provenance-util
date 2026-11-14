@@ -9,6 +9,7 @@ mod completions;
 mod context;
 mod copy_check;
 mod cp;
+mod discard;
 mod doctor;
 mod finish;
 mod gate;
@@ -99,6 +100,19 @@ enum Cmd {
         /// Passed to `git worktree remove`: remove a worktree with changes that are not committed.
         #[arg(long)]
         force: bool,
+        #[arg(long)]
+        dry_run: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Deletes an agent branch that will not be integrated: its worktree, the branch, the session records and the transcript archives.
+    Discard {
+        /// A session ID, or an agent branch.
+        #[arg(add = ArgValueCandidates::new(complete::discard_targets))]
+        target: String,
+        /// Delete. Without it, `prov discard` only prints what it would delete.
+        #[arg(long)]
+        yes: bool,
         #[arg(long)]
         dry_run: bool,
         #[arg(long)]
@@ -313,6 +327,7 @@ fn main() -> ExitCode {
             Cmd::Finish { target, override_, force, dry_run, json } => {
                 finish::run(&finish::Args { target, r#override: override_, force, dry_run, json })
             }
+            Cmd::Discard { target, yes, dry_run, json } => discard::run(&discard::Args { target, yes, dry_run, json }),
             Cmd::Approve(a) => {
                 let mode = match (a.merge, a.human, a.ai) {
                     (true, false, false) => Ok(approve::Mode::Merge),

@@ -204,6 +204,19 @@ fn copied_from_parts(value: &str) -> Option<(&str, &str)> {
     None
 }
 
+/// The source commit of a `Copied-From` value.
+pub fn copied_from_commit(value: &str) -> Option<&str> {
+    let bytes = value.as_bytes();
+    for (at, _) in value.match_indices('@').collect::<Vec<_>>().into_iter().rev() {
+        let rest = &bytes[at + 1..];
+        let hex = rest.iter().take_while(|b| b.is_ascii_hexdigit()).count();
+        if (hex == 40 || hex == 64) && rest.get(hex) == Some(&b':') {
+            return Some(&value[at + 1..at + 1 + hex]);
+        }
+    }
+    None
+}
+
 /// The path in this repository of a `Copied-From` value.
 pub fn copied_from_dest(value: &str) -> Option<&str> {
     copied_from_parts(value).map(|(_, dest)| dest)
@@ -294,5 +307,7 @@ mod tests {
         assert_eq!(copied_from_dest(&same), Some("a.py"));
         let moved = copied_from_value("/srv/r", &sha, "src/a.py", "lib/b.py");
         assert_eq!(copied_from_parts(&moved), Some(("src/a.py", "lib/b.py")));
+        assert_eq!(copied_from_commit(&format!("git@github.com:o/r.git@{sha}:src/a b.py")), Some(sha.as_str()));
+        assert_eq!(copied_from_commit("nothing"), None);
     }
 }

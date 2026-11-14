@@ -184,8 +184,61 @@ Every session that ends is archived, also a session that made no commit.
 - `--force` goes to `git worktree remove`.
 - `prov finish` warns about processes that still run in the worktree (R-SWEEP-4). It does not refuse.
 - `prov finish` keeps the session records. Reason: a later integration of the branch needs the transcript hash. The records are deleted only by the integration or by `prov session drop`.
-- `prov` never deletes a branch. Reason: `git branch -d` checks the branch's upstream, not the human branch that it started from, so it can delete a branch that is not integrated.
+- `prov finish` never deletes a branch. Reason: `git branch -d` checks the branch's upstream, not the human branch that it started from, so it can delete a branch that is not integrated. Only `prov discard` deletes a branch, after its own checks (see "Discarding").
 - `prov finish` prints a command that deletes the branch, and does not run it. If the branch is merged into `HEAD` of the worktree where `prov finish` runs, the command is `git branch -d <branch>`. Otherwise it is `git branch -D <branch>`, and `prov finish` says that the branch is not merged. `--json` gives `merged` and `delete_command`.
+
+### Discarding
+
+`prov discard <session or branch>` deletes the work of an agent branch that will not be integrated: its worktree, the branch, the session records and the transcript archives. Reason: by hand this takes four commands (`prov finish --force`, `git branch -D`, `prov session drop` for each session, `rm` of each archive), and each one can delete evidence that an integration needs.
+
+Terms in this section:
+
+- The branch: the agent branch that is given, or the branch in the record of the session that is given. It must match `agent/**`.
+- Other refs: every ref except the branch and its remote-tracking branches.
+- The branch's own commits: the commits reachable from the branch and from no other ref.
+- The sessions of the discard: each session whose record names the branch, and each session that a `Prov-Session` trailer of the branch's own commits names.
+
+What it deletes:
+
+- The worktree of the branch, with `git worktree remove --force`, and the worktree record. Changes that are not committed are lost.
+- The branch, with `git branch -D`.
+- The record of each session of the discard.
+- Each archive `<logs_dir>/<agent>/<session>-*.tar.gz` of each session of the discard.
+
+What it keeps:
+
+- The transcripts of the agent itself, for example in `~/.claude/projects`. They belong to the agent.
+- git-ai notes. `prov` never writes git-ai data. A note on a commit that no ref reaches any more has no effect.
+- A remote branch. `prov discard` names it and prints the command that deletes it.
+
+It refuses in each of these cases:
+
+- It runs in an agent worktree, or an agent environment variable is set. Only a human runs it.
+- The branch is checked out in the worktree where it runs.
+- A session of the discard is Open, also when it is stale, or Closing. Close it with `prov session close` first. A Failed session does not stop it.
+- A `Prov-Session` trailer in a commit on another ref names a session of the discard. Reason: an integration group, or an agent commit that is already merged or is on another agent branch, needs the record or the archive of that session. To delete only the worktree, use `prov finish`.
+- A session that a trailer of the branch's own commits names has a record for another branch. Discard that branch first, or drop the record.
+- A `Copied-From` trailer in a commit on another ref, or a copy record, names one of the branch's own commits as its source. Reason: "Copying files" says that the transcript of an inherited session is found through `Copied-From`.
+
+Output and options:
+
+- `prov discard` prints everything that it will delete: the worktree with the number of changed files, the branch with the number of its own commits, each session and each archive file. It deletes nothing unless `--yes` is given.
+- `--dry-run` prints the same list and never deletes.
+- `--json` gives the same list.
+
+**[R-DISC-1]** Order of the steps:
+
+1. Without the lock: find the branch, its own commits and the sessions of the discard, and run the checks on the trailers and the copy records. Save the value of every ref. Reason: this reads the history, and a hook must not wait for that.
+2. Under the lock: check the states of the sessions again. Refuse if a merge is in progress in any worktree of the repository whose `MERGE_HEAD` reaches one of the branch's own commits. If a ref changed since step 1, release the lock and start again from step 1, at most three times; then refuse. Refs under `refs/notes/` are not compared, because git-ai changes them at every commit. Then delete the archives and the session records, and release the lock.
+3. Remove the worktree and delete the worktree record.
+4. Delete the branch.
+
+- The merge gate reads the session records under the lock, and holds it until it has written the trailers (owner decision, 2026-11-13). Reason: git writes `MERGE_HEAD` before the gate runs. A gate that runs before step 2 therefore makes step 2 refuse, and a gate that runs after step 2 finds no record and refuses. The model `ProvDiscard.bug-gate-unlocked` shows the failure without the lock: discard deletes the archive between the gate and the commit, and the commit names an archive that no longer exists.
+- Reason for the ref check: a merge commit can land between step 1 and step 2, and its trailers then name a session of the discard (`ProvDiscard.bug-no-ref-recheck`). Reason for the merge check: a merge whose gate has passed is not on a ref yet (`ProvDiscard.bug-no-merge-check`).
+- If `prov discard` stops after step 2, running it again by branch name finishes steps 3 and 4. The records are gone then, so it finds no sessions, and every archive was deleted in step 2.
+- Accepted limit: if `prov` does not know the process ID of an agent (R-SESS-3), its next event after the discard makes a new record for a branch that no longer exists. `prov doctor` reports that record as stale, and `prov session drop` removes it.
+
+`prov discard` is the only command that deletes a transcript archive or a branch (owner decision, 2026-11-13, with the name and the refusal when another ref names a session of the discard).
 
 ## Commit identity
 
@@ -306,6 +359,7 @@ The sessions of an integration are those named in a `Prov-Session` trailer or in
 One exception: a session that only a note names, and that has no record. git-ai invents such a session for lines with no checkpoint in a commit with an agent identity, for example after `git commit --no-verify`, which skips the sweep. No transcript exists for it. It is not a session of the integration, and its lines are doubtful lines. `prov check <base>..<tip>` has no records: there, a session that only a note names is a session of the integration if the merge has a trailer group for it.
 
 - The integration fails if one of these sessions is not Archived, or has no record. Close an Open session with `prov session close` first.
+- The gate reads the records under the lock, and holds it until it has written the trailers (R-DISC-1).
 - The integration fails while a session is Open in a worktree whose branch tip is in the incoming range.
 - **[R-INT-1]** After the integration, `post-commit` reads the trailers of the commit that was made (`HEAD`), not the trailers that the gate added. Reason: git opens the editor after the gate, so the commit's trailers can differ from the gate's.
 - **[R-INT-2]** It deletes the record of a session of the integration only if the record is Archived and the commit has a trailer group for that session with the record's transcript hash. It deletes no other record, also not the record of a session on the same branch that made no commit. Transcript archives stay. `prov doctor` shows a record that stays when its branch is merged into the branch that is checked out, and `prov session drop` removes it. Reason: a session can be resumed between the gate and `post-commit`, and its record is then in use; and a rule for other sessions would need to know whether their work is merged.
@@ -568,6 +622,7 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 | `prov hook <adapter> <event>` | Shims only | Handles an agent or git event. |
 | `prov session list` / `show <id>` / `close <id>` / `drop <id>` | Human | Shows sessions, closes one, or deletes the record of one. |
 | `prov finish <session or branch> [--override]` | Human | See "Finishing". |
+| `prov discard <session or branch> [--yes]` | Human | See "Discarding". |
 | `prov completions [--shell <bash\|zsh\|fish>] [--install]` | Human | Prints the line that turns on tab completion (`source <(COMPLETE=bash prov)`). `--install` appends it to the shell's startup file (`~/.bashrc`, `$ZDOTDIR/.zshrc`, `$XDG_CONFIG_HOME/fish/config.fish`) unless a line with `COMPLETE=<shell> prov` is there. The default shell is `$SHELL`. `prov init` never changes the startup file, because it belongs to the user, not to the clone; it prints a hint when the line is missing (owner decision, 2026-11-12). Completion candidates come from the repository of the current directory: branches and session IDs. |
 | `prov approve <path>...` | Human | See "Approval". |
 | `prov cp --from <repo> [--rev <rev>] <path>... <dest>` | Human | See "Copying files". |
@@ -628,8 +683,8 @@ All files are in `.git/provenance/` in the common git directory, so every worktr
 
 | File | Content | Deleted when |
 |---|---|---|
-| `sessions/<id>.json` | state, generation, agent, worktree, branch, model, transcript path, archive file and hash, error text (Failed), agent PID, start time, last event time, `prov` version | an integration permits it (R-INT-2), or `prov session drop` |
-| `worktrees/<key>.json` | for one agent worktree: the owner session (R-SWEEP-2) | `prov finish` removes the worktree, or `prov doctor` finds that git no longer lists it |
+| `sessions/<id>.json` | state, generation, agent, worktree, branch, model, transcript path, archive file and hash, error text (Failed), agent PID, start time, last event time, `prov` version | an integration permits it (R-INT-2), `prov session drop`, or `prov discard` |
+| `worktrees/<key>.json` | for one agent worktree: the owner session (R-SWEEP-2) | `prov finish` or `prov discard` removes the worktree, or `prov doctor` finds that git no longer lists it |
 | `copies/<id>.json` | the plan, the blob ID of each copied file, the check result of each file | the copy check agrees for every file. A failed file is cleared when a later copy of the same path agrees. A record with a `moved` or `ignored` result stays until the human deletes the file. |
 | `approvals/<key>.json` | path, choice (`human` or `ai`), content hash | the approval becomes a trailer. Merge approvals are not stored here. |
 
@@ -826,7 +881,16 @@ These results are the basis of rules in this specification.
 | `prepare-commit-msg` refuses a merge | The merge stays in progress with the changes staged | "When the gate refuses" |
 | An agent branch replaces a hook file in a tracked hooks directory, then is merged | git ran the branch's copy of the hook. The gate did not run. The same happened for a squash commit. | Hooks directory outside every worktree |
 | `git merge --ff-only` | `post-merge` and `reference-transaction` ran | Fast-forward warning |
-| `git branch -d` on a pushed branch that is not merged | Deleted, with a warning | `prov` never deletes a branch |
+| `git branch -d` on a pushed branch that is not merged | Deleted, with a warning | `prov finish` never deletes a branch |
+
+**git 2.53, tested 2026-11-13**
+
+| Test | Result | Rule |
+|---|---|---|
+| MERGE_HEAD of another worktree: `git merge --no-commit` of an agent branch in one worktree; from another worktree, `git rev-parse --path-format=absolute --git-path MERGE_HEAD` in each worktree of `git worktree list --porcelain` | The file of the merging worktree was found and held the tip of the agent branch | R-DISC-1, merge check |
+| reference-transaction during a merge commit: a `reference-transaction` hook checks for MERGE_HEAD when the update of the human branch is committed. Once with `git merge`, once with `git merge --no-commit` and then `git commit` | MERGE_HEAD existed in both cases. It was gone when `post-commit` ran. | R-DISC-1: no moment has MERGE_HEAD gone and the branch not yet moved |
+| `git branch -D` of a branch that a worktree has checked out | Refused: "cannot delete branch ... used by worktree" | R-DISC-1: the worktree goes before the branch |
+| `git worktree remove` of a worktree with a changed file, an untracked file and an ignored file | Refused without `--force`. With `--force`, the directory was removed. | "Discarding" uses `--force` |
 
 **Claude Code 2.1.322, tested 2026-11-11**
 
@@ -862,6 +926,15 @@ The models are in `tla/`. Each rule with an ID of the form `R-<AREA>-<n>` has a 
 | ProvIntegration | NoNeededDeletion | 2 named sessions, 1 other, hash versions ≤ 3 | Holds, 7,668 states | R-INT-1, R-INT-2 |
 | ProvIntegration | CommitIsComplete | same | Fails in 4 steps: an edited message or a resume before the commit; accepted limit | the accepted limit of R-INT-2 |
 | ProvIntegration, 0.1 cleanup | NoNeededDeletion | same, and variants | Fails in 4 to 5 steps: another session's record, edited message, resume | R-INT-2 |
+
+**TLC 2.19 (tla2tools 1.7.4), checked 2026-11-13**
+
+| Model | Property | Constants | Result | Rule |
+|---|---|---|---|---|
+| ProvDiscard | EvidenceKept: every transcript hash in a commit on a human branch has its archive. NoOpenDeleted. | 2 sessions, hash versions ≤ 3, 1 merge | Holds, 1,694 states | R-DISC-1 |
+| ProvDiscard, gate without the lock | EvidenceKept | same | Fails in 8 steps: the gate reads the records, discard deletes them and the archives, the commit names the archive | R-DISC-1 |
+| ProvDiscard, no merge check | EvidenceKept | same | Fails in 8 steps: the gate has passed, discard deletes, the commit lands | R-DISC-1 |
+| ProvDiscard, no ref check under the lock | EvidenceKept | same | Fails in 8 steps: the commit lands between the check and the lock | R-DISC-1 |
 
 Each model also has `reach-*` configs that must fail. They show that sweeps, taint, contention, archiving, discarded archive results, commits and deletions occur in the model. One liveness property is checked: `ClosingEnds` in `ProvSessions`. The other properties are safety properties only.
 

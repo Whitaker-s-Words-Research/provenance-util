@@ -7,6 +7,7 @@ These models check the rules in `../SPEC.md` that depend on ordering. SPEC.md gi
 | `ProvSweep.tla` | Sweep attribution in one agent worktree: occupants, taint, contention, the sweep at SessionEnd | R-SWEEP-1 to R-SWEEP-5 |
 | `ProvSessions.tla` | Session states and the detached archive process | R-SESS-1 to R-SESS-3 |
 | `ProvIntegration.tla` | Gate, then editor, then commit, then post-commit cleanup | R-INT-1, R-INT-2 |
+| `ProvDiscard.tla` | `prov discard` of a branch while its sessions resume and a human integrates it | R-DISC-1 |
 
 Each model has switch constants that turn a rule off. With a switch off, the model behaves as SPEC.md 0.1 said, or as the prov 0.1 code did (`ProvSessions.bug-state-only`).
 

@@ -421,6 +421,13 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
 
     // 3. The sessions.
     let mut analysis = analyze(repo, &ctx.gitai, &config, "HEAD", tip)?;
+    // R-DISC-1: hold the lock from the first read of a record until the
+    // trailers are written. `prov discard` deletes records and archives under
+    // the lock, and refuses while a merge of the branch is in progress. git
+    // writes MERGE_HEAD before this hook, so a discard either sees the merge
+    // or has deleted the records before this read. Taken after `analyze`,
+    // which is slow; nothing below takes the lock again.
+    let _lock = ctx.store.lock()?;
     analysis.drop_unknown_sessions(|s| has_record(ctx, s));
     let (records, problems) = check_sessions(ctx, &analysis)?;
 

@@ -152,4 +152,21 @@ prov finish agent/claude/20261111-parser-tests     # or a session ID
 - Refuses while a session in the worktree is Open or Closing. `--override` closes such sessions first.
 - `--force` is passed to `git worktree remove`, for a worktree with uncommitted changes.
 - Warns about processes that still run in the worktree.
-- Prints the command that deletes the branch. `prov` never deletes a branch itself: `git branch -d` checks the branch's upstream, not the human branch it came from, so it can delete a branch that is not merged.
+- Prints the command that deletes the branch. `prov finish` never deletes a branch itself: `git branch -d` checks the branch's upstream, not the human branch it came from, so it can delete a branch that is not merged.
+
+## Discarding
+
+When the work of a branch did not work out, delete it with one command:
+
+```sh
+prov discard agent/claude/20261111-parser-tests            # lists what it will delete
+prov discard agent/claude/20261111-parser-tests --yes      # deletes it
+```
+
+- It deletes the worktree with its uncommitted changes, the branch, the session records and the transcript archives of the branch's sessions.
+- It keeps the agent's own transcripts, the git-ai notes and a remote branch. It prints the command that deletes the remote branch.
+- It refuses while a session of the branch is Open or Closing. Close it first with `prov session close`.
+- It refuses while a merge of the branch is in progress in any worktree.
+- It refuses when another ref names one of its sessions: a merge commit on a human branch, a merged agent commit, or another agent branch that started from this one. That ref needs the session's record or archive. Use `prov finish` to remove only the worktree.
+- It refuses when a `Copied-From` trailer or a copy in progress names one of the branch's commits as its source.
+- If it stops after it deleted the records and archives, run it again with the branch name. It removes the worktree and the branch.
