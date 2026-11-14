@@ -40,21 +40,41 @@ pub fn partly_staged(paths: impl Display) -> String {
 
 pub const UNEXPECTED_DIFF: &str = "unexpected output of git diff";
 
-pub fn counts(merged: impl Display, other: impl Display) -> String {
-    format!("Merged lines changed or deleted: {merged}. Other lines changed or deleted: {other}.")
+/// The counts of one target.
+pub fn counts(short: impl Display, changed: impl Display, inserted: impl Display) -> String {
+    format!("{short}: merged lines changed or deleted: {changed}. Lines inserted next to merged lines: {inserted}.")
 }
 
-pub const NO_MERGED_LINE: &str = "refused: the staged changes change or delete no line that came in with this merge. \
-     A revision must change the work that it names. Lines that are only added do not count.";
+pub fn other_count(other: impl Display) -> String {
+    format!("Other lines changed or deleted: {other}.")
+}
+
+pub fn no_merged_line(short: impl Display) -> String {
+    format!(
+        "refused: the staged changes change or delete no line that came in with {short}, and insert no line next to \
+         one. A revision must change the work that it names."
+    )
+}
 
 pub const DRY_RUN: &str = "Dry run: nothing committed.";
 
-/// The comment lines of the commit template. git removes them.
-pub fn template_comment(short: impl Display, subject: impl Display, merged: impl Display, other: impl Display) -> String {
-    format!(
-        "prov revise: this commit revises the integration {short} \"{subject}\".\n\
-         Merged lines changed or deleted: {merged}. Other lines changed or deleted: {other}.\n\
-         Write the subject on the first line. Keep the Prov-Revises trailer.\n\
+/// The comment lines of the commit template. git removes them. One row for
+/// each target: short ID, subject, merged lines changed or deleted, lines
+/// inserted next to merged lines.
+pub fn template_comment(targets: &[(String, String, usize, usize)], other: impl Display) -> String {
+    let mut lines: Vec<String> = targets
+        .iter()
+        .map(|(short, subject, changed, inserted)| {
+            format!(
+                "prov revise: this commit revises the integration {short} \"{subject}\".\n\
+                 Merged lines changed or deleted: {changed}. Lines inserted next to merged lines: {inserted}."
+            )
+        })
+        .collect();
+    lines.push(format!(
+        "Other lines changed or deleted: {other}.\n\
+         Write the subject on the first line. Keep the Prov-Revises trailers.\n\
          An unchanged message stops the commit."
-    )
+    ));
+    lines.join("\n")
 }

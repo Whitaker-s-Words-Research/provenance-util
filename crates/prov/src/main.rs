@@ -132,12 +132,15 @@ enum Cmd {
     /// Commits your staged changes to the lines of an integration, with a `Prov-Revises` trailer.
     ///
     /// The changes must change or delete at least one line that came in with
-    /// the merge. git opens the editor with the trailer; you write the message.
+    /// the merge, or that an earlier revision of it changed, or insert lines
+    /// next to such a line. git opens the editor with the trailer; you write
+    /// the message.
     Revise {
-        /// The integration that you revise. Default: the latest one on the
+        /// The integration that you revise. Give it more than once for a
+        /// revision of several integrations. Default: the latest one on the
         /// first-parent line from HEAD.
         #[arg(long, value_name = "MERGE")]
-        of: Option<String>,
+        of: Vec<String>,
         /// Show the target and the counts, and do not commit.
         /// Show what the command would do, and change nothing.
         #[arg(long)]

@@ -1,12 +1,14 @@
-//! `prov revise [--of <merge>]`: commits a human's staged changes to the
-//! lines of an integration, with a `Prov-Revises` trailer.
+//! `prov revise [--of <merge>]...`: commits a human's staged changes to the
+//! lines of one or more integrations, with a `Prov-Revises` trailer for each.
 //!
-//! R-REV-1: a line counts when the staged diff changes or deletes it. A
-//! counted line is a merged line when `git blame HEAD` gives it to the
-//! target or to a commit in `<target>^1..<target>^2`. The commit is refused
-//! if no counted line is a merged line.
+//! R-REV-1: a line counts when the staged diff changes or deletes it. Lines
+//! that the diff inserts count when a neighbour line in `HEAD` is a merged
+//! line. A line of `HEAD` is a merged line of a target when `git blame HEAD`
+//! gives it to the target, to a commit in `<target>^1..<target>^2`, or to an
+//! earlier revision of the target. Each target needs at least one counted
+//! merged line.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
@@ -17,12 +19,34 @@ use prov_messages as msg;
 use crate::context::Ctx;
 
 pub struct Args {
-    pub of: Option<String>,
+    pub of: Vec<String>,
     pub dry_run: bool,
 }
 
-/// The lines of `HEAD` that the staged diff changes or deletes, by path at `HEAD`.
-type Counted = BTreeMap<String, Vec<(u32, u32)>>;
+/// The staged diff against `HEAD` for one file, by the path at `HEAD`.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct FileHunks {
+    /// The lines of `HEAD` that the diff changes or deletes.
+    changed: Vec<(u32, u32)>,
+    /// Lines that the diff only inserts: the line of `HEAD` after which they
+    /// go (0 at the start of the file), and their number.
+    inserted: Vec<(u32, u32)>,
+}
+
+type Diff = BTreeMap<String, FileHunks>;
+
+/// A target and the commits whose lines came in with it.
+struct Target {
+    commit: CommitInfo,
+    merged: HashSet<String>,
+}
+
+/// The counts of one target.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct Counts {
+    changed: usize,
+    inserted: usize,
+}
 
 pub fn run(args: &Args) -> Result<bool> {
     let ctx = Ctx::here()?;
@@ -34,23 +58,29 @@ pub fn run(args: &Args) -> Result<bool> {
         bail!(msg::revise::AGENT_WORKTREE);
     }
 
-    let target = target(repo, args.of.as_deref())?;
-    let since = repo.git(["rev-list", "--count", &format!("{}..HEAD", target.sha)])?;
-    println!("{}", msg::revise::target(target.short(), &target.subject, since));
+    let mut targets = Vec::new();
+    for commit in target_commits(repo, &args.of)? {
+        let since = repo.git(["rev-list", "--count", &format!("{}..HEAD", commit.sha)])?;
+        println!("{}", msg::revise::target(commit.short(), &commit.subject, since));
+        let merged = merged_commits(repo, &commit)?;
+        targets.push(Target { commit, merged });
+    }
 
     staged_only(repo)?;
-    let counted = counted_lines(repo)?;
-    let merged_commits = merged_commits(repo, &target)?;
-    let (merged, other) = classify(repo, &counted, &merged_commits)?;
-    println!("{}", msg::revise::counts(merged, other));
-    if merged == 0 {
-        bail!(msg::revise::NO_MERGED_LINE);
+    let diff = staged_diff(repo)?;
+    let (counts, other) = classify(repo, &diff, &targets)?;
+    for (t, c) in targets.iter().zip(&counts) {
+        println!("{}", msg::revise::counts(t.commit.short(), c.changed, c.inserted));
+    }
+    println!("{}", msg::revise::other_count(other));
+    if let Some((t, _)) = targets.iter().zip(&counts).find(|(_, c)| c.changed + c.inserted == 0) {
+        bail!(msg::revise::no_merged_line(t.commit.short()));
     }
     if args.dry_run {
         println!("{}", msg::revise::DRY_RUN);
         return Ok(true);
     }
-    commit(repo, &target, merged, other)
+    commit(repo, &targets, &counts, other)
 }
 
 /// An integration: a merge with a `Prov-Session` trailer.
@@ -58,11 +88,15 @@ fn is_integration(commit: &CommitInfo) -> bool {
     commit.parents.len() == 2 && trailer::has(&commit.trailers, trailer::PROV_SESSION)
 }
 
-/// The target of the revision: `--of`, or the first integration on the
-/// first-parent line from `HEAD`.
-fn target(repo: &Repo, of: Option<&str>) -> Result<CommitInfo> {
-    if let Some(rev) = of {
+/// The targets of the revision: each `--of`, or the first integration on
+/// the first-parent line from `HEAD`.
+fn target_commits(repo: &Repo, of: &[String]) -> Result<Vec<CommitInfo>> {
+    let mut out: Vec<CommitInfo> = Vec::new();
+    for rev in of {
         let sha = repo.rev_parse(rev)?.with_context(|| msg::revise::no_commit(rev))?;
+        if out.iter().any(|c| c.sha == sha) {
+            continue;
+        }
         let commit = repo.commit(&sha)?;
         if !is_integration(&commit) {
             bail!(msg::revise::not_integration(rev));
@@ -70,11 +104,14 @@ fn target(repo: &Repo, of: Option<&str>) -> Result<CommitInfo> {
         if !repo.is_ancestor(&sha, "HEAD")? {
             bail!(msg::revise::not_ancestor(rev));
         }
-        return Ok(commit);
+        out.push(commit);
     }
-    // `--grep` only narrows the walk; the trailers decide.
-    let candidates = repo.commits(["--first-parent", "--merges", "-E", "--grep=^Prov-Session: ", "HEAD"])?;
-    candidates.into_iter().find(is_integration).context(msg::revise::NO_INTEGRATION)
+    if out.is_empty() {
+        // `--grep` only narrows the walk; the trailers decide.
+        let candidates = repo.commits(["--first-parent", "--merges", "-E", "--grep=^Prov-Session: ", "HEAD"])?;
+        out.push(candidates.into_iter().find(is_integration).context(msg::revise::NO_INTEGRATION)?);
+    }
+    Ok(out)
 }
 
 /// Refuses an empty index, and a file with staged changes that also has
@@ -95,10 +132,17 @@ fn staged_only(repo: &Repo) -> Result<()> {
     Ok(())
 }
 
+/// The ID of the empty blob, for SHA-1 and SHA-256 repositories.
+const EMPTY_BLOBS: [&str; 2] = [
+    "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+    "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813",
+];
+
 /// The old path of each changed file, in the order of `git diff`. `None` for
-/// a file with no old lines to blame: an added file or a submodule.
+/// a file with no old lines to blame: an added file, an empty file or a
+/// submodule.
 fn old_paths(repo: &Repo) -> Result<Vec<Option<String>>> {
-    let raw = repo.git(["diff", "--cached", "-M", "--raw", "-z", "HEAD"])?;
+    let raw = repo.git(["diff", "--cached", "-M", "--raw", "--no-abbrev", "-z", "HEAD"])?;
     let mut fields = raw.split('\0');
     let mut out = Vec::new();
     while let Some(meta) = fields.next() {
@@ -108,45 +152,68 @@ fn old_paths(repo: &Repo) -> Result<Vec<Option<String>>> {
         // `:<old mode> <new mode> <old id> <new id> <status>`, then the
         // path, or two paths for a rename or a copy.
         let parts: Vec<&str> = meta.trim_start_matches(':').split(' ').collect();
-        let [old_mode, _, _, _, status] = parts.as_slice() else { bail!(msg::revise::UNEXPECTED_DIFF) };
+        let [old_mode, _, old_id, _, status] = parts.as_slice() else { bail!(msg::revise::UNEXPECTED_DIFF) };
         let old = fields.next().context(msg::revise::UNEXPECTED_DIFF)?;
         if status.starts_with('R') || status.starts_with('C') {
             fields.next().context(msg::revise::UNEXPECTED_DIFF)?;
         }
-        let blameable = *old_mode != "000000" && *old_mode != "160000";
+        let blameable = *old_mode != "000000" && *old_mode != "160000" && !EMPTY_BLOBS.contains(old_id);
         out.push(blameable.then(|| old.to_string()));
     }
     Ok(out)
 }
 
-/// `@@ -<start>[,<count>] +... @@`: the old lines of a hunk, if any.
-fn old_range(hunk: &str) -> Option<(u32, u32)> {
-    let old = hunk.strip_prefix("@@ -")?.split(' ').next()?;
-    let (start, count) = match old.split_once(',') {
-        Some((s, c)) => (s.parse().ok()?, c.parse().ok()?),
-        None => (old.parse().ok()?, 1),
-    };
-    (count > 0).then(|| (start, start + count - 1))
+/// A hunk of a `-U0` diff.
+#[derive(Debug, PartialEq, Eq)]
+enum Hunk {
+    /// The old lines `start..=end` change or go.
+    Changed(u32, u32),
+    /// `count` lines go in after old line `after` (0: at the start).
+    Inserted { after: u32, count: u32 },
 }
 
-/// R-REV-1: the lines on the old side of each hunk of the staged diff. A
-/// line that the diff only adds does not count.
-fn counted_lines(repo: &Repo) -> Result<Counted> {
+/// `@@ -<start>[,<count>] +<start>[,<count>] @@`. With an old count of 0,
+/// the old start is the line after which the new lines go.
+fn hunk(line: &str) -> Option<Hunk> {
+    let rest = line.strip_prefix("@@ -")?;
+    let mut words = rest.split(' ');
+    let range = |word: &str| -> Option<(u32, u32)> {
+        match word.split_once(',') {
+            Some((s, c)) => Some((s.parse().ok()?, c.parse().ok()?)),
+            None => Some((word.parse().ok()?, 1)),
+        }
+    };
+    let (old_start, old_count) = range(words.next()?)?;
+    let (_, new_count) = range(words.next()?.strip_prefix('+')?)?;
+    if old_count > 0 {
+        Some(Hunk::Changed(old_start, old_start + old_count - 1))
+    } else {
+        Some(Hunk::Inserted { after: old_start, count: new_count })
+    }
+}
+
+/// R-REV-1: the hunks of the staged diff, by old path. A new file has no
+/// old path, and none of its lines count.
+fn staged_diff(repo: &Repo) -> Result<Diff> {
     let paths = old_paths(repo)?;
     let patch = repo.git(["diff", "--cached", "-M", "-U0", "--no-color", "--no-ext-diff", "HEAD"])?;
-    let mut counted = Counted::new();
+    let mut diff = Diff::new();
     let mut file: Option<usize> = None;
     for line in patch.lines() {
         if line.starts_with("diff --git ") {
             file = Some(file.map_or(0, |i| i + 1));
             continue;
         }
-        let (Some(i), Some(range)) = (file, old_range(line)) else { continue };
+        let (Some(i), Some(h)) = (file, hunk(line)) else { continue };
         if let Some(old) = paths.get(i).context(msg::revise::UNEXPECTED_DIFF)? {
-            counted.entry(old.clone()).or_default().push(range);
+            let entry = diff.entry(old.clone()).or_default();
+            match h {
+                Hunk::Changed(start, end) => entry.changed.push((start, end)),
+                Hunk::Inserted { after, count } => entry.inserted.push((after, count)),
+            }
         }
     }
-    Ok(counted)
+    Ok(diff)
 }
 
 /// The commits whose lines came in with the target: the target itself (a
@@ -159,11 +226,17 @@ fn merged_commits(repo: &Repo, target: &CommitInfo) -> Result<HashSet<String>> {
     Ok(set)
 }
 
-/// One `git blame` call for each file. Returns the number of merged lines
-/// and of other counted lines.
-fn classify(repo: &Repo, counted: &Counted, merged_commits: &HashSet<String>) -> Result<(usize, usize)> {
-    let (mut merged, mut other) = (0, 0);
-    for (path, ranges) in counted {
+/// One `git blame` call for each file, for the changed lines and the
+/// neighbours of the inserted lines, and one `git log` call for the trailers
+/// of the blamed commits. Returns the counts of each target, and the number
+/// of changed lines that are merged lines of no target.
+fn classify(repo: &Repo, diff: &Diff, targets: &[Target]) -> Result<(Vec<Counts>, usize)> {
+    let mut blamed: BTreeMap<&str, BTreeMap<u32, String>> = BTreeMap::new();
+    for (path, hunks) in diff {
+        let mut ranges: Vec<(u32, u32)> = hunks.changed.clone();
+        // The neighbours: the line before and the line after. Line 0 does
+        // not exist; git clamps a range past the end of the file.
+        ranges.extend(hunks.inserted.iter().map(|&(after, _)| (after.max(1), after + 1)));
         let mut args: Vec<String> = vec!["blame".into(), "--porcelain".into(), "HEAD".into()];
         for (start, end) in ranges {
             args.push("-L".into());
@@ -171,37 +244,99 @@ fn classify(repo: &Repo, counted: &Counted, merged_commits: &HashSet<String>) ->
         }
         args.push("--".into());
         args.push(path.clone());
-        for commit in blamed_commits(&repo.git(&args)?) {
-            if merged_commits.contains(commit) {
-                merged += 1;
-            } else {
-                other += 1;
+        let lines = blamed_lines(&repo.git(&args)?).into_iter().map(|(line, c)| (line, c.to_string())).collect();
+        blamed.insert(path, lines);
+    }
+    let unknown: HashSet<&str> = blamed
+        .values()
+        .flat_map(|lines| lines.values())
+        .map(String::as_str)
+        .filter(|c| !targets.iter().any(|t| t.merged.contains(*c)))
+        .collect();
+    let revises = revised_targets(repo, &unknown)?;
+    let is_merged = |commit: &str, t: &Target| {
+        t.merged.contains(commit) || revises.get(commit).is_some_and(|r| r.contains(&t.commit.sha))
+    };
+
+    let mut counts = vec![Counts::default(); targets.len()];
+    let mut other = 0;
+    for (path, hunks) in diff {
+        let lines = &blamed[path.as_str()];
+        for &(start, end) in &hunks.changed {
+            for line in start..=end {
+                let Some(commit) = lines.get(&line) else { continue };
+                let mut any = false;
+                for (t, c) in targets.iter().zip(counts.iter_mut()) {
+                    if is_merged(commit, t) {
+                        c.changed += 1;
+                        any = true;
+                    }
+                }
+                if !any {
+                    other += 1;
+                }
+            }
+        }
+        for &(after, count) in &hunks.inserted {
+            let neighbours = [after, after + 1];
+            for (t, c) in targets.iter().zip(counts.iter_mut()) {
+                if neighbours.iter().any(|n| lines.get(n).is_some_and(|commit| is_merged(commit, t))) {
+                    c.inserted += count as usize;
+                }
             }
         }
     }
-    Ok((merged, other))
+    Ok((counts, other))
 }
 
-/// The commit of each line in `git blame --porcelain` output. Each line has
-/// one header: `<commit> <old line> <new line>[ <count>]`. Content lines
-/// start with a tab, and no metadata line starts with a hex word.
-fn blamed_commits(porcelain: &str) -> Vec<&str> {
+/// The `Prov-Revises` targets of each commit, by one `git log --no-walk`.
+/// Every blamed commit is an ancestor of `HEAD`.
+fn revised_targets(repo: &Repo, commits: &HashSet<&str>) -> Result<HashMap<String, Vec<String>>> {
+    if commits.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let mut args: Vec<String> = vec![
+        "log".into(),
+        "--no-walk=unsorted".into(),
+        format!("--format=%H %(trailers:key={},valueonly,separator=%x20)", trailer::PROV_REVISES),
+    ];
+    args.extend(commits.iter().map(|c| (*c).to_string()));
+    args.push("--".into());
+    let text = repo.git(&args)?;
+    Ok(text
+        .lines()
+        .filter_map(|line| {
+            let mut words = line.split_whitespace();
+            let commit = words.next()?.to_string();
+            let targets: Vec<String> = words.map(String::from).collect();
+            (!targets.is_empty()).then_some((commit, targets))
+        })
+        .collect())
+}
+
+/// The commit of each line in `git blame --porcelain` output, by line
+/// number in the blamed revision. Each line has one header: `<commit> <old
+/// line> <new line>[ <count>]`. Content lines start with a tab, and no
+/// metadata line starts with a hex word.
+fn blamed_lines(porcelain: &str) -> BTreeMap<u32, &str> {
     porcelain
         .lines()
         .filter_map(|line| {
             let mut words = line.split(' ');
             let commit = words.next()?;
-            let is_header = commit.len() >= 40
-                && commit.bytes().all(|b| b.is_ascii_hexdigit())
-                && words.next().is_some_and(|w| w.parse::<u32>().is_ok());
-            is_header.then_some(commit)
+            if commit.len() < 40 || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return None;
+            }
+            words.next()?.parse::<u32>().ok()?;
+            let final_line = words.next()?.parse::<u32>().ok()?;
+            Some((final_line, commit))
         })
         .collect()
 }
 
 /// Starts `git commit` with a template: an empty subject line, the trailer
 /// and comment lines. git refuses the commit if the message is not changed.
-fn commit(repo: &Repo, target: &CommitInfo, merged: usize, other: usize) -> Result<bool> {
+fn commit(repo: &Repo, targets: &[Target], counts: &[Counts], other: usize) -> Result<bool> {
     let comment = match repo.config_value("core.commentChar")? {
         None => Some("#".to_string()),
         // With `auto`, git picks a character that no line of the template
@@ -209,10 +344,21 @@ fn commit(repo: &Repo, target: &CommitInfo, merged: usize, other: usize) -> Resu
         Some(c) if c == "auto" => None,
         Some(c) => Some(c),
     };
-    let mut text = format!("\n\n{}: {}\n", trailer::PROV_REVISES, target.sha);
+    let mut text = String::from("\n\n");
+    for t in targets {
+        text.push_str(trailer::PROV_REVISES);
+        text.push_str(": ");
+        text.push_str(&t.commit.sha);
+        text.push('\n');
+    }
     if let Some(c) = comment {
         text.push('\n');
-        for line in msg::revise::template_comment(target.short(), &target.subject, merged, other).lines() {
+        let rows: Vec<(String, String, usize, usize)> = targets
+            .iter()
+            .zip(counts)
+            .map(|(t, n)| (t.commit.short().to_string(), t.commit.subject.clone(), n.changed, n.inserted))
+            .collect();
+        for line in msg::revise::template_comment(&rows, other).lines() {
             text.push_str(&c);
             text.push(' ');
             text.push_str(line);
@@ -239,12 +385,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn old_ranges() {
-        assert_eq!(old_range("@@ -3 +3 @@"), Some((3, 3)));
-        assert_eq!(old_range("@@ -3,2 +3 @@ fn x"), Some((3, 4)));
-        assert_eq!(old_range("@@ -3,0 +4,2 @@"), None, "only added");
-        assert_eq!(old_range("@@ -1,4 +0,0 @@"), Some((1, 4)), "deleted file");
-        assert_eq!(old_range("+@@ -1 +1 @@"), None);
+    fn hunks() {
+        assert_eq!(hunk("@@ -3 +3 @@"), Some(Hunk::Changed(3, 3)));
+        assert_eq!(hunk("@@ -3,2 +3 @@ fn x"), Some(Hunk::Changed(3, 4)));
+        assert_eq!(hunk("@@ -3,0 +4,2 @@"), Some(Hunk::Inserted { after: 3, count: 2 }));
+        assert_eq!(hunk("@@ -0,0 +1 @@"), Some(Hunk::Inserted { after: 0, count: 1 }));
+        assert_eq!(hunk("@@ -1,4 +0,0 @@"), Some(Hunk::Changed(1, 4)), "deleted file");
+        assert_eq!(hunk("+@@ -1 +1 @@"), None);
     }
 
     #[test]
@@ -254,6 +401,7 @@ mod tests {
         let text = format!(
             "{a} 3 3 2\nauthor X\nsummary 1234567890123456789012345678901234567890 9 9\n\tline\n{a} 4 4\n\tline\n{b} 7 8 1\nprevious {a} f\n\t{b} 1 1\n"
         );
-        assert_eq!(blamed_commits(&text), [a.as_str(), a.as_str(), b.as_str()]);
+        let lines: Vec<(u32, &str)> = blamed_lines(&text).into_iter().collect();
+        assert_eq!(lines, [(3, a.as_str()), (4, a.as_str()), (8, b.as_str())]);
     }
 }

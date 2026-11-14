@@ -119,7 +119,7 @@ git add src/parse.py      # your changes to the merged lines
 prov revise               # git opens the editor; write the message
 ```
 
-`prov revise` is optional. It refuses unless your staged changes change or delete at least one line that came in with the merge. Lines that you only add do not count. git opens the editor with a `Prov-Revises: <merge>` trailer, and you write the message. The default target is the latest merge of agent work on the first-parent line; `--of <merge>` names another. A merge can have several revisions. See [`prov revise`](commands.md#prov-revise).
+`prov revise` is optional. It refuses unless your staged changes change or delete at least one line that came in with the merge, or insert lines next to one. A line that an earlier revision of the merge changed still counts, so you can revise in several passes. A new file alone does not count. git opens the editor with a `Prov-Revises: <merge>` trailer, and you write the message. The default target is the latest merge of agent work on the first-parent line; `--of <merge>` names another, and you can give it more than once when a change crosses two merges. A merge can have several revisions. See [`prov revise`](commands.md#prov-revise).
 
 ### What is not permitted
 
