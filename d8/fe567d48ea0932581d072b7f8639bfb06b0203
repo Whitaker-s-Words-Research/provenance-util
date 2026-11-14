@@ -1,0 +1,23 @@
+tla/ProvIntegration.tla
+  s_4ffffd06031ed5::t_c897e0bf36a388 35-36
+PLAN.md
+  s_4ffffd06031ed5::t_c897e0bf36a388 19-20
+SPEC.md
+  s_4ffffd06031ed5::t_c897e0bf36a388 936-944
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d8fe567d48ea0932581d072b7f8639bfb06b0203",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
