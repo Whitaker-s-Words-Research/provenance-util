@@ -1,0 +1,23 @@
+README.md
+  s_4ffffd06031ed5::t_8ab2b02f377158 76-77
+docs/development.md
+  s_4ffffd06031ed5::t_8ab2b02f377158 50
+docs/getting-started.md
+  s_4ffffd06031ed5::t_8ab2b02f377158 11
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "1af16c9aecb166ff337c647dc128efb23983c5d3",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
