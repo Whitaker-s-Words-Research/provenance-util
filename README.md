@@ -73,6 +73,8 @@ When AI agents and people both commit to a repository, three questions come up l
 
 A human owns the responsibility for what goes into the main branch. The same rule applies to every branch that is not an agent branch (`agent/**`). For that reason, `prov` supports only local merges, never the merge button of a forge such as GitHub. Details: [Workflow](docs/workflow.md) and [How it works](docs/how-it-works.md).
 
+On a shared repository, protecting the human branches on your forge is strongly recommended: require signed commits, and permit only merge commits. Reason: `prov` tells a person's commit from an agent's by the author email, so an agent that uses a person's email passes. Agent commits are never signed. A squash or rebase merge on the forge drops the record. See [Checking in CI](docs/ci.md#limits).
+
 ## Quick start
 
 Requires git 2.31+, git-ai 1.7.6+ with the repository in its `allow_repositories`, Linux, and Claude Code. See [Getting started](docs/getting-started.md) for the full requirements and what each step does.

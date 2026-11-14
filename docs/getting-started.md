@@ -8,6 +8,7 @@
 - The git-ai service must run (`git-ai bg start`). Without it, a checkpoint records nothing, and `prov` refuses commits.
 - Linux. macOS is supported by design but not tested yet.
 - Claude Code as the agent. OpenCode is planned for a second phase.
+- Strongly recommended on a shared repository: branch protection for the human branches on your forge, with signed commits required and merge commits only. Reason: without signed commits, an agent that commits with a person's email passes as that person. A squash or rebase merge on the forge drops the record. See [Checking in CI](ci.md#limits).
 
 ## Installing
 
