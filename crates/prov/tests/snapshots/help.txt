@@ -11,6 +11,7 @@ Commands:
   hook         Handles an agent or git event. For the hook shims only
   session      Shows sessions, closes one, or deletes the record of one
   finish       Removes the worktree of a session. The branch stays
+  discard      Deletes an agent branch that will not be integrated: its worktree, the branch, the session records and the transcript archives
   approve      Records a human decision about the authorship of paths
   revise       Commits your staged changes to the lines of an integration, with a `Prov-Revises` trailer
   completions  Prints the line that turns on tab completion, or adds it to your shell's startup file
@@ -166,6 +167,20 @@ Options:
       --dry-run   
       --json      
   -h, --help      Print help
+
+$ prov discard --help
+Deletes an agent branch that will not be integrated: its worktree, the branch, the session records and the transcript archives
+
+Usage: prov discard [OPTIONS] <TARGET>
+
+Arguments:
+  <TARGET>  A session ID, or an agent branch
+
+Options:
+      --yes      Delete. Without it, `prov discard` only prints what it would delete
+      --dry-run  
+      --json     
+  -h, --help     Print help
 
 $ prov approve --help
 Records a human decision about the authorship of paths
