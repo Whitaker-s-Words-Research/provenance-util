@@ -1,9 +1,10 @@
 #!/bin/bash
-# The checks, inside the container. $1 is the commit to check, or `worktree`.
+# The checks, inside the container. $1 is the commit to check, or `worktree`
+# and then the commit that the worktree has checked out.
 # The git directory is mounted read-only at /src, and the checks run on a
 # fresh clone of the commit, so uncommitted changes and the host's target/
-# play no part. With `worktree`, the working tree is mounted at /tree and
-# copied without target/.
+# play no part. With `worktree`, the files of the working tree come in as
+# /tree.tar, without target/.
 set -euo pipefail
 commit=$1
 step() { printf '\n=== %s\n' "$*"; }
@@ -12,11 +13,11 @@ git config --global --add safe.directory '*'
 git clone -q --no-checkout /src /home/ci/work
 cd /home/ci/work
 if [ "$commit" = worktree ]; then
-  git -c advice.detachedHead=false checkout -q HEAD
-  # The working tree as it is, with uncommitted and untracked files, but
-  # without what git ignores (target/).
-  (cd /tree && git ls-files -z --cached --others --exclude-standard) \
-    | (cd /tree && xargs -0 tar -cf - --ignore-failed-read) | tar -xf -
+  git -c advice.detachedHead=false checkout -q "$2"
+  # The working tree as it is: the tracked files go, so that a file deleted
+  # in the worktree is deleted here too, and the tar brings the rest.
+  git ls-files -z | xargs -0 rm -f
+  tar -xf /tree.tar
   echo "checking the working tree, on top of $(git log -1 --format='%h %s')"
 else
   git -c advice.detachedHead=false checkout -q "$commit"
