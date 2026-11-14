@@ -550,3 +550,46 @@ fn the_gate_refuses_an_agent() {
     // The same merge by a human passes.
     env.try_git(&repo, ["merge", &branch("self")]).success();
 }
+
+/// How a forge brings a human branch with an integration into `main`, with
+/// no hooks and no git-ai service. A merge commit keeps every note and the
+/// record, and `prov check` passes. A rebase puts the agent commit on the
+/// first-parent line, and `prov check` reports it. A squash leaves one
+/// commit with no note: `prov check` cannot see the AI lines in it. This is
+/// the accepted limit that requires merge commits for human branches.
+#[test]
+fn forge_merge_methods_of_a_human_branch() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let base = env.git(&repo, ["rev-parse", "HEAD"]);
+    let feature = env.repos().join("feature-wt");
+    env.git(&repo, ["worktree", "add", "-q", "-b", "feature/y", feature.to_str().unwrap()]);
+    let wt = env.worktree_from(&repo, "port", "feature/y");
+    env.start_session(&wt, "sess-f").success();
+    env.agent_edit(&wt, "p.py", "ported = 1\n", "sess-f");
+    env.agent_commit(&wt, "sess-f", "Port").success();
+    env.end_session(&wt, "sess-f");
+    env.try_git(&feature, ["merge", &branch("port")]).success();
+    env.human_edit(&feature, "h.txt", "human\n");
+    env.git(&feature, ["add", "-A"]);
+    env.git(&feature, ["commit", "-q", "-m", "Human"]);
+    env.await_notes(&repo);
+    let tip = env.git(&repo, ["rev-parse", "feature/y"]);
+
+    env.remove_shims(&repo);
+    env.stop_service();
+    env.git(&repo, ["checkout", "-q", "-b", "forge-merge", "main"]);
+    env.git(&repo, ["merge", "-q", "--no-ff", "-m", "Merge pull request #1", &tip]);
+    env.git(&repo, ["checkout", "-q", "-b", "forge-squash", "main"]);
+    env.git(&repo, ["-c", "merge.ff=true", "merge", "-q", "--squash", &tip]);
+    env.git(&repo, ["commit", "-q", "-m", "Squash pull request #1"]);
+    env.git(&repo, ["checkout", "-q", "-b", "forge-rebase", "main"]);
+    env.git(&repo, ["rebase", "-q", "--onto", "forge-rebase", &base, &tip]);
+    let rebased = env.git(&repo, ["rev-parse", "HEAD"]);
+    env.git(&repo, ["checkout", "-q", "main"]);
+
+    env.prov(&repo, ["check", &format!("{base}..forge-merge")]).success();
+    env.prov(&repo, ["check", &format!("{base}..forge-squash")]).success();
+    let rebase = env.prov(&repo, ["check", &format!("{base}..{rebased}")]).failure();
+    assert!(rebase.stdout.contains("is not a human commit"), "{}", rebase.stdout);
+}

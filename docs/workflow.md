@@ -136,7 +136,7 @@ prov revise               # git opens the editor; write the message
 
 ### Feature branches
 
-The same rules apply to every human branch. You can work on `feature/x`, start agent branches from it with `--from feature/x` or by checking it out, and merge them back into it through the gate. A later merge of `feature/x` into `main` is a merge of human commits: the gate does not run again, and `prov check <base>..<tip>` checks the integrations inside it.
+The same rules apply to every human branch. You can work on `feature/x`, start agent branches from it with `--from feature/x` or by checking it out, and merge them back into it through the gate. A later merge of `feature/x` into `main` is a merge of human commits: the gate does not run again, and `prov check <base>..<tip>` checks the integrations inside it. On a forge, merge such a pull request with a merge commit only. A squash merge hides the AI lines, and a rebase merge drops the record of the integrations.
 
 ## Your own commits
 
