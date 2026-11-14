@@ -468,3 +468,22 @@ fn a_file_that_git_ai_ignores_needs_approval() {
     env.await_notes(&repo);
     env.prov(&repo, ["check", &format!("{base}..HEAD")]).success();
 }
+
+/// A session record that does not parse is reported as such, not as a
+/// missing record. The gate still refuses.
+#[test]
+fn a_record_that_does_not_parse_is_not_a_missing_record() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    archived_branch(&env, &repo, "broken", "sess-x", "x.py");
+    let common = env.git(&repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    let path = Path::new(&common).join("provenance/sessions/sess-x.json");
+    std::fs::write(&path, "{\"id\": \"sess-x\", \"state\":").unwrap();
+
+    let merge = env.try_git(&repo, ["merge", &branch("broken")]).failure();
+    assert!(merge.stderr.contains("sess-x.json does not parse"), "{}", merge.stderr);
+    assert!(!merge.stderr.contains("no record"), "{}", merge.stderr);
+    env.git(&repo, ["merge", "--abort"]);
+    let check = env.prov(&repo, ["check", &branch("broken")]).failure();
+    assert!(check.stderr.contains("sess-x.json does not parse"), "{}{}", check.stdout, check.stderr);
+}

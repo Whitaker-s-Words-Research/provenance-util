@@ -150,11 +150,11 @@ fn print(report: &Report, target: Option<&str>) {
     }
 }
 
-fn session_state(ctx: &Ctx, session: &trailer::SessionRef) -> String {
-    match ctx.store.get(&session.id).ok().flatten().filter(|r| r.agent == session.agent) {
+fn session_state(ctx: &Ctx, session: &trailer::SessionRef) -> Result<String> {
+    Ok(match gate::record_of(ctx, session)? {
         Some(r) => r.state.as_str().to_string(),
         None => msg::check::NO_RECORD.to_string(),
-    }
+    })
 }
 
 /// `prov check`: the agent branches that are not merged into `human`.
@@ -177,15 +177,15 @@ fn list_branches(ctx: &Ctx, human: &str, report: &mut Report) -> Result<()> {
             continue;
         }
         let mut analysis = gate::analyze(repo, &ctx.gitai, &config, human, branch)?;
-        analysis.drop_unknown_sessions(|s| gate::has_record(ctx, s));
+        gate::drop_sessions_without_record(ctx, &mut analysis)?;
         report.branches.push(BranchReport {
             branch: branch.to_string(),
             commits: analysis.commits.iter().map(|c| format!("{} {}", c.short(), c.subject)).collect(),
             sessions: analysis
                 .sessions
                 .iter()
-                .map(|s| SessionStatus { session: s.to_string(), state: session_state(ctx, s) })
-                .collect(),
+                .map(|s| Ok(SessionStatus { session: s.to_string(), state: session_state(ctx, s)? }))
+                .collect::<Result<_>>()?,
             doubtful_lines: analysis.doubtful_lines(),
             protected_paths: analysis
                 .items
@@ -218,7 +218,7 @@ fn check_branch(ctx: &Ctx, branch: &str, human: &str, report: &mut Report) -> Re
         crate::context::say(msg::gate::await_failed(format!("{e:#}")));
     }
     let mut analysis = gate::analyze(repo, &ctx.gitai, &config, human, branch)?;
-    analysis.drop_unknown_sessions(|s| gate::has_record(ctx, s));
+    gate::drop_sessions_without_record(ctx, &mut analysis)?;
     let (_, problems) = gate::check_sessions(ctx, &analysis)?;
     for p in problems {
         report.fail(None, p);

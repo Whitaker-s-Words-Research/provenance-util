@@ -428,7 +428,7 @@ A change to a protected path is also doubtful. The default protected paths are `
 The gate runs in `prepare-commit-msg` for each integration:
 
 1. It reads the config with `git show HEAD:.provenance.toml`. If the binary version does not satisfy `required_version`, the integration fails.
-2. It runs `git-ai await --timeout 60`. If the await fails, the gate shows a warning and continues. For each agent commit of the last two minutes that has no note yet, it waits for the note, up to 60 seconds. A commit that still has no note gives items that need an approval. Reason: in a test under load on a slow file system, `git-ai await` gave up after 6 seconds although every note was written.
+2. It runs `git-ai await --timeout 60`. If the await fails, the gate shows a warning and continues. For each agent commit of the last two minutes that has no note yet, it waits for the note. All these waits together last up to 60 seconds. A commit that still has no note gives items that need an approval. Reason: in a test under load on a slow file system, `git-ai await` gave up after 6 seconds although every note was written.
 3. It checks the sessions of the integration. See "Sessions of an integration".
 4. It lists each doubtful range, each path that a merge commit in the incoming range changed, and each changed protected path. If the merge message has no `Prov-Approved` trailer for the path of an item, the commit fails.
 

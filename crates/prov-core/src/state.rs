@@ -634,6 +634,11 @@ impl Locked<'_> {
     }
 }
 
+/// True if `id` can be the name of a record.
+pub fn is_record_name(id: &str) -> bool {
+    check_id(id).is_ok()
+}
+
 /// A session ID becomes a file name.
 fn check_id(id: &str) -> Result<()> {
     let ok = !id.is_empty()
