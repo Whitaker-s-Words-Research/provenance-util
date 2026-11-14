@@ -380,6 +380,12 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
     if !any {
         return Ok(true);
     }
+    // Only a human integrates. `git merge` runs no `pre-commit`, so the
+    // check for an agent commit there does not cover a merge.
+    if let Some(var) = prov_adapters::agent_env_marker() {
+        say(msg::gate::agent_env(var));
+        return Ok(false);
+    }
     if heads.len() > 1 {
         say(msg::gate::OCTOPUS);
         return Ok(false);

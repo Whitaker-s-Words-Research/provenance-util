@@ -83,6 +83,7 @@ Bug Fixes: clippy findings, a race in the git-ai service test, and `.gitignore` 
 - The merge gate reads the session records under the lock.
 - After an integration, post-commit and post-merge print a hint about `prov revise`.
 - The merge gate makes one item for each file that an agent commit deletes, and for each binary file or change of mode that git-ai lists no range for. Before, such changes reached the human branch with no approval. Lines that an agent deletes from a file that stays still need none.
+- The merge gate refuses an integration that an agent starts: `git merge` runs no `pre-commit`, so before, an agent session in a human worktree could merge an agent branch and write the approvals itself.
 - `prov session close` is now `prov session archive`. Reason: "close" was easy to confuse with `prov finish`.
 - Every `--dry-run` and `--json` option has a help text.
 

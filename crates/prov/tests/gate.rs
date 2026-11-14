@@ -534,3 +534,19 @@ fn binary_files_mode_changes_and_deleted_files_need_approval() {
     env.await_notes(&repo);
     env.prov(&repo, ["check", &format!("{base}..HEAD")]).success();
 }
+
+/// `git merge` runs no `pre-commit`, so the gate itself refuses an agent:
+/// an agent session in a human worktree must not integrate, with or without
+/// approvals that it wrote into the merge message.
+#[test]
+fn the_gate_refuses_an_agent() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    archived_branch(&env, &repo, "self", "sess-s", "s.py");
+    let agent = [("CLAUDECODE", "1"), ("CLAUDE_CODE_SESSION_ID", "sess-other")];
+    let merge = env.run(&repo, "git", ["merge", "--no-edit", &branch("self")], &agent, None).failure();
+    assert!(merge.stderr.contains("only a human can integrate agent work. CLAUDECODE is set"), "{}", merge.stderr);
+    env.git(&repo, ["merge", "--abort"]);
+    // The same merge by a human passes.
+    env.try_git(&repo, ["merge", &branch("self")]).success();
+}

@@ -121,3 +121,10 @@ pub fn step_approve(paths: impl Display) -> String {
 
 pub const STEP_COMMIT: &str = "  2. git commit";
 pub const TO_STOP: &str = "To stop instead: git merge --abort";
+
+pub fn agent_env(var: impl Display) -> String {
+    format!(
+        "refused: only a human can integrate agent work. {var} is set: an agent started this merge. Run `git merge \
+         --abort`, then merge from your own terminal."
+    )
+}

@@ -129,6 +129,7 @@ prov revise               # git opens the editor; write the message
 | A fast-forward onto agent commits | No hook can refuse it. `post-merge` warns and prints `git reset --keep ORIG_HEAD`. |
 | A rebase or cherry-pick of agent commits | `prov check` reports the commits in CI. |
 | An octopus merge that contains agent commits | Refused. |
+| A merge of agent commits that an agent starts, for example from its shell tool | Refused. Only a person integrates. |
 | A merge on a forge, such as a GitHub pull request | `prov check` reports it in CI. Protect your human branches on the forge so that agent branches cannot be merged there. |
 
 `prov init` also sets `pull.ff = only`, so `git pull` on a human branch fast-forwards or stops instead of making a merge commit.
