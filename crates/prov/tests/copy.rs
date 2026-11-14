@@ -439,33 +439,64 @@ fn copies_two_thousand_files() {
     assert_eq!(env.git(&repo, ["ls-files", "lib"]).lines().count(), 2000);
 }
 
-/// A source with Git LFS. The blob of an LFS file is the pointer, so
-/// `prov cp` copies the pointer, not the content: in a destination without
-/// LFS the pointer is an ordinary file, and in one that tracks the same
-/// pattern the object is missing. LFS refuses to install its hooks over the
+/// A source with Git LFS. The blob of an LFS file is a pointer; `prov cp`
+/// copies the content from the source's local LFS store, with no line
+/// authorship. With git-lfs missing, or the object missing from the store,
+/// it refuses and copies nothing. LFS refuses to install its hooks over the
 /// shims; with `--force` and `prov init` again, both run. A commit with an
 /// LFS file once waited 60 seconds for the detached copy check, which held a
-/// pipe of `git-lfs filter-process`; the check then found no note.
+/// pipe of `git-lfs filter-process`.
 #[test]
 fn copies_from_a_source_with_git_lfs() {
     let Some(env) = Env::new() else { return };
+    if !env.try_git(env.home(), ["lfs", "version"]).ok {
+        eprintln!("SKIPPED: git-lfs is not installed");
+        return;
+    }
+    let content = "the real content\nof a large file\n";
     let src = env.plain_repo("lfs");
     env.git(&src, ["lfs", "install", "--local"]);
     env.git(&src, ["lfs", "track", "*.bin"]);
-    std::fs::write(src.join("big.bin"), b"\x00\x01 the real content\n").unwrap();
+    std::fs::write(src.join("big.bin"), content).unwrap();
+    std::fs::write(src.join("gone.bin"), "an object that the store lost\n").unwrap();
     env.git(&src, ["add", "-A"]);
-    env.git(&src, ["commit", "-q", "-m", "LFS file"]);
+    env.git(&src, ["commit", "-q", "-m", "LFS files"]);
     env.await_notes(&src);
-    let pointer = env.git(&src, ["cat-file", "blob", "HEAD:big.bin"]);
-    assert!(pointer.starts_with("version https://git-lfs.github.com/spec/v1"), "{pointer}");
+    assert!(env.git(&src, ["cat-file", "blob", "HEAD:big.bin"]).starts_with("version https://git-lfs.github.com/spec/v1"));
+    // The object of gone.bin is not in the local store any more.
+    let oid = env.git(&src, ["cat-file", "blob", "HEAD:gone.bin"]).lines().find_map(|l| l.strip_prefix("oid sha256:").map(String::from)).unwrap();
+    std::fs::remove_file(src.join(".git/lfs/objects").join(&oid[..2]).join(&oid[2..4]).join(&oid)).unwrap();
     let from = src.to_str().unwrap();
 
-    // A destination without LFS: the pointer text is copied as a file.
+    // A destination without LFS gets the content as an ordinary file.
     let plain = dest_repo(&env, "plain");
-    env.prov(&plain, ["cp", "--from", from, "big.bin", "big.bin", "--missing", "human"]).success();
-    assert_eq!(std::fs::read_to_string(plain.join("big.bin")).unwrap().trim_end(), pointer);
+    let out = env.prov(&plain, ["cp", "--from", from, "big.bin", "big.bin"]).success();
+    assert!(out.stdout.contains("big.bin  binary"), "{}", out.stdout);
+    assert_eq!(std::fs::read_to_string(plain.join("big.bin")).unwrap(), content);
+    env.git(&plain, ["commit", "-q", "-m", "Copy"]);
+    assert_eq!(env.git(&plain, ["cat-file", "blob", "HEAD:big.bin"]) + "\n", content);
+    assert_eq!(wait_checked(&plain), [] as [Value; 0], "the check agrees");
 
-    // A destination that tracks the same pattern.
+    // An object that is not in the source's store: refused, nothing copied.
+    let missing = env.prov(&plain, ["cp", "--from", from, "gone.bin", "gone.bin"]).failure();
+    assert!(missing.stderr.contains("gone.bin is a Git LFS pointer, and its content is not in the local LFS store"), "{}", missing.stderr);
+    assert!(!plain.join("gone.bin").exists());
+
+    // No git-lfs: refused, nothing copied. (Only where git-lfs is not in /usr/bin or /bin.)
+    if !Path::new("/usr/bin/git-lfs").exists() && !Path::new("/bin/git-lfs").exists() {
+        let bin = env.home().join("no-lfs-bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for tool in ["prov", "git-ai"] {
+            let path = env.run(env.home(), "sh", ["-c", &format!("command -v {tool}")], &[], None).stdout.trim().to_string();
+            std::os::unix::fs::symlink(path, bin.join(tool)).unwrap();
+        }
+        let path = format!("{}:/usr/bin:/bin", bin.display());
+        let none = env.run(&plain, "prov", ["cp", "--from", from, "big.bin", "again.bin"], &[("PATH", path.as_str())], None).failure();
+        assert!(none.stderr.contains("git-lfs is not installed"), "{}", none.stderr);
+        assert!(!plain.join("again.bin").exists());
+    }
+
+    // A destination that tracks the same pattern stores the content in its own LFS store.
     let tracked = dest_repo(&env, "tracked");
     let refused = env.try_git(&tracked, ["lfs", "install", "--local"]);
     assert!(!refused.ok && refused.stderr.contains("Hook already exists"), "{}", refused.stderr);
@@ -480,13 +511,12 @@ fn copies_from_a_source_with_git_lfs() {
     env.git(&tracked, ["lfs", "track", "*.bin"]);
     env.git(&tracked, ["add", ".gitattributes"]);
     env.git(&tracked, ["commit", "-q", "-m", "Track"]);
-    env.prov(&tracked, ["cp", "--from", from, "big.bin", "big.bin", "--missing", "human"]).success();
+    env.prov(&tracked, ["cp", "--from", from, "big.bin", "big.bin"]).success();
     let begin = Instant::now();
     env.git(&tracked, ["commit", "-q", "-m", "Copy"]);
     assert!(begin.elapsed() < Duration::from_secs(10), "the commit waited {:?}", begin.elapsed());
+    assert!(env.git(&tracked, ["cat-file", "blob", "HEAD:big.bin"]).starts_with("version https://git-lfs.github.com/spec/v1"));
+    assert_eq!(std::fs::read_to_string(tracked.join("big.bin")).unwrap(), content);
+    assert!(tracked.join(".git/lfs/objects").is_dir());
     assert_eq!(wait_checked(&tracked), [] as [Value; 0], "the check agrees");
-    // The object is not in the destination: a clone has the pointer only.
-    let fresh = env.repos().join("tracked-clone");
-    env.git(env.repos(), ["clone", "-q", tracked.to_str().unwrap(), fresh.to_str().unwrap()]);
-    assert_eq!(std::fs::read_to_string(fresh.join("big.bin")).unwrap().trim_end(), pointer);
 }

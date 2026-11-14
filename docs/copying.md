@@ -13,6 +13,7 @@ prov cp --from ../other-repo --rev v1.2 a.py b.py lib/    # several files into a
 - With one source file, `<dest>` is the new path, or a directory if it ends with `/` or exists. With one source directory, `<dest>` is the new directory. With several sources, `<dest>` is a directory.
 - It refuses if a destination file exists.
 - It keeps the executable bit. Binary files and symbolic links are copied as they are, with no line authorship.
+- A file that the source stores with Git LFS is copied with its content, not its pointer, and with no line authorship, like a binary file. This needs git-lfs, and the object in the source's local LFS store (`git lfs pull` there first). Without either, `prov cp` stops with an error and copies nothing. git-lfs is optional: a source without LFS files does not need it.
 - Only a person can run it.
 
 ## The plan

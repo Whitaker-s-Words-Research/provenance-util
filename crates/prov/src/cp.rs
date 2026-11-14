@@ -154,13 +154,89 @@ fn is_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8000).any(|b| *b == 0)
 }
 
-/// Reads one file from the source commit, never from a working tree.
-fn load(src: &Repo, commit: &str, entry: &Entry) -> Result<Vec<u8>> {
+/// One file of the source commit: its content, and whether it came through
+/// Git LFS.
+struct Loaded {
+    bytes: Vec<u8>,
+    lfs: bool,
+}
+
+/// Reads one file from the source commit, never from a working tree. The
+/// blob of a Git LFS file is a pointer; the content comes from the source's
+/// local LFS store, through `git lfs smudge`.
+fn load(src: &Repo, commit: &str, entry: &Entry) -> Result<Loaded> {
     if entry.kind != "blob" {
         bail!(msg::cp::submodule(&entry.path));
     }
-    git_bytes(src, &["cat-file", "blob", &entry.blob])
-        .with_context(|| msg::cp::cannot_read_source(&entry.path, commit, src.toplevel.display()))
+    let bytes = git_bytes(src, &["cat-file", "blob", &entry.blob])
+        .with_context(|| msg::cp::cannot_read_source(&entry.path, commit, src.toplevel.display()))?;
+    match lfs_pointer(&bytes) {
+        None => Ok(Loaded { bytes, lfs: false }),
+        Some((oid, size)) => Ok(Loaded { bytes: lfs_content(src, &entry.path, &bytes, &oid, size)?, lfs: true }),
+    }
+}
+
+/// The object ID and the size of a Git LFS pointer file, if `bytes` is one.
+/// A pointer is a small text file that starts with the version line.
+fn lfs_pointer(bytes: &[u8]) -> Option<(String, usize)> {
+    const VERSION: &[u8] = b"version https://git-lfs.github.com/spec/v1\n";
+    if bytes.len() > 1024 || !bytes.starts_with(VERSION) {
+        return None;
+    }
+    let text = std::str::from_utf8(bytes).ok()?;
+    let mut oid = None;
+    let mut size = None;
+    for line in text.lines() {
+        if let Some(hex) = line.strip_prefix("oid sha256:") {
+            oid = Some(hex.to_string()).filter(|h| h.len() == 64 && h.bytes().all(|b| b.is_ascii_hexdigit()));
+        } else if let Some(n) = line.strip_prefix("size ") {
+            size = n.parse().ok();
+        }
+    }
+    Some((oid?, size?))
+}
+
+/// The content of an LFS object, from the source's local store only: no
+/// download. Fails if git-lfs is not installed or the object is not there.
+fn lfs_content(src: &Repo, path: &str, pointer: &[u8], oid: &str, size: usize) -> Result<Vec<u8>> {
+    use std::io::Write;
+    let installed = Command::new("git")
+        .args(["lfs", "version"])
+        .current_dir(&src.toplevel)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success());
+    if !installed {
+        bail!(msg::cp::lfs_not_installed(path));
+    }
+    let store = match src.config_value("lfs.storage")? {
+        Some(dir) if Path::new(&dir).is_absolute() => PathBuf::from(dir),
+        Some(dir) => src.common_dir.join(dir),
+        None => src.common_dir.join("lfs"),
+    };
+    let object = store.join("objects").join(&oid[..2]).join(&oid[2..4]).join(oid);
+    if !object.is_file() {
+        bail!(msg::cp::lfs_object_missing(path, src.toplevel.display()));
+    }
+    let mut child = Command::new("git")
+        .args(["lfs", "smudge", "--", path])
+        .current_dir(&src.toplevel)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .with_context(|| msg::cp::lfs_failed(path, ""))?;
+    let mut stdin = child.stdin.take().with_context(|| msg::cp::lfs_failed(path, ""))?;
+    let input = pointer.to_vec();
+    let writer = std::thread::spawn(move || stdin.write_all(&input));
+    let out = child.wait_with_output().with_context(|| msg::cp::lfs_failed(path, ""))?;
+    let _ = writer.join();
+    if !out.status.success() || out.stdout.len() != size || lfs_pointer(&out.stdout).is_some() {
+        bail!(msg::cp::lfs_failed(path, String::from_utf8_lossy(&out.stderr).trim()));
+    }
+    Ok(out.stdout)
 }
 
 /// The path of `dest` relative to the root of the worktree. Empty for the root.
@@ -299,9 +375,11 @@ fn build(ctx: &Ctx, src: &Repo, commit: &str, args: &Args, id: &str, notes: &mut
 
     let mut items = Vec::new();
     for (entry, to) in found {
-        let bytes = load(src, commit, &entry)?;
+        let Loaded { bytes, lfs } = load(src, commit, &entry)?;
         let symlink = entry.mode == MODE_LINK;
-        let binary = !symlink && is_binary(&bytes);
+        // A file from Git LFS has no line authorship: git-ai's lines of it
+        // are the lines of the pointer.
+        let binary = !symlink && (lfs || is_binary(&bytes));
         let mut file = PlanFile { path: entry.path.clone(), dest: to, binary, symlink, ranges: Vec::new() };
         if file.is_text() {
             let count = bytes.split_inclusive(|b| *b == b'\n').count();
@@ -332,9 +410,9 @@ fn load_plan(src: &Repo, plan: &Plan) -> Result<Vec<Item>> {
             .into_iter()
             .find(|e| e.path == file.path && e.kind != "tree")
             .with_context(|| msg::cp::plan_file_missing(&plan.source.commit, &file.path))?;
-        let bytes = load(src, &plan.source.commit, &entry)?;
+        let Loaded { bytes, lfs } = load(src, &plan.source.commit, &entry)?;
         let symlink = entry.mode == MODE_LINK;
-        let binary = !symlink && is_binary(&bytes);
+        let binary = !symlink && (lfs || is_binary(&bytes));
         if file.symlink != symlink || file.binary != binary {
             bail!(msg::cp::kind_mismatch(&file.path, kind(symlink, binary), kind(file.symlink, file.binary)));
         }

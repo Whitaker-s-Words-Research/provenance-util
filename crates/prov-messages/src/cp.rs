@@ -13,6 +13,24 @@ pub fn submodule(path: impl Display) -> String {
     format!("{path} is a submodule in the source. `prov cp` copies files only.")
 }
 
+pub fn lfs_not_installed(path: impl Display) -> String {
+    format!(
+        "{path} is a Git LFS pointer in the source, and git-lfs is not installed. Install git-lfs to copy its \
+         content. Nothing was copied."
+    )
+}
+
+pub fn lfs_object_missing(path: impl Display, source: impl Display) -> String {
+    format!(
+        "{path} is a Git LFS pointer, and its content is not in the local LFS store of {source}. Fetch it there \
+         first: git lfs fetch, or git lfs pull. Nothing was copied."
+    )
+}
+
+pub fn lfs_failed(path: impl Display, error: impl Display) -> String {
+    format!("cannot read the Git LFS content of {path}: {error}. Nothing was copied.")
+}
+
 pub fn cannot_read_source(path: impl Display, commit: impl Display, source: impl Display) -> String {
     format!("cannot read {path} at {commit} in {source}")
 }
