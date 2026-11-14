@@ -281,7 +281,6 @@ impl Repo {
         Ok(text.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())
     }
 
-    /// The paths that differ between the merge base of `base` and `tip`, and `tip`.
     /// The paths of text files to which a commit adds lines, by
     /// `git diff-tree --numstat`. Not for a merge commit.
     pub fn paths_with_added_lines(&self, commit: &str) -> Result<Vec<String>> {
@@ -299,6 +298,7 @@ impl Repo {
         Ok(out)
     }
 
+    /// The paths that differ between the merge base of `base` and `tip`, and `tip`.
     pub fn changed_paths(&self, base: &str, tip: &str) -> Result<Vec<String>> {
         let text = self.git(["diff", "--name-only", "--no-renames", "-z", &format!("{base}...{tip}")])?;
         Ok(text.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())

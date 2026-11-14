@@ -47,8 +47,10 @@ enum Cmd {
         /// Replace a file or a hook that has other content.
         #[arg(long)]
         force: bool,
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -57,6 +59,7 @@ enum Cmd {
         /// Also run `git-ai debug`.
         #[arg(long)]
         deep: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -70,6 +73,7 @@ enum Cmd {
         /// branch that is checked out.
         #[arg(long, value_name = "BRANCH", add = ArgValueCandidates::new(complete::branches))]
         into: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -101,8 +105,10 @@ enum Cmd {
         /// Passed to `git worktree remove`: remove a worktree with changes that are not committed.
         #[arg(long)]
         force: bool,
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -114,8 +120,10 @@ enum Cmd {
         /// Delete. Without it, `prov discard` only prints what it would delete.
         #[arg(long)]
         yes: bool,
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -131,6 +139,7 @@ enum Cmd {
         #[arg(long, value_name = "MERGE")]
         of: Option<String>,
         /// Show the target and the counts, and do not commit.
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
     },
@@ -142,8 +151,10 @@ enum Cmd {
         /// Add the line to the startup file, if it is not there yet.
         #[arg(long)]
         install: bool,
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -192,8 +203,10 @@ struct StartArgs {
     /// Open the worktree of that session and start the agent with its resume option.
     #[arg(long, value_name = "SESSION", add = ArgValueCandidates::new(complete::sessions))]
     resume: Option<String>,
+    /// Show what the command would do, and change nothing.
     #[arg(long)]
     dry_run: bool,
+    /// Print the result as JSON.
     #[arg(long)]
     json: bool,
     /// Arguments for the agent, after `--`.
@@ -205,6 +218,7 @@ struct StartArgs {
 enum SessionCmd {
     /// Lists the sessions that have a record.
     List {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -212,6 +226,7 @@ enum SessionCmd {
     Show {
         #[arg(add = ArgValueCandidates::new(complete::sessions))]
         session: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -219,8 +234,10 @@ enum SessionCmd {
     Close {
         #[arg(add = ArgValueCandidates::new(complete::sessions))]
         session: String,
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -228,8 +245,10 @@ enum SessionCmd {
     Drop {
         #[arg(add = ArgValueCandidates::new(complete::sessions))]
         session: String,
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -254,8 +273,10 @@ struct ApproveArgs {
     /// With --ai: the model. Default: `unknown`.
     #[arg(long)]
     model: Option<String>,
+    /// Show what the command would do, and change nothing.
     #[arg(long)]
     dry_run: bool,
+    /// Print the result as JSON.
     #[arg(long)]
     json: bool,
 }
@@ -292,8 +313,10 @@ struct CpArgs {
     /// Apply a plan file.
     #[arg(long, value_name = "FILE")]
     apply: Option<PathBuf>,
+    /// Show what the command would do, and change nothing.
     #[arg(long)]
     dry_run: bool,
+    /// Print the result as JSON.
     #[arg(long)]
     json: bool,
 }

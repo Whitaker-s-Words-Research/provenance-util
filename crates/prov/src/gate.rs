@@ -411,9 +411,7 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
             for item in &open {
                 say(msg::gate::item(item.describe()));
             }
-            let mut paths: Vec<&str> = open.iter().map(|i| i.path.as_str()).collect();
-            paths.dedup();
-            let paths: BTreeSet<&str> = paths.into_iter().collect();
+            let paths: BTreeSet<&str> = open.iter().map(|i| i.path.as_str()).collect();
             say(msg::gate::NEXT_STEPS);
             say(msg::gate::step_approve(paths.iter().map(|p| shell_quote(p)).collect::<Vec<_>>().join(" ")));
             say(msg::gate::STEP_COMMIT);
