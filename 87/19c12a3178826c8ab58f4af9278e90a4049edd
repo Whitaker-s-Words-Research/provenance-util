@@ -1,0 +1,24 @@
+crates/prov-messages/src/discard.rs
+  s_4ffffd06031ed5::t_ed98d7ce054132 1-126
+crates/prov-messages/src/lib.rs
+  s_4ffffd06031ed5::t_ed98d7ce054132 41
+crates/prov/src/discard.rs
+  s_4ffffd06031ed5::t_ecabf57b531295 13
+  s_4ffffd06031ed5::t_ed98d7ce054132 72,75,90,92,97,112,115,131,142,185,188,213,225,228,236,240,246,289,303,315,345,348,356,373,377,379,382,386-387,391,393,395,398,400
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "8719c12a3178826c8ab58f4af9278e90a4049edd",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
