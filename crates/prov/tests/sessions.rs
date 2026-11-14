@@ -481,3 +481,28 @@ fn an_archive_process_killed_during_its_write() {
     eprintln!("one step: {full:?}; killed before the end: {cut} of 5; temporary files left: {leftovers:?}");
     assert!(cut >= 3, "the kills came too late to test anything");
 }
+
+/// R-SWEEP-2 when a contention ends: the `SessionEnd` of one of two sessions
+/// makes the other one the owner at once. Its later work stays its own.
+#[test]
+fn the_end_of_a_contention_restores_the_owner() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let wt = env.worktree(&repo, "contention-end");
+    let owner = || -> Option<String> {
+        let dir = repo.join(".git/provenance/worktrees");
+        std::fs::read_dir(dir).unwrap().flatten().find_map(|e| {
+            let v: serde_json::Value = serde_json::from_slice(&std::fs::read(e.path()).unwrap()).unwrap();
+            (v["worktree"].as_str() == Some(wt.to_str().unwrap())).then(|| v["owner"].as_str().map(String::from)).flatten()
+        })
+    };
+    env.start_session(&wt, "sess-a").success();
+    env.start_session(&wt, "sess-b").success();
+    assert_eq!(owner(), None, "contended");
+    env.end_session(&wt, "sess-b");
+    assert_eq!(owner().as_deref(), Some("sess-a"), "the end of b restores a");
+    env.agent_edit(&wt, "a.txt", "A\n", "sess-a");
+    env.hook(&wt, "Stop", "sess-a").success();
+    env.agent_commit(&wt, "sess-a", "Add a").success();
+    assert_eq!(authors_of(&env, &wt, "HEAD", "a.txt"), vec![("claude".to_string(), "sess-a".to_string())]);
+}

@@ -44,7 +44,7 @@ prov session list
 prov session archive <id>
 ```
 
-Changes from the contended time become doubtful lines at the gate.
+Changes that `prov` cannot give to one session, because they were made while the worktree was contended, become doubtful lines at the gate. A change that a session's own git-ai hook recorded keeps that session.
 
 ### The merge fails: a session is not Archived
 

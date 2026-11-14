@@ -91,6 +91,7 @@ Bug Fixes: clippy findings, a race in the git-ai service test, and `.gitignore` 
 - `git config prov.worktreesDir <dir>` sets the directory of the agent worktrees for one clone.
 - `prov init --force` always writes `.provenance.toml` again from the defaults. Before, it kept a file that parsed unless `--agent` named other agents.
 - `prov doctor` prints notes as `note:` lines, and the note of a `moved` or `ignored` copy ends with the command that deletes its record.
+- When one of two sessions in a worktree ends, the other becomes the owner at once, and a taint first waits up to 5 seconds for git-ai to apply pending checkpoints. Before, the remaining session's next event tainted its own work.
 - `prov session close` is now `prov session archive`. Reason: "close" was easy to confuse with `prov finish`.
 - Every `--dry-run` and `--json` option has a help text.
 
