@@ -274,7 +274,7 @@ The hooks directory must be outside every worktree. **Reason**: during a merge, 
 |---|---|
 | `pre-commit` | Refuse a commit by an agent on a branch that does not match `agent/**`. Do the service check for every commit. In an agent worktree: refuse if the worktree is contended; do the sweep if the worktree has one occupant. Do the copy guard for each copied file. |
 | `prepare-commit-msg` | For an integration: run the merge gate, then add the integration trailers. For a commit in an agent worktree with one occupant: add `Prov-Session` for the occupant. For all commits: add the `Prov-Approved` trailers of `--human` and `--ai` approvals, and the `Copied-From` trailers. |
-| `post-commit`, `post-merge` | After an integration: delete the session records that R-INT-2 permits. After a commit with copied files: start the deferred copy check. After a fast-forward of a human branch: see "Squash, fast-forward, rebase and cherry-pick". |
+| `post-commit`, `post-merge` | After an integration: delete the session records that R-INT-2 permits, and print the hint for `prov revise`. After a commit with copied files: start the deferred copy check. After a fast-forward of a human branch: see "Squash, fast-forward, rebase and cherry-pick". |
 
 **[R-SWEEP-1]** In an agent worktree with one occupant, the sweep makes a checkpoint of the changes for that occupant, except tainted files (R-SWEEP-2).
 
@@ -408,6 +408,7 @@ Each trailer value is one line. `prov` refuses a value with a line break.
 | `Prov-Approved` | the commit that the approval is for | `<path> <choice>`. The choice is the last word: `ack`, `human` or `ai`. The path can contain spaces. | one for each approval |
 | `Prov-Model` | a group of an integration, after `Prov-Transcript-SHA256` | the model of the session from its record, the latest one if it changed. Reason: the git-ai note has the model `unknown` when every edit went through the agent's own git-ai hooks ("Agent model"). | if the record has a model |
 | `Prov-Version` | each integration | `<version>+<build SHA>` | yes |
+| `Prov-Revises` | a commit made by `prov revise` | the full commit ID of the integration that it revises | yes, on such a commit |
 | `Copied-From` | a commit with copied files | `<source>@<commit>:<path>`, followed by ` => <dest>` if the path in this repository is not `<path>`. `<source>` is the remote URL of the source repository, without a user name or password, or its absolute path if it has no remote. | one for each copied file |
 
 ## The merge gate
@@ -497,6 +498,40 @@ The CI job must provide these:
 `prov check` does not need the git-ai service. `git-ai diff`, `git-ai blame` and `git-ai stats` read notes without it.
 
 **Limit**: `prov check` cannot find a squash that has no note, for example a squash that a forge made. Such a commit looks like a human commit. The branch protection in "Non-goals" prevents it.
+
+## Revising an integration: `prov revise`
+
+```text
+prov revise [--of <merge>] [--dry-run]
+```
+
+A human cannot edit an agent branch. The place to correct agent work is a human branch, after the integration. `prov revise` commits the human's staged changes to the lines of an integration and records which integration they revise. It is optional. Reason: the merge is the human's approval, and `prov` does not copy a pull request (owner decision, 2026-11-13). `prov revise` adds a record that a human changed agent work. It adds no gate.
+
+- `prov` has no rule about the branch for a revision. A team can revise on `main` or on a branch of its own.
+- After an integration, `post-commit` prints one line. It names the merge and suggests `prov revise`. The hook runs no extra git process for it.
+- A merge can have several revisions.
+
+### What `prov revise` does
+
+1. It refuses in every agent worktree, and when an agent environment variable is set. Reason: a revision is a human's change, like an approval.
+2. It finds the target. With `--of <merge>`, the target is that commit. It refuses if the commit is not an integration or is not an ancestor of `HEAD`. Without `--of`, the target is the first commit on the first-parent line from `HEAD` that is a merge with a `Prov-Session` trailer. It refuses if there is none. It prints the number of commits between the target and `HEAD`, as information.
+3. It refuses if nothing is staged, and if a file with staged changes also has changes that are not staged. Reason: git-ai records the file in the working tree, not the staged content.
+4. **[R-REV-1]** It reads the staged diff against `HEAD`. A line counts when the diff changes or deletes it. A line that the diff only adds does not count. For each file with counted lines, one `git blame HEAD -L <range> ... -- <path>` call gives the commit of each counted line. A counted line is a merged line when its commit is the target or a commit in `<target>^1..<target>^2`. The commit refuses if no counted line is a merged line. Reason: a revision must change the work that it names (owner decision, 2026-11-13). This also refuses an empty revision, and a revision that only adds lines, for example a new test.
+5. It prints the number of merged lines that the revision changes or deletes, and the number of other changed lines. Other changes in the same commit are permitted. With `--dry-run`, it stops here.
+6. It starts `git commit --template <file>`, and git opens the editor. The template has an empty subject line, the trailer `Prov-Revises: <target>`, and comment lines with the target's short ID and subject and the counts of step 5. The human writes the message. git refuses the commit if the message is not changed. With `core.commentChar = auto`, the template has no comment lines. Reason: git would then choose a comment character that no template line starts with, and keep those lines. Reason: the human describes the revision; `prov` adds no words to it. The git hooks run as for every commit. `prov revise` makes no git-ai checkpoint. Reason: git-ai gives the lines of a human commit with no checkpoint to the committer as `known_human`. A `known_human` checkpoint gives the same note.
+
+Accepted limit: the human can delete the trailer in the editor. The commit is then an ordinary human commit.
+
+Consequences of R-REV-1:
+
+- A second revision of the same merge counts only lines that still come from the merge. A line that an earlier revision changed has that human commit in blame. It is not a merged line.
+- A line that a conflict resolution wrote is blamed to the merge. It is a merged line. A line that the resolution kept from the human branch is not.
+- A binary file has no lines in the diff. A change to it is never a merged line.
+- Accepted limit: an agent branch can merge a human branch that is not in the target branch, for example a feature branch. The commits of that branch are then in `<target>^1..<target>^2`, and their lines count as merged lines. This agrees with "What counts as an integration": every commit in the incoming range of an integration is an agent commit.
+
+### A revision on a human branch
+
+A revision commit is a human commit. `prov check` checks it as "any other commit" and needs no change for it. `prov check` does not read `Prov-Revises`. Reason: the trailer is a record, not a control. A person can write it by hand, and a revision is optional.
 
 ## Copying files: `prov cp`
 
@@ -625,6 +660,7 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 | `prov discard <session or branch> [--yes]` | Human | See "Discarding". |
 | `prov completions [--shell <bash\|zsh\|fish>] [--install]` | Human | Prints the line that turns on tab completion (`source <(COMPLETE=bash prov)`). `--install` appends it to the shell's startup file (`~/.bashrc`, `$ZDOTDIR/.zshrc`, `$XDG_CONFIG_HOME/fish/config.fish`) unless a line with `COMPLETE=<shell> prov` is there. The default shell is `$SHELL`. `prov init` never changes the startup file, because it belongs to the user, not to the clone; it prints a hint when the line is missing (owner decision, 2026-11-12). Completion candidates come from the repository of the current directory: branches and session IDs. |
 | `prov approve <path>...` | Human | See "Approval". |
+| `prov revise [--of <merge>] [--dry-run]` | Human | See "Revising an integration". |
 | `prov cp --from <repo> [--rev <rev>] <path>... <dest>` | Human | See "Copying files". |
 | `prov trace export [<range>]` | Human | See "Trace export". |
 
@@ -871,6 +907,21 @@ These results are the basis of rules in this specification.
 | A human line, then one character of it changed through an agent edit, in an agent commit | `git-ai diff --json`: the whole line is one AI addition (and one deletion). `git-ai blame --json` gives the line one session. `git-ai stats --json`: `ai_additions` 1, no other category. | README: attribution is per line, with no "mixed" category |
 | A binary file with an `ai_agent` checkpoint, in an agent commit | `git-ai diff --json` lists no range for the file | README: binary files are not attributed |
 | The full test suite in a Podman container (Ubuntu 26.04, local disk), many tests at once | `git-ai checkpoint` returns when the service has received the checkpoint, not when it has applied it. In 2 of 3 runs, the sweep's checkpoint in `pre-commit` was applied about 50 ms after the commit was recorded, and the commit's lines went to a session that git-ai invented. With `git-ai await` at the end of `pre-commit`: 0 of 6 runs. A checkpoint captures the file's content when it is received: two AI stages of one file, with no wait between them, were attributed correctly. | `pre-commit` and `prov approve` wait for git-ai after their checkpoints |
+
+**git 2.53 and git-ai 1.7.6, premises of `prov revise` (proposed), tested 2026-11-13**
+
+The setup: a human branch and an agent branch with `ai_agent` checkpoints. The agent branch merged the human branch midway (a clean merge). The integration `M` had one conflict, which the human resolved with new text.
+
+| Test | Result | Rule |
+|---|---|---|
+| `git commit --template <file>`, the template with an empty first line, a `Prov-Revises` trailer and comment lines; editor that changes nothing | "Aborting commit; you did not edit the message." Exit code 1. With a subject written: the commit has the subject and the trailer, and no comment lines. | `prov revise` step 6 |
+| `git blame HEAD -L 3,4 -L 7,8 --porcelain -- <file>` | One call blames all the ranges. Ranges out of order and ranges that overlap are accepted, and each line is listed once. | One blame call for each file |
+| `git blame` of the merged file at `M` | Lines from a clean merge: the agent commit that wrote them. New text in a conflict resolution: `M`. A line that the resolution kept from one side: the commit of that line. | Merged lines are lines blamed to `M^1..M^2` or to `M` |
+| `git log M^1..M^2`, where the agent branch had merged the human branch midway | The agent commits and the agent's merge commit. Not the human commit that the agent branch merged. Its line was blamed to that human commit. | The same |
+| A human commit after `M`, no checkpoint: one AI line changed, one AI line and one conflict line deleted | `git-ai diff --json`: the changed line is one addition with the committer's `human_id`. Deletions have no author. No session. | No checkpoint before the revise commit |
+| The same, with an `ai_agent` checkpoint on another file that is not staged | The same result. The unstaged AI file does not change the note. | The same |
+| The same, with a `known_human` checkpoint on the file first | The same result as with no checkpoint | The same |
+| `prov check <base>..HEAD` after an integration and a human commit that changes and deletes merged AI lines, with a `Prov-Review-Of: <M>` trailer, the name proposed then (temporary test, removed). `prov check` does not read this trailer, so its name does not change the result. | `2 commit(s) checked, 0 failure(s)` | `prov check` accepts a revise commit with no change |
 
 **git 2.53, tested 2026-11-11**
 

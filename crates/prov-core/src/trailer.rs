@@ -13,6 +13,8 @@ pub const PROV_VERSION: &str = "Prov-Version";
 /// git-ai note can lack it (`unknown`); see "Agent model" in the spec.
 pub const PROV_MODEL: &str = "Prov-Model";
 pub const COPIED_FROM: &str = "Copied-From";
+/// On a commit of `prov revise`: the integration that it revises.
+pub const PROV_REVISES: &str = "Prov-Revises";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Trailer {

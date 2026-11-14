@@ -9,6 +9,7 @@ Every command that changes something accepts `--dry-run`. Every command that sho
 | [`prov start`](#prov-start) | A person | Creates a worktree on a new agent branch and starts the agent. |
 | [`prov check`](#prov-check) | A person, CI | Applies the rules of the merge gate without a merge. |
 | [`prov approve`](#prov-approve) | A person | Records a decision about the authorship of files. |
+| [`prov revise`](#prov-revise) | A person | Commits your changes to the lines of a merge of agent work. |
 | [`prov session`](#prov-session) | A person | Lists, shows, closes or drops sessions. |
 | [`prov finish`](#prov-finish) | A person | Removes an agent worktree and keeps the branch. |
 | [`prov discard`](#prov-discard) | A person | Deletes an agent branch that will not be merged, with its worktree, records and archives. |
@@ -85,6 +86,22 @@ prov approve (--merge | --human | --ai [--agent <tool>] [--model <model>]) <path
 | `--ai` | Before your own commit | Marks your changes to the file as AI-written. `--agent` and `--model` default to `unknown`. |
 
 Asks for a typed `yes` at a terminal; with no terminal it refuses. `--dry-run` shows the items without a prompt. Refuses in an agent worktree and when an agent environment variable is set. See [Workflow](workflow.md#the-merge-gate).
+
+## `prov revise`
+
+```text
+prov revise [--of <merge>] [--dry-run]
+```
+
+Commits your staged changes to the lines of an integration, with a `Prov-Revises: <merge>` trailer. git opens the editor with the trailer and comment lines; you write the message. An unchanged message stops the commit.
+
+- The target is the latest merge with a `Prov-Session` trailer on the first-parent line from `HEAD`. `--of <merge>` names another; it must be such a merge and an ancestor of `HEAD`.
+- Refuses unless the staged changes change or delete at least one line that came in with the target: a line that `git blame` gives to the merge or to a commit that it merged. Lines that are only added do not count. A line that an earlier revision changed no longer counts.
+- Refuses when nothing is staged, and when a staged file also has changes that are not staged.
+- Prints how many merged lines and other lines the changes change or delete. `--dry-run` stops there.
+- Refuses in an agent worktree and when an agent environment variable is set.
+
+`prov check` treats the commit as any other human commit. See [Workflow](workflow.md#revising-the-merged-work).
 
 ## `prov session`
 

@@ -9,8 +9,8 @@
 //! PROV_UPDATE_SNAPSHOTS=1 ci/dev.sh test -p prov --test help
 //! ```
 //!
-//! In the container, the file is written in the container only. On the host:
-//! `PROV_UPDATE_SNAPSHOTS=1 cargo test -p prov --test help`.
+//! `ci/dev.sh` copies the file from the container back to the checkout. On
+//! the host: `PROV_UPDATE_SNAPSHOTS=1 cargo test -p prov --test help`.
 
 // A panic in a test is a failed test.
 #![allow(clippy::unwrap_used, clippy::expect_used)]

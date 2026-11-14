@@ -8,6 +8,7 @@
 | Which session made each commit | A `Prov-Session` trailer on the commit |
 | Where the transcript is | An archive on your disk, with its hash in the merge commit |
 | Who approved it | The merge commit that a person made, with `Prov-Approved` trailers |
+| Who corrected merged agent work | A `Prov-Revises` trailer on the human commit, and `git blame` |
 | Where a copied file came from | A `Copied-From` trailer on the commit that added it |
 
 ## A merge commit
@@ -37,6 +38,7 @@ Each session has one group, in start order, starting with `Prov-Session`. Each a
 | `Prov-Model` | each group, if known | the session's latest model. git-ai's note can say `unknown`; this trailer covers it. |
 | `Prov-Approved` | the commit that the approval is for | `<path> <choice>`, where the choice is `ack`, `human` or `ai` |
 | `Prov-Version` | each merge of agent commits | `<version>+<build SHA>` |
+| `Prov-Revises` | a commit of `prov revise` | the full ID of the merge that it revises |
 | `Copied-From` | a commit with copied files | `<source>@<commit>:<path>`, followed by ` => <dest>` if the path changed |
 
 Every value is one line.

@@ -269,6 +269,7 @@ fn post(ctx: &Ctx, post_merge: bool) -> Result<bool> {
                 lock.delete(&r.id)?;
             }
         }
+        say(msg::git_hook::revise_hint(head.short()));
     }
 
     // An approval that became a trailer of this commit is done.
