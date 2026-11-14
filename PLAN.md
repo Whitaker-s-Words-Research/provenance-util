@@ -4,10 +4,11 @@ The specification is [SPEC.md](SPEC.md); read it first. It has the rules with th
 
 ## Status
 
-- Phase 1 is done and merged into `main`: the core (sessions, hooks, sweep, merge gate, `prov check`), the commands, `prov cp`, and the rules from the TLA+ model review.
+- Phase 1 is done and merged into `main`: the core (sessions, hooks, sweep, merge gate, `prov check`), the commands, `prov cp`, `prov discard` (R-DISC-1), `prov revise` (R-REV-1), and the rules from the TLA+ model review.
+- The review of 2026-11-13 is worked through on the branch `agent/claude/20261113-6631`, not merged yet: whole-file items for binary files, mode changes and deleted files; the gate refuses an agent; merge commits only for human branches on a forge; `prov revise` counts insertions, later passes and several merges; `prov session close` is renamed to `prov session archive`.
 - Version 0.1.0, not released. There is no release process yet (SPEC, "Build and release").
 
-- Checks: 107 tests (`ci/dev.sh test --workspace --locked`), 29 TLA+ model configs (`ci/dev.sh --models`), clippy with `-D warnings`.
+- Checks: 117 tests (`ci/dev.sh test --workspace --locked`; on 2026-11-13 also on the 9p mount with `PROV_TEST_REPOS`, all passed), 29 TLA+ model configs (`ci/dev.sh --models`), clippy with `-D warnings`.
 
 - OpenCode is phase 2, in "Appendix: phase 2, OpenCode" in the spec. Phase 1 rules must stay general; the appendix lists the six that must.
 
@@ -20,14 +21,14 @@ The specification is [SPEC.md](SPEC.md); read it first. It has the rules with th
 - Killing a real archive process during its write. A unit test covers what such a kill leaves (R-ARCH-1).
 - `prov cp`: an editor that needs the terminal (the test editor is a script), a source with Git LFS or a clean filter, a copy of thousands of files.
 - The file lock between a host and a VM on a shared mount. Tested only inside one machine, also on 9p.
-- The full suite on the 9p mount (`PROV_TEST_REPOS`) after the last changes. It passed after the `git-ai await` fixes, not since.
 - Why git-ai's own Claude Code hooks recorded the model in one live run and `unknown` in another. The `Prov-Model` trailer covers it either way. No issue will be filed with git-ai (owner's decision).
 
 ## Open decisions
 
 Each goes to the owner as a question with a recommendation.
 
-- `prov discard` (SPEC, "Discarding", R-DISC-1): the owner decided every question on 2026-11-13 (the name; the only command that deletes a branch and a transcript archive; it refuses whenever another ref names one of its sessions; the merge gate takes the lock). Implemented, not committed yet.
+- Should `prov check <base>..<tip>` warn about a commit on the first-parent line that adds lines and has no git-ai note? It would find a squash made on a forge, which passes today (test `forge_merge_methods_of_a_human_branch`). It would also flag the commits of a person who does not use git-ai. `prov doctor` already reports such commits on local branches.
+- `prov revisions`, a report of the revisions of each integration, is out of scope for now (owner, 2026-11-13).
 - A config key for the worktrees directory, so that agent worktrees can live on a local disk when the repository is on a slow mount.
 - Choices from session 2 that the spec does not fix, never confirmed by the owner:
     - `prov approve` reads the typed `yes` from `/dev/tty`. With no terminal it refuses. `--dry-run` shows the items with no prompt.
@@ -38,6 +39,7 @@ Each goes to the owner as a question with a recommendation.
     - The content hash of a `--human` or `--ai` approval is the git blob ID of the file.
     - `prov start` is not refused for an agent. The spec says "run by a human" and gives no refusal.
     - The JSON Schema validator is written in-house (`crates/prov/src/schema.rs`), for the keywords that the pinned schema uses.
+- `prov discard` writes its texts in `crates/prov/src/discard.rs`, not in `prov-messages` (AGENTS.md, "User-facing text"). A plain fix.
 - Choices from session 3 made without asking:
     - How `prov cp` reads `<dest>`: one file, one directory, several sources.
     - A copy record with the result `moved` or `ignored` stays until someone deletes it.
@@ -67,7 +69,7 @@ A model checks the order of events. It cannot check a premise.
 - **The harness gives each test its own home and git-ai service** (`crates/prov/tests/common/mod.rs`). Test repositories need no remote, and the agent's own git-ai hooks cannot reach them. The home must be a short path, because of the Unix socket length limit. For an experiment by hand, do the same: `env -i HOME=<short dir> PATH=...` and its own `git-ai bg start`.
 - **git-ai timing.** A note comes 1 to 6 seconds after a commit: run `git-ai await --timeout 60` before reading it. A checkpoint is applied after the command returns, so `prov` runs `git-ai await` after its checkpoints in `pre-commit` and `prov approve`. `git-ai bg start` does nothing while the old service still exits; `Env::stop_service` waits for it.
 - **With `merge.ff = false`, git refuses `git merge --squash`.** A squash needs `--squash --ff`.
-- **Tested versions:** git 2.53, git-ai 1.7.6, Claude Code 2.1.322, Rust 1.100.0. The container image pins Ubuntu 26.04 (git 2.53), git-ai 1.7.6 and tla2tools 1.7.4, each by checksum. Before raising the git-ai version, run `cargo test --test gitai_contract` against it, then raise `prov_gitai::TESTED_VERSION`.
+- **Tested versions:** git 2.53, git-ai 1.7.6, Claude Code 2.1.322 (2.1.325 for the agent environment in merge hooks), Rust 1.100.0. The container image pins Ubuntu 26.04 (git 2.53), git-ai 1.7.6 and tla2tools 1.7.4, each by checksum. Before raising the git-ai version, run `cargo test --test gitai_contract` against it, then raise `prov_gitai::TESTED_VERSION`.
 - **Measure time with the binary on a local disk.** Starting a binary from the 9p mount costs about 40 ms.
 
 ## Constraints from the owner
