@@ -1,0 +1,32 @@
+docs/configuration.md
+  s_4ffffd06031ed5::t_704c80ea161366 24
+SPEC.md
+  s_4ffffd06031ed5::t_d443778c946638 512-513
+docs/ci.md
+  s_4ffffd06031ed5::t_d443778c946638 36
+crates/prov/tests/gate.rs
+  s_4ffffd06031ed5::t_7d3d114c67c43e 564-566,598-603
+crates/prov/src/check.rs
+  s_4ffffd06031ed5::t_7d3d114c67c43e 8
+  s_4ffffd06031ed5::t_8a3c248e5ca2be 40-42,72-125,197-202,326-329,346,422-426,428-430
+crates/prov-messages/src/check.rs
+  s_4ffffd06031ed5::t_8a3c248e5ca2be 70-83
+CHANGELOG.md
+  s_4ffffd06031ed5::t_d443778c946638 89
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "77e064502672bbb1fcd184d4b1774d47717a4534",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
