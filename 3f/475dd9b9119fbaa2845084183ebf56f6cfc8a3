@@ -1,0 +1,79 @@
+tla/ProvDiscard.bug-gate-unlocked.cfg
+  s_c69e22be28ed77::t_3ceac809d16faa 1-5,7-12
+  s_c69e22be28ed77::t_e58b30022c2cae 6
+tla/ProvDiscard.cfg
+  s_c69e22be28ed77::t_e58b30022c2cae 6
+  s_c69e22be28ed77::t_3ceac809d16faa 1-5,7-12
+SPEC.md
+  s_c69e22be28ed77::t_d981261cdf7115 190-219,221-231,233-235,237-240,242
+  s_c69e22be28ed77::t_117d83ddaf4600 625
+  s_c69e22be28ed77::t_0cb43a2ad00812 930-938
+  s_c69e22be28ed77::t_1d8f17ea853fbc 362
+  s_c69e22be28ed77::t_708edf49c70d58 236
+  s_c69e22be28ed77::t_a6229b3d3f9e0e 220,232
+  s_c69e22be28ed77::t_703e76a18a37b7 686-687
+  s_c69e22be28ed77::t_c6c7ade1eed285 187
+  s_c69e22be28ed77::t_ae19df72ee0ca5 884-893
+  s_c69e22be28ed77::t_3cc55932016472 241
+tla/ProvDiscard.bug-no-merge-check.cfg
+  s_c69e22be28ed77::t_e58b30022c2cae 6
+  s_c69e22be28ed77::t_3ceac809d16faa 1-5,7-12
+tla/README.md
+  s_c69e22be28ed77::t_10e0ea24ccaca9 10
+docs/workflow.md
+  s_c69e22be28ed77::t_3ffc423f4dd907 155-172
+tla/ProvDiscard.tla
+  s_c69e22be28ed77::t_763ba0d0209a39 1-37,39-91,93-177,179-193
+  s_c69e22be28ed77::t_e58b30022c2cae 38,92,178
+docs/commands.md
+  s_c69e22be28ed77::t_3ffc423f4dd907 14,102,112-118
+  s_c69e22be28ed77::t_5ca8bfafdd5244 119
+crates/prov-core/src/trailer.rs
+  s_c69e22be28ed77::t_1b6ec0d47ef84c 310-311
+  s_c69e22be28ed77::t_ec2f0e907739ce 207-219
+crates/prov/tests/discard.rs
+  s_c69e22be28ed77::t_878f834f2eaeba 98-100,102-104,109-118
+  s_c69e22be28ed77::t_48dac884ae8939 1-97,101,105-108,119-137
+PLAN.md
+  s_c69e22be28ed77::t_cf8860eb5dc7cd 14,28
+  s_c69e22be28ed77::t_ea47b516a980e5 9
+crates/prov/src/main.rs
+  s_c69e22be28ed77::t_302a4d8de10184 12,108-120,330
+docs/getting-started.md
+  s_c69e22be28ed77::t_3ffc423f4dd907 86-87
+crates/prov/src/complete.rs
+  s_c69e22be28ed77::t_34388b2a8fb374 35-43
+crates/prov/src/gate.rs
+  s_c69e22be28ed77::t_684f64d84e71d6 424-430
+docs/how-it-works.md
+  s_c69e22be28ed77::t_3ffc423f4dd907 92-93
+crates/prov/src/discard.rs
+  s_c69e22be28ed77::t_896398d24f2ea5 304-305
+  s_c69e22be28ed77::t_8cd514d2023b1d 1-28,30-48,50-83,87-303,306-387,389-422
+  s_c69e22be28ed77::t_302a4d8de10184 29,49,84-86,388
+tla/ProvDiscard.reach-discarded.cfg
+  s_c69e22be28ed77::t_3ceac809d16faa 1-5,7-12
+  s_c69e22be28ed77::t_e58b30022c2cae 6
+tla/ProvDiscard.bug-no-ref-recheck.cfg
+  s_c69e22be28ed77::t_e58b30022c2cae 6
+  s_c69e22be28ed77::t_3ceac809d16faa 1-5,7-12
+tla/ProvDiscard.reach-refused-under-lock.cfg
+  s_c69e22be28ed77::t_e58b30022c2cae 6
+  s_c69e22be28ed77::t_3ceac809d16faa 1-5,7-12
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "3f475dd9b9119fbaa2845084183ebf56f6cfc8a3",
+  "prompts": {},
+  "sessions": {
+    "s_c69e22be28ed77": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "1845c803-600e-43b4-be24-6289e10ed844",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
