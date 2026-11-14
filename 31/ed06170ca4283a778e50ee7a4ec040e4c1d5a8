@@ -1,0 +1,57 @@
+crates/prov/src/main.rs
+  s_bfd778884271f0::t_f944205ad0977c 18,110-122,348
+crates/prov/tests/revise.rs
+  s_bfd778884271f0::t_2d2d8cbfe03a35 1-101
+PLAN.md
+  s_bfd778884271f0::t_c38e1c5f2e03a8 9-10
+crates/prov-core/src/trailer.rs
+  s_bfd778884271f0::t_f944205ad0977c 16-17
+docs/commands.md
+  s_bfd778884271f0::t_3f8b7f960b85bd 12,89-103
+  s_bfd778884271f0::t_f796f00bc363cf 104
+crates/prov-messages/src/revise.rs
+  s_bfd778884271f0::t_fff0c9bfc5e3df 1-60
+SPEC.md
+  s_bfd778884271f0::t_840b6eeab66963 870
+  s_bfd778884271f0::t_9e7c922065a4ee 468-469
+  s_bfd778884271f0::t_e16c54ed410937 224
+  s_bfd778884271f0::t_c38e1c5f2e03a8 467
+  s_bfd778884271f0::t_c5e07c5b6471c9 448-450,452-465,470-481
+  s_bfd778884271f0::t_c52f29fe8ec90d 856-861,863-868
+  s_bfd778884271f0::t_b94910ffe155b8 862
+  s_bfd778884271f0::t_60c21946010f56 869
+  s_bfd778884271f0::t_3f8b7f960b85bd 451,466,608
+  s_bfd778884271f0::t_d6f9281b9402b5 357
+crates/prov-messages/src/lib.rs
+  s_bfd778884271f0::t_f944205ad0977c 47
+crates/prov/src/git_hook.rs
+  s_bfd778884271f0::t_f944205ad0977c 272
+crates/prov/src/revise.rs
+  s_bfd778884271f0::t_7d459cb206d114 145-146,216-219
+  s_bfd778884271f0::t_828a111d77ffe4 1-144,147-215,220-259
+crates/prov/tests/snapshots/help.txt
+  s_bfd778884271f0::t_42d84d0f5ee95c 15,188-203
+  s_bfd778884271f0::t_db0777cf3cc55a 204
+crates/prov-messages/src/git_hook.rs
+  s_bfd778884271f0::t_f944205ad0977c 95-99
+docs/workflow.md
+  s_bfd778884271f0::t_3f8b7f960b85bd 112-122
+docs/record.md
+  s_bfd778884271f0::t_3f8b7f960b85bd 11,41
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "31ed06170ca4283a778e50ee7a4ec040e4c1d5a8",
+  "prompts": {},
+  "sessions": {
+    "s_bfd778884271f0": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "5596a517-d9ed-4b82-b9e9-ac1b59cc3fe7",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
