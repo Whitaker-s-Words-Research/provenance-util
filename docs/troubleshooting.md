@@ -33,7 +33,7 @@ An agent must not commit inside a sandbox that blocks the service.
 
 ### Checkpoints do nothing: the repository is not allowed
 
-git-ai ignores every checkpoint in a repository that is not in its `allow_repositories` setting, and matches that setting against remote URLs only. Add a remote, and add its URL to `allow_repositories`. `prov doctor` reports this.
+git-ai ignores every checkpoint in a repository that it does not allow. When `allow_repositories` has entries, git-ai matches them against remote URLs only, so a repository with no remote is not allowed, not even by `*`. Add a remote whose URL matches, or add a pattern for the remote's URL to `allow_repositories`. `prov doctor` reports this.
 
 ### A commit is refused in a contended worktree
 

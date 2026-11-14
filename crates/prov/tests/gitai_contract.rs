@@ -270,3 +270,38 @@ fn binary_files_mode_changes_and_deletions_have_no_added_ranges() {
     assert_eq!(authors(&c, "sub"), vec![Author::Untracked]);
     assert_eq!(authors(&c, "text.txt"), vec![ai("claude", "sess-n", "unknown")]);
 }
+
+/// `allow_repositories` (see "Doctor checks"). An empty list allows every
+/// repository, also one with no remote. With any entry, even `*`, git-ai
+/// skips the checkpoints of a repository with no remote, and prints only a
+/// message. A path entry needs a remote: git-ai refuses to add it. A pattern
+/// that matches a remote URL allows the repository. `prov doctor` repeats
+/// this rule, because git-ai has no command that answers it.
+#[test]
+fn allow_repositories_matches_remote_urls_only() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.plain_repo("allow");
+    let checkpoint = |n: u32| {
+        env.plain_write(&repo, "a.txt", &format!("line {n}\n"));
+        let payload = json!({"type": "ai_agent", "repo_working_dir": repo, "edited_filepaths": [repo.join("a.txt")],
+            "agent_name": "claude", "model": "m", "conversation_id": "sess-a"});
+        let out = env.run(&repo, "git-ai", ["checkpoint", "agent-v1", "--hook-input", "stdin"], &[], Some(&payload.to_string()));
+        format!("{}{}", out.stdout, out.stderr)
+    };
+    let skipped = "Skipping checkpoint because repository is excluded or not in allow_repositories list";
+    let config = |args: &[&str]| env.run(env.home(), "git-ai", args.iter().copied(), &[], None);
+
+    assert!(!checkpoint(1).contains(skipped), "an empty list allows a repository with no remote");
+    config(&["config", "--add", "allow_repositories", "*"]).success();
+    assert!(checkpoint(2).contains(skipped), "`*` does not match a repository with no remote");
+    config(&["config", "unset", "allow_repositories"]).success();
+    let path = config(&["config", "--add", "allow_repositories", repo.to_str().unwrap()]).failure();
+    assert!(path.stderr.contains("has no remotes configured"), "{}", path.stderr);
+
+    env.git(&repo, ["remote", "add", "origin", "git@example.invalid:team/allow.git"]);
+    config(&["config", "--add", "allow_repositories", "https://example.invalid/team/*"]).success();
+    assert!(!checkpoint(3).contains(skipped), "a pattern that matches the remote URL allows the repository");
+    config(&["config", "unset", "allow_repositories"]).success();
+    config(&["config", "--add", "allow_repositories", "https://example.invalid/other/*"]).success();
+    assert!(checkpoint(4).contains(skipped), "a pattern that matches no remote URL");
+}
