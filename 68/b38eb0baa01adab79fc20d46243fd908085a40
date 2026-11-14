@@ -1,0 +1,21 @@
+CHANGELOG.md
+  s_fb8d7d1a6e8462::t_107636c9c59ee5 83-84
+  s_fb8d7d1a6e8462::t_d7e72912e8a0c9 89-92
+  s_fb8d7d1a6e8462::t_ae9d457ff92ed0 75-76
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "68b38eb0baa01adab79fc20d46243fd908085a40",
+  "prompts": {},
+  "sessions": {
+    "s_fb8d7d1a6e8462": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "59d48996-b901-479b-88f5-53fca303570b",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
