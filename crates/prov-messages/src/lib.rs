@@ -38,6 +38,7 @@ pub mod completions;
 pub mod context;
 pub mod copy_check;
 pub mod cp;
+pub mod discard;
 pub mod doctor;
 pub mod finish;
 pub mod gate;

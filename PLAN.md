@@ -38,7 +38,6 @@ Each goes to the owner as a question with a recommendation.
     - The content hash of a `--human` or `--ai` approval is the git blob ID of the file.
     - `prov start` is not refused for an agent. The spec says "run by a human" and gives no refusal.
     - The JSON Schema validator is written in-house (`crates/prov/src/schema.rs`), for the keywords that the pinned schema uses.
-- `prov discard` writes its texts in `crates/prov/src/discard.rs`, not in `prov-messages` (AGENTS.md, "User-facing text"). A plain fix.
 - Choices from session 3 made without asking:
     - How `prov cp` reads `<dest>`: one file, one directory, several sources.
     - A copy record with the result `moved` or `ignored` stays until someone deletes it.
