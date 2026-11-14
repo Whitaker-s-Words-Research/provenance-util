@@ -72,13 +72,21 @@ Bug Fixes: clippy findings, a race in the git-ai service test, and `.gitignore` 
 
 - `CLAUDE.md` and `AGENTS.md` are protected paths by default, at every level of the tree. Reason: an agent could weaken the controls by changing its own instruction files on its branch.
 - All user-facing text is in the `prov-messages` crate. A snapshot test checks the help texts.
+- `prov discard <session or branch>` deletes the work of an agent branch that will not be integrated: the worktree, the branch, the session records and the transcript archives. It lists what it will delete, and deletes only with `--yes`. It refuses while a session of the branch is open or closing, while a merge of the branch is in progress, and when another ref names one of its sessions or copied a file from one of its commits. The TLA+ model `tla/ProvDiscard` checks the order of its steps.
+- `prov revise [--of <merge>] [--dry-run]` commits staged human changes to the lines of an integration, with a `Prov-Revises: <merge>` trailer. The staged diff must change or delete at least one line of the integration.
 
 ### Minor features
 
 - `prov session list` and `prov session show` show the session title from the Claude Code transcript. `list` shows the shortest unique session ID prefix and the worktree path with `~`.
 - AGENTS.md and CLAUDE.md hold the instructions for agents in this repository.
 - The user guides, the README and the messages of prov no longer show rule IDs, TLA+ models or test evidence.
+- The merge gate reads the session records under the lock.
+- After an integration, post-commit and post-merge print a hint about `prov revise`.
 
 ### Major bug fixes
 
 - `prov start --path` expands a leading `~`. Before, `--path=~/dir` or a quoted value created the worktree in `<repo>/~/...`.
+
+### Bug Fixes
+
+Bug Fixes: `ci/dev.sh` with `PROV_UPDATE_SNAPSHOTS` now copies the snapshot files back to the checkout.
