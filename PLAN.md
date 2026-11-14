@@ -14,14 +14,10 @@ The specification is [SPEC.md](SPEC.md); read it first. It has the rules with th
 
 ## Not tested yet
 
-- `prov discard` racing a real merge or a resume. The model `ProvDiscard` checks the order; the tests run each refusal one at a time.
-- Contended worktrees with two real Claude Code processes. Only recorded hook payloads were tested.
-- A real session resumed between the gate and `post-commit`, or while the merge editor is open. Premise P4 of `tla/ProvIntegration.tla` is reasoned, not tested.
 - macOS, entirely. This includes the process scan with `lsof` (the warning of R-SWEEP-4).
-- Killing a real archive process during its write. A unit test covers what such a kill leaves (R-ARCH-1).
-- `prov cp`: an editor that needs the terminal (the test editor is a script), a source with Git LFS or a clean filter, a copy of thousands of files.
 - The file lock between a host and a VM on a shared mount. Tested only inside one machine, also on 9p.
-- Why git-ai's own Claude Code hooks recorded the model in one live run and `unknown` in another. The `Prov-Model` trailer covers it either way. No issue will be filed with git-ai (owner's decision).
+
+Tested on 2026-11-14 (see "Appendix: test evidence" in SPEC.md): `prov discard` racing a merge and a resume, two real Claude Code processes in one worktree, a resume while the merge editor is open, a killed archive process, and `prov cp` with Git LFS, clean filters, a terminal editor and 2,000 files. The model `unknown` of git-ai's Claude Code hooks has a known cause: a session's first turn has no assistant line in the transcript when its edits are checkpointed (tested 2026-11-12). The `Prov-Model` trailer covers it.
 
 ## Open decisions
 
