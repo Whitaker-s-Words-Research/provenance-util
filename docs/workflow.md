@@ -109,6 +109,17 @@ The merge commit carries one trailer group for each session, with the hash of it
 
 If you edit the merge message in the editor and remove a trailer group, the record of that session stays, and `prov check <base>..<tip>` reports the commit. Undo the merge and make it again.
 
+### Revising the merged work
+
+You cannot edit an agent branch. To correct the agent's work, change it on a human branch after the merge, and commit with `prov revise`. After each merge, `prov` prints a hint with the ID of the merge.
+
+```sh
+git add src/parse.py      # your changes to the merged lines
+prov revise               # git opens the editor; write the message
+```
+
+`prov revise` is optional. It refuses unless your staged changes change or delete at least one line that came in with the merge. Lines that you only add do not count. git opens the editor with a `Prov-Revises: <merge>` trailer, and you write the message. The default target is the latest merge of agent work on the first-parent line; `--of <merge>` names another. A merge can have several revisions. See [`prov revise`](commands.md#prov-revise).
+
 ### What is not permitted
 
 | You do | What happens |

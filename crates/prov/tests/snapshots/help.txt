@@ -12,6 +12,7 @@ Commands:
   session      Shows sessions, closes one, or deletes the record of one
   finish       Removes the worktree of a session. The branch stays
   approve      Records a human decision about the authorship of paths
+  revise       Commits your staged changes to the lines of an integration, with a `Prov-Revises` trailer
   completions  Prints the line that turns on tab completion, or adds it to your shell's startup file
   trace        Agent Trace records
   cp           Copies files from a commit of a local clone, with an author for every line
@@ -183,6 +184,23 @@ Options:
       --dry-run        
       --json           
   -h, --help           Print help
+
+$ prov revise --help
+Commits your staged changes to the lines of an integration, with a `Prov-Revises` trailer.
+
+The changes must change or delete at least one line that came in with the merge. git opens the editor with the trailer; you write the message.
+
+Usage: prov revise [OPTIONS]
+
+Options:
+      --of <MERGE>
+          The integration that you revise. Default: the latest one on the first-parent line from HEAD
+
+      --dry-run
+          Show the target and the counts, and do not commit
+
+  -h, --help
+          Print help (see a summary with '-h')
 
 $ prov completions --help
 Prints the line that turns on tab completion, or adds it to your shell's startup file

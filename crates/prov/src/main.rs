@@ -15,6 +15,7 @@ mod gate;
 mod git_hook;
 mod init;
 mod procs;
+mod revise;
 mod schema;
 mod session;
 mod start;
@@ -106,6 +107,19 @@ enum Cmd {
     },
     /// Records a human decision about the authorship of paths.
     Approve(ApproveArgs),
+    /// Commits your staged changes to the lines of an integration, with a `Prov-Revises` trailer.
+    ///
+    /// The changes must change or delete at least one line that came in with
+    /// the merge. git opens the editor with the trailer; you write the message.
+    Revise {
+        /// The integration that you revise. Default: the latest one on the
+        /// first-parent line from HEAD.
+        #[arg(long, value_name = "MERGE")]
+        of: Option<String>,
+        /// Show the target and the counts, and do not commit.
+        #[arg(long)]
+        dry_run: bool,
+    },
     /// Prints the line that turns on tab completion, or adds it to your shell's startup file.
     Completions {
         /// `bash`, `zsh` or `fish`. Default: the shell of `$SHELL`.
@@ -331,6 +345,7 @@ fn main() -> ExitCode {
                     })
                 })
             }
+            Cmd::Revise { of, dry_run } => revise::run(&revise::Args { of, dry_run }),
             Cmd::Completions { shell, install, dry_run, json } => {
                 completions::run(&completions::Args { shell, install, dry_run, json })
             }

@@ -44,6 +44,7 @@ pub mod gate;
 pub mod git_hook;
 pub mod init;
 pub mod procs;
+pub mod revise;
 pub mod schema;
 pub mod session;
 pub mod start;

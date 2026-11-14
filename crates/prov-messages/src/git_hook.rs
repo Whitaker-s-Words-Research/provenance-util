@@ -92,3 +92,8 @@ pub fn fast_forward(count: impl Display, branch: impl Display) -> String {
          Undo it: git reset --keep ORIG_HEAD\nThen integrate with: git merge --no-ff <agent branch>"
     )
 }
+
+/// After an integration.
+pub fn revise_hint(merge: impl Display) -> String {
+    format!("Integrated as {merge}. To correct the merged work: stage your changes and run `prov revise`.")
+}
