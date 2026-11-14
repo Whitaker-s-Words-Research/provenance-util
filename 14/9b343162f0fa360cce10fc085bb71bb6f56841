@@ -1,0 +1,29 @@
+SPEC.md
+  s_4ffffd06031ed5::t_9b396062a4faf1 173,206,941
+crates/prov/tests/discard.rs
+  s_4ffffd06031ed5::t_b6e538770d91e8 121-135
+crates/prov/src/discard.rs
+  s_4ffffd06031ed5::t_b6e538770d91e8 310-311,328-329
+crates/prov/tests/sessions.rs
+  s_4ffffd06031ed5::t_b6e538770d91e8 483-484
+crates/prov/src/archive.rs
+  s_4ffffd06031ed5::t_b6e538770d91e8 89,135-161
+CHANGELOG.md
+  s_4ffffd06031ed5::t_9b396062a4faf1 96
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "149b343162f0fa360cce10fc085bb71bb6f56841",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
