@@ -22,7 +22,7 @@ The current status and open work are in [PLAN.md](../PLAN.md). The specification
 All text that prov shows is in two places. Review a change of wording there.
 
 - `crates/prov-messages/src/`: output, warnings, errors, and the messages that hooks give an agent. One module for each area, named after the source module that uses it. A fixed text is a `const`, and a text with values is a function.
-- `crates/prov/tests/snapshots/help.txt`: the help texts of all commands. They come from the doc comments in `crates/prov/src/main.rs`. The test `help` fails when they change. To write the file again: `PROV_UPDATE_SNAPSHOTS=1 cargo test -p prov --test help`.
+- `crates/prov/tests/snapshots/help.txt`: the help texts of all commands. They come from the doc comments in `crates/prov/src/main.rs`. The test `help` fails when they change. To write the file again: `PROV_UPDATE_SNAPSHOTS=1 ci/dev.sh test -p prov --test help`. `ci/dev.sh` copies the file from the container back to the checkout.
 
 The code adds no words to a text. Reason: a reviewer reads each sentence in one place.
 

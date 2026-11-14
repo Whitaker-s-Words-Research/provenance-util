@@ -62,7 +62,7 @@ A model checks the order of events. It cannot check a premise. See [tla/README.m
 ## User-facing text
 
 - Put every text that prov shows to a person or an agent in `crates/prov-messages`, in the module of its area. A fixed text is a `const`, and a text with values is a function. The code adds no words to a text. See "User-facing text" in [docs/development.md](docs/development.md).
-- Help texts are the doc comments in `crates/prov/src/main.rs`. After a change, write `crates/prov/tests/snapshots/help.txt` again: `PROV_UPDATE_SNAPSHOTS=1 cargo test -p prov --test help`.
+- Help texts are the doc comments in `crates/prov/src/main.rs`. After a change, write `crates/prov/tests/snapshots/help.txt` again: `PROV_UPDATE_SNAPSHOTS=1 ci/dev.sh test -p prov --test help`.
 - Not in `prov-messages`: the JSON output, trailer names, and the files that `prov init` writes. A change to them is a change of format.
 
 ## Writing style
