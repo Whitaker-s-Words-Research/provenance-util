@@ -33,7 +33,7 @@ So the job fails when:
 
 ## Limits
 
-- `prov check` cannot find a squash that has no note, such as one a forge made. It looks like a human commit. Protect the human branches on your forge so that agent branches cannot be merged there, and merge the pull request of a human branch, such as a feature branch into `main`, only with a merge commit. Turn off squash merges and rebase merges. A squash hides the AI lines; a rebase drops the record of the integrations.
+- `prov check` cannot find a squash that has no note, such as one a forge made. It looks like a human commit. It prints a warning (`WARN`) for each commit that adds lines and has no git-ai note, but the check still passes, because a commit by a person who does not use git-ai looks the same. Add a known commit to `known_gaps` in `.provenance.toml` to silence it. Protect the human branches on your forge so that agent branches cannot be merged there, and merge the pull request of a human branch, such as a feature branch into `main`, only with a merge commit. Turn off squash merges and rebase merges. A squash hides the AI lines; a rebase drops the record of the integrations.
 - It tells an agent commit from a person's commit by the author email. An agent that commits with a person's email passes. For a stronger control, require signed commits on the human branches in your forge; agent commits are never signed.
 
 `prov` itself uses no hosted CI. It runs this check locally; see [Developing prov](development.md).

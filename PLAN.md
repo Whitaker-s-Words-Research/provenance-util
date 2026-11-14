@@ -27,7 +27,6 @@ The specification is [SPEC.md](SPEC.md); read it first. It has the rules with th
 
 Each goes to the owner as a question with a recommendation.
 
-- Should `prov check <base>..<tip>` warn about a commit on the first-parent line that adds lines and has no git-ai note? It would find a squash made on a forge, which passes today (test `forge_merge_methods_of_a_human_branch`). It would also flag the commits of a person who does not use git-ai. `prov doctor` already reports such commits on local branches.
 - `prov revisions`, a report of the revisions of each integration, is out of scope for now (owner, 2026-11-13).
 - A config key for the worktrees directory, so that agent worktrees can live on a local disk when the repository is on a slow mount.
 - Choices from session 2 that the spec does not fix, never confirmed by the owner:

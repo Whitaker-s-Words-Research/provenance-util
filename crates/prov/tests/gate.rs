@@ -561,8 +561,9 @@ fn the_gate_refuses_an_agent() {
 /// no hooks and no git-ai service. A merge commit keeps every note and the
 /// record, and `prov check` passes. A rebase puts the agent commit on the
 /// first-parent line, and `prov check` reports it. A squash leaves one
-/// commit with no note: `prov check` cannot see the AI lines in it. This is
-/// the accepted limit that requires merge commits for human branches.
+/// commit with no note: `prov check` cannot see the AI lines in it, and only
+/// warns about a commit with no note. This is the accepted limit that
+/// requires merge commits for human branches.
 #[test]
 fn forge_merge_methods_of_a_human_branch() {
     let Some(env) = Env::new() else { return };
@@ -594,8 +595,12 @@ fn forge_merge_methods_of_a_human_branch() {
     let rebased = env.git(&repo, ["rev-parse", "HEAD"]);
     env.git(&repo, ["checkout", "-q", "main"]);
 
-    env.prov(&repo, ["check", &format!("{base}..forge-merge")]).success();
-    env.prov(&repo, ["check", &format!("{base}..forge-squash")]).success();
+    let merge = env.prov(&repo, ["check", &format!("{base}..forge-merge")]).success();
+    assert!(!merge.stdout.contains("WARN"), "{}", merge.stdout);
+    // The squash passes, with a warning: it adds lines and has no note.
+    let squash = env.prov(&repo, ["check", &format!("{base}..forge-squash")]).success();
+    let squashed = env.git(&repo, ["rev-parse", "--short=10", "forge-squash"]);
+    assert!(squash.stdout.contains(&format!("WARN {squashed} adds lines and has no git-ai note")), "{}", squash.stdout);
     let rebase = env.prov(&repo, ["check", &format!("{base}..{rebased}")]).failure();
     assert!(rebase.stdout.contains("is not a human commit"), "{}", rebase.stdout);
 }

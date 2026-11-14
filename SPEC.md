@@ -509,6 +509,8 @@ The CI job must provide these:
 
 **Limit**: `prov check` cannot find a squash that has no note, for example a squash that a forge made. Such a commit looks like a human commit. The branch protection in "Non-goals" prevents it.
 
+`prov check <base>..<tip>` warns about each commit on a checked first-parent line that is not a merge, adds lines and has no note. The warning does not fail the check. It skips commits older than the first commit of `refs/notes/ai` and the commits in `known_gaps`, as `prov doctor` does. If the clone has no `refs/notes/ai`, it warns once. Reason: a squash made on a forge has no note, and nothing else reports it. A commit by a person who does not use git-ai has no note either, so a failure would stop such a team (owner decision, 2026-11-13). The check reads the notes with one `git notes list` and the commit times with one `git log`.
+
 **Rule**: a human branch goes into another human branch only through a merge commit, also on a forge, for example the pull request of a feature branch into `main`. Turn off squash merges and rebase merges for the protected branches on the forge. Reason: a merge commit keeps every commit with its note and the integrations with their trailers. A squash on the forge makes one commit with no note, so the AI lines in it look human, and `prov check` cannot find it (the limit above). A rebase on the forge drops the integrations and puts the agent commits on the first-parent line; `prov check` reports it, but the record is lost from that branch.
 
 git-ai pushes `refs/notes/ai` with a plain `git push` while its service runs, and a clone fetches it. A CI job without the service must fetch the notes itself.

@@ -21,7 +21,7 @@ command = ["claude", "--model", "opus"]
 | `agents` | The agents in use. Phase 1 supports `claude`. |
 | `logs_dir` | The directory of the transcript archives. Not tracked by git. |
 | `protected` | Paths whose every change is a doubtful item at the gate. gitignore patterns: `*` does not match `/`, `**` matches across directories. |
-| `known_gaps` | Commit IDs (7 or more hex characters) with no git-ai note that you accept instead of repairing them. `prov doctor` then lists them as notes, not failures. |
+| `known_gaps` | Commit IDs (7 or more hex characters) with no git-ai note that you accept instead of repairing them. `prov doctor` then lists them as notes, not failures, and `prov check` gives no warning for them. |
 | `[agent.<name>]` | Replaces `author`, `email` or `command` of the agent's adapter. |
 
 Relative paths resolve against the base directory: the repository root in a normal clone, or the directory that holds a bare repository with linked worktrees.

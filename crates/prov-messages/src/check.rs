@@ -67,6 +67,20 @@ pub fn fail(message: impl Display) -> String {
     format!("FAIL {message}")
 }
 
+pub fn warn_commit(commit: impl Display, message: impl Display) -> String {
+    format!("WARN {commit} {message}")
+}
+
+pub fn warn(message: impl Display) -> String {
+    format!("WARN {message}")
+}
+
+pub const NO_NOTE: &str = "adds lines and has no git-ai note. A squash made on a forge looks like this, and so does a \
+     commit by a person who does not use git-ai. If the commit is known, add it to `known_gaps` in .provenance.toml.";
+
+pub const NO_NOTES_REF: &str =
+    "this clone has no refs/notes/ai, so no line has an author. Fetch it: git fetch origin 'refs/notes/ai:refs/notes/ai'";
+
 pub fn summary(commits: impl Display, failures: impl Display) -> String {
     format!("{commits} commit(s) checked, {failures} failure(s).")
 }
