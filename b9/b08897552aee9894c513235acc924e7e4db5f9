@@ -1,0 +1,33 @@
+crates/prov/src/gate.rs
+  s_4ffffd06031ed5::t_2af6c380af5e24 473-474
+crates/prov/src/doctor.rs
+  s_4ffffd06031ed5::t_f3278a95b00504 278-280
+  s_4ffffd06031ed5::t_2af6c380af5e24 243,246,487-489
+  s_4ffffd06031ed5::t_7cb084954bbd5f 490-491
+crates/prov-messages/src/doctor.rs
+  s_4ffffd06031ed5::t_f3278a95b00504 125,131,157-159
+CHANGELOG.md
+  s_4ffffd06031ed5::t_bdfb2d13c5afe3 93
+crates/prov/tests/copy.rs
+  s_4ffffd06031ed5::t_e99c4c62d21a72 335
+  s_4ffffd06031ed5::t_f3278a95b00504 330-334,336
+  s_4ffffd06031ed5::t_2af6c380af5e24 337-338
+SPEC.md
+  s_4ffffd06031ed5::t_bdfb2d13c5afe3 746
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b9b08897552aee9894c513235acc924e7e4db5f9",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
