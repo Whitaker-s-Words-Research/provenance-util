@@ -1,0 +1,20 @@
+crates/prov/tests/snapshots/help.txt
+  s_31c3644b7ff0ec::t_690721a2d7b356 14,171-183
+  s_31c3644b7ff0ec::t_a626ffb881fd6a 184
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d2ca0a0146c5323f3213361e3cbbe4275f67b965",
+  "prompts": {},
+  "sessions": {
+    "s_31c3644b7ff0ec": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a62adb78-2a0e-4c63-9033-46ef3a13c274",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
