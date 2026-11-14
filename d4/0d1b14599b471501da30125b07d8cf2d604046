@@ -1,0 +1,26 @@
+crates/prov/tests/gitai_contract.rs
+  s_4ffffd06031ed5::t_4503d05b44231c 273-307
+SPEC.md
+  s_4ffffd06031ed5::t_b6031c93990684 775
+  s_4ffffd06031ed5::t_30bf173670ba25 80,698,935
+docs/getting-started.md
+  s_4ffffd06031ed5::t_e976630362e4d4 7
+docs/troubleshooting.md
+  s_4ffffd06031ed5::t_cdc1277e02b8be 36
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "d40d1b14599b471501da30125b07d8cf2d604046",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
