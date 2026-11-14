@@ -86,6 +86,7 @@ pub fn run_in(ctx: &Ctx, session_id: &str, generation: Option<u64>, announce: bo
         let config = ctx.repo.config_here()?;
         let dir = ctx.repo.base_dir().join(&config.logs_dir).join(&session.agent);
         let file = dir.join(format!("{}-{}.tar.gz", session.id, &hash[..12]));
+        remove_stale_temps(&dir, &session.id);
         write_gzip(&dir, &file, &tar, &hash)?;
         Ok((file, hash))
     })();
@@ -131,6 +132,33 @@ pub fn build_tar(mut entries: Vec<ArchiveEntry>) -> Result<Vec<u8>> {
 /// Writes the gzip file. An archive file is never overwritten. Its name
 /// holds the hash of its content: a file that exists must be that archive,
 /// and the step fails if it is not.
+/// The process ID in the name of a temporary archive file of a session:
+/// `<session>-<12 hex>.tar.tmp<pid>`, which [`write_gzip`] writes before the
+/// final name.
+pub fn temp_archive_pid(name: &str, session_id: &str) -> Option<u32> {
+    let rest = name.strip_prefix(session_id)?.strip_prefix('-')?;
+    let (hash, pid) = rest.split_once(".tar.tmp")?;
+    if hash.len() != 12 || !hash.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return None;
+    }
+    pid.parse().ok()
+}
+
+/// Deletes the temporary archive files of a session whose process no longer
+/// runs: what an archive step left that was killed during its write.
+/// Reason: such a file holds part of the transcript, and nothing else
+/// deletes it. Failures are ignored; the next step tries again.
+fn remove_stale_temps(dir: &Path, session_id: &str) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(pid) = name.to_str().and_then(|n| temp_archive_pid(n, session_id)) else { continue };
+        if !pid_alive(pid) {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
 fn write_gzip(dir: &Path, file: &Path, tar: &[u8], hash: &str) -> Result<()> {
     fs::create_dir_all(dir).with_context(|| msg::fs::cannot_create(dir.display()))?;
     if file.exists() {

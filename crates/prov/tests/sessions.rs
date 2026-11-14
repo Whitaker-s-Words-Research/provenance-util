@@ -480,6 +480,8 @@ fn an_archive_process_killed_during_its_write() {
         .collect();
     eprintln!("one step: {full:?}; killed before the end: {cut} of 5; temporary files left: {leftovers:?}");
     assert!(cut >= 3, "the kills came too late to test anything");
+    // The step that ran again deleted what the killed one left.
+    assert!(leftovers.is_empty(), "{leftovers:?}");
 }
 
 /// R-SWEEP-2 when a contention ends: the `SessionEnd` of one of two sessions

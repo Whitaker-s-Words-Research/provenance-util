@@ -307,7 +307,8 @@ fn merge_check(ctx: &Ctx, branch: &str, own: &BTreeSet<String>) -> Result<()> {
     Ok(())
 }
 
-/// The archive files of a session: `<session>-<12 hex>.tar.gz`.
+/// The archive files of a session: `<session>-<12 hex>.tar.gz`, and the
+/// temporary files `<session>-<12 hex>.tar.tmp<pid>` of a killed archive step.
 fn archives_of(dir: &Path, id: &str) -> Result<Vec<PathBuf>> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
@@ -324,7 +325,8 @@ fn archives_of(dir: &Path, id: &str) -> Result<Vec<PathBuf>> {
             .and_then(|rest| rest.strip_prefix('-'))
             .and_then(|rest| rest.strip_suffix(".tar.gz"))
             .is_some_and(|hash| hash.len() == 12 && hash.bytes().all(|b| b.is_ascii_hexdigit()));
-        if is_archive {
+        // A temporary file of a killed archive step holds part of the transcript.
+        if is_archive || crate::archive::temp_archive_pid(name, id).is_some() {
             out.push(entry.path());
         }
     }

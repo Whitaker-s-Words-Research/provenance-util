@@ -118,6 +118,21 @@ fn discard_refuses_what_another_ref_or_a_live_session_needs() {
     assert!(archive.is_file());
 }
 
+/// A killed archive step leaves a temporary file with part of the
+/// transcript. `prov discard` deletes it with the archives.
+#[test]
+fn discard_deletes_the_temporary_file_of_a_killed_archive_step() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let (_, archive) = archived_branch(&env, &repo, "leftover", "sess-left");
+    let name = archive.file_name().unwrap().to_string_lossy().replace(".tar.gz", ".tar.tmp999999");
+    let temp = archive.with_file_name(name);
+    std::fs::write(&temp, b"part of a transcript").unwrap();
+    let out = json(&env.prov(&repo, ["discard", &branch("leftover"), "--yes", "--json"]).success().stdout);
+    assert!(out["archives"].as_array().unwrap().iter().any(|a| a.as_str() == temp.to_str()), "{out}");
+    assert!(!temp.exists() && !archive.exists());
+}
+
 #[test]
 fn discard_finishes_an_interrupted_discard() {
     let Some(env) = Env::new() else { return };
