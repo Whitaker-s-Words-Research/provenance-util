@@ -1,0 +1,130 @@
+CHANGELOG.md
+  h_dd7dcb3bf4c9d1 3,7-32,36-39,43-64,112,116-121,125-126
+PLAN.md
+  h_dd7dcb3bf4c9d1 7-8,11,19-20,26-28,47
+README.md
+  h_dd7dcb3bf4c9d1 76-77
+SPEC.md
+  h_dd7dcb3bf4c9d1 64,66,80,93,104,108,118,136-137,144,168,173,206,218,232-233,237-238,321,326,329,362,412,423-431,437,440,466-468,470,513-518,522,529,534,536-543,549-550,571,639,660,663,677,700,748,777,822,824,933-948,997
+ci/Containerfile
+  h_dd7dcb3bf4c9d1 3-4,27-37
+crates/prov-core/src/state.rs
+  h_dd7dcb3bf4c9d1 637-641
+crates/prov-git/src/lib.rs
+  h_dd7dcb3bf4c9d1 98-102,178-227,339-345,348,453-497,502-527
+crates/prov-gitai/src/lib.rs
+  h_dd7dcb3bf4c9d1 391-396,399,404
+crates/prov-messages/src/agent_hook.rs
+  h_dd7dcb3bf4c9d1 47
+crates/prov-messages/src/check.rs
+  h_dd7dcb3bf4c9d1 70-83
+crates/prov-messages/src/cp.rs
+  h_dd7dcb3bf4c9d1 16-33
+crates/prov-messages/src/discard.rs
+  h_dd7dcb3bf4c9d1 1-126
+crates/prov-messages/src/doctor.rs
+  h_dd7dcb3bf4c9d1 94,98,125,131,157-159
+crates/prov-messages/src/finish.rs
+  h_dd7dcb3bf4c9d1 28
+crates/prov-messages/src/gate.rs
+  h_dd7dcb3bf4c9d1 17-18,22-25,64,72,83,124-130
+crates/prov-messages/src/git.rs
+  h_dd7dcb3bf4c9d1 8-9
+crates/prov-messages/src/git_hook.rs
+  h_dd7dcb3bf4c9d1 58
+crates/prov-messages/src/lib.rs
+  h_dd7dcb3bf4c9d1 41
+crates/prov-messages/src/revise.rs
+  h_dd7dcb3bf4c9d1 43-45,48-57,61-76,78-79
+crates/prov-messages/src/session.rs
+  h_dd7dcb3bf4c9d1 97,99-100
+crates/prov-messages/src/start.rs
+  h_dd7dcb3bf4c9d1 5-8
+crates/prov/src/agent_hook.rs
+  h_dd7dcb3bf4c9d1 54-59,108-120
+crates/prov/src/approve.rs
+  h_dd7dcb3bf4c9d1 119
+crates/prov/src/archive.rs
+  h_dd7dcb3bf4c9d1 7,25-26,89,135-161
+crates/prov/src/check.rs
+  h_dd7dcb3bf4c9d1 8,40-42,72-125,197-202,216-217,220,243,250-251,284,326-329,346,422-426,428-430
+crates/prov/src/copy_check.rs
+  h_dd7dcb3bf4c9d1 6,139,144,224-226,235-236,238-247,284-286,288-302,304-305,307-316,318-322,328-329,332,334
+crates/prov/src/cp.rs
+  h_dd7dcb3bf4c9d1 157-167,171-239,378,380-382,413,415
+crates/prov/src/detach.rs
+  h_dd7dcb3bf4c9d1 1-57
+crates/prov/src/discard.rs
+  h_dd7dcb3bf4c9d1 13,72,75,88-92,95,97,100,109,112,128,139,182,185,210,222,225,233,237,243,286,300,307-308,313,325-326,344,347,351-361,366,383,387,389,392,396-397,401,403,405,408,410
+crates/prov/src/doctor.rs
+  h_dd7dcb3bf4c9d1 243,246,278-280,487-491
+crates/prov/src/gate.rs
+  h_dd7dcb3bf4c9d1 11,56-60,62-63,99,160-165,173,198,220,225-234,271-291,303,383-388,422,442,473-474
+crates/prov/src/init.rs
+  h_dd7dcb3bf4c9d1 127-128
+crates/prov/src/main.rs
+  h_dd7dcb3bf4c9d1 12,51,54,63,77,93,109,112,124,127,136-138,140-141,144,146,158,161,201-202,211,214,226,234,239,242,245,253,256,281,284,321,324,367
+crates/prov/src/revise.rs
+  h_dd7dcb3bf4c9d1 1-2,4-9,11,22,26-49,61-67,70-77,83,91-95,97-99,107,109-114,135-140,142-143,145,155,160,166-184,186-192,195-197,200,207,209-213,216,229-239,247-285,289-314,317-321,327-332,339,347-353,356-361,388-394,404-405
+crates/prov/src/session.rs
+  h_dd7dcb3bf4c9d1 1,14,183,190
+crates/prov/src/start.rs
+  h_dd7dcb3bf4c9d1 58-64,70-76,88-90
+crates/prov/src/sweep.rs
+  h_dd7dcb3bf4c9d1 39-43,54-57
+crates/prov/tests/commands.rs
+  h_dd7dcb3bf4c9d1 111-118,198-208,238,248,255,517,534
+crates/prov/tests/common/mod.rs
+  h_dd7dcb3bf4c9d1 154-175,445-449
+crates/prov/tests/copy.rs
+  h_dd7dcb3bf4c9d1 330-338,351-525
+crates/prov/tests/discard.rs
+  h_dd7dcb3bf4c9d1 121-135,153-261
+crates/prov/tests/gate.rs
+  h_dd7dcb3bf4c9d1 74-79,469,477-606
+crates/prov/tests/gitai_contract.rs
+  h_dd7dcb3bf4c9d1 242-307
+crates/prov/tests/revise.rs
+  h_dd7dcb3bf4c9d1 41,44-56,58-59,66-67,73-74,102-103,106-108,110-111,117-160
+crates/prov/tests/sessions.rs
+  h_dd7dcb3bf4c9d1 9,382,391,410-510
+crates/prov/tests/snapshots/help.txt
+  h_dd7dcb3bf4c9d1 12,34-35,45,58,74,77-78,95,100-104,115,127,130,133,139-140,152-153,167-168,181-182,199-200,206,212,215,228-229,273-274
+docs/ci.md
+  h_dd7dcb3bf4c9d1 36
+docs/commands.md
+  h_dd7dcb3bf4c9d1 13,30,54,93,96,98-99,101,111,118
+docs/configuration.md
+  h_dd7dcb3bf4c9d1 24,43
+docs/copying.md
+  h_dd7dcb3bf4c9d1 16
+docs/development.md
+  h_dd7dcb3bf4c9d1 50
+docs/getting-started.md
+  h_dd7dcb3bf4c9d1 7,9,12
+docs/how-it-works.md
+  h_dd7dcb3bf4c9d1 66
+docs/record.md
+  h_dd7dcb3bf4c9d1 41
+docs/troubleshooting.md
+  h_dd7dcb3bf4c9d1 36,40,44,47,53-54,57,94
+docs/workflow.md
+  h_dd7dcb3bf4c9d1 34,44,49,81,89-90,122,132,139,181
+tla/ProvIntegration.tla
+  h_dd7dcb3bf4c9d1 35-36
+tla/ProvSessions.tla
+  h_dd7dcb3bf4c9d1 116
+tla/ProvSweep.tla
+  h_dd7dcb3bf4c9d1 147-152,155-169
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "e1e86a5d5d4429346421827f12fdf7b7d80d2cba",
+  "prompts": {},
+  "humans": {
+    "h_dd7dcb3bf4c9d1": {
+      "author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
