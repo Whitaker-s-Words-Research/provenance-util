@@ -55,13 +55,25 @@ fn random_name() -> Result<String> {
     Ok(format!("{:02x}{:02x}", bytes[0], bytes[1]))
 }
 
-/// The directory that holds the worktree: `--path`, or `../<repo>.worktrees/`
-/// from the base directory.
+/// The git config key of the clone for the directory that holds the worktrees.
+const WORKTREES_DIR_KEY: &str = "prov.worktreesDir";
+
+/// The directory that holds the worktree: `--path`, then `prov.worktreesDir`
+/// from the git config of the clone, then `../<repo>.worktrees/` from the
+/// base directory. A relative `prov.worktreesDir` resolves against the base
+/// directory.
 fn worktrees_dir(ctx: &Ctx, path: Option<&Path>) -> Result<PathBuf> {
     if let Some(path) = path {
         return absolute(path);
     }
     let base = ctx.repo.base_dir();
+    if let Some(dir) = ctx.repo.config_value(WORKTREES_DIR_KEY)?.filter(|d| !d.trim().is_empty()) {
+        let dir = PathBuf::from(dir.trim());
+        if dir.is_relative() && !dir.starts_with("~") {
+            return absolute(&base.join(dir));
+        }
+        return absolute(&dir);
+    }
     let name = base.file_name().and_then(|n| n.to_str()).context(msg::start::BASE_NO_NAME)?;
     Ok(base.parent().context(msg::start::BASE_NO_PARENT)?.join(format!("{name}.worktrees")))
 }
@@ -73,6 +85,9 @@ fn worktree_name(branch: &str) -> String {
 }
 
 pub fn run(args: &Args) -> Result<bool> {
+    if let Some(var) = prov_adapters::agent_env_marker() {
+        bail!(msg::start::agent_env(var));
+    }
     let ctx = Ctx::here()?;
     let repo = &ctx.repo;
     let config = repo.config_here()?;

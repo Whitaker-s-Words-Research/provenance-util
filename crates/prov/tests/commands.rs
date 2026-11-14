@@ -187,6 +187,17 @@ fn start_session_approve_finish_and_trace() {
     env.prov(&repo, ["start", "claude", "--no-launch", "--name", "bad name"]).failure();
     env.prov(&repo, ["start", "claude", "--no-launch", "--branch", "feature/x"]).failure();
     env.prov(&repo, ["start", "other", "--no-launch"]).failure();
+    // Only a human starts a session.
+    let agent = env.run(&repo, "prov", ["start", "claude", "--no-launch", "--name", "self"], &[("CLAUDECODE", "1")], None).failure();
+    assert!(agent.stderr.contains("only a human can start a session"), "{}", agent.stderr);
+    // `prov.worktreesDir` in the git config of the clone, relative to the base directory.
+    env.git(&repo, ["config", "prov.worktreesDir", "../elsewhere"]);
+    let moved = json(&env.prov(&repo, ["start", "claude", "--name", "moved", "--dry-run", "--json"]).success().stdout);
+    assert_eq!(Path::new(moved["worktree"].as_str().unwrap()).parent().unwrap(), env.repos().join("elsewhere"), "{moved}");
+    // --path wins over it.
+    let given = json(&env.prov(&repo, ["start", "claude", "--name", "given", "--dry-run", "--json", "--path", env.repos().join("p").to_str().unwrap()]).success().stdout);
+    assert!(given["worktree"].as_str().unwrap().starts_with(env.repos().join("p").to_str().unwrap()), "{given}");
+    env.git(&repo, ["config", "--unset", "prov.worktreesDir"]);
 
     let session = "sess-flow";
     let (wt, branch) = started_session(&env, &repo, "flow", session);

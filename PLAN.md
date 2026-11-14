@@ -28,7 +28,6 @@ The specification is [SPEC.md](SPEC.md); read it first. It has the rules with th
 Each goes to the owner as a question with a recommendation.
 
 - `prov revisions`, a report of the revisions of each integration, is out of scope for now (owner, 2026-11-13).
-- A config key for the worktrees directory, so that agent worktrees can live on a local disk when the repository is on a slow mount.
 - Choices from session 2 that the spec does not fix, never confirmed by the owner:
     - `prov approve` reads the typed `yes` from `/dev/tty`. With no terminal it refuses. `--dry-run` shows the items with no prompt.
     - `prov session archive` and `prov finish --override` run the archive step in the foreground, not in a detached process.
@@ -36,7 +35,6 @@ Each goes to the owner as a question with a recommendation.
     - `prov doctor` decides "git-ai allows the repository" from `git-ai config allow_repositories` and `exclude_repositories`, matched against the remote URLs. This repeats git-ai's rule; git-ai has no command that answers the question.
     - `prov trace export` finds the commits with a note through `git notes --ref=ai list`. The content comes from `git-ai diff --json`.
     - The content hash of a `--human` or `--ai` approval is the git blob ID of the file.
-    - `prov start` is not refused for an agent. The spec says "run by a human" and gives no refusal.
     - The JSON Schema validator is written in-house (`crates/prov/src/schema.rs`), for the keywords that the pinned schema uses.
 - Choices from session 3 made without asking:
     - How `prov cp` reads `<dest>`: one file, one directory, several sources.

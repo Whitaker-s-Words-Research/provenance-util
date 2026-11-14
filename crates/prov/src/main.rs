@@ -197,7 +197,8 @@ struct StartArgs {
     from: Option<String>,
     /// The directory that holds the worktree. The worktree is a new
     /// directory in it, named after the branch. A leading `~` is the home
-    /// directory. Default: `../<repo>.worktrees/`.
+    /// directory. Default: `prov.worktreesDir` from the git config of the
+    /// clone, or `../<repo>.worktrees/`.
     #[arg(long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
     path: Option<PathBuf>,
     /// Create the worktree, print its path, and do not start the agent.

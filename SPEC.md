@@ -90,7 +90,7 @@ Each agent session works in its own worktree, never in a human worktree. Reason:
 
 ### Starting a session
 
-`prov start <agent>` creates a worktree on a new agent branch and starts the agent in that worktree. This command is optional. A person can also run `git worktree add` and start the agent. The agent's SessionStart hook binds the session to the worktree in both cases.
+`prov start <agent>` creates a worktree on a new agent branch and starts the agent in that worktree. This command is optional. Only a human runs it: it refuses when an agent environment variable is set (owner decision, 2026-11-13). Reason: an agent must not open sessions and worktrees by itself. A person can also run `git worktree add` and start the agent. The agent's SessionStart hook binds the session to the worktree in both cases.
 
 ```text
 prov start <agent> [options] [-- <agent arguments>]
@@ -101,11 +101,11 @@ prov start <agent> [options] [-- <agent arguments>]
 | `--name <slug>` | 4 random hex characters | The `<name>` part of the branch name. Letters, digits and `-` only. |
 | `--branch <name>` | `agent/<agent>/<YYYYMMDD>-<name>` | Full branch name. It must match `agent/**`. |
 | `--from <ref>` | the branch that is checked out | Start point of the new branch. |
-| `--path <dir>` | `../<repo>.worktrees/`, from the base directory | The directory that holds the worktree. `<repo>` is the name of the base directory. The worktree is the directory `<dir>/<branch>`, with the leading `agent/` removed and each `/` replaced by `-`: `agent/claude/20261112-71fe` gives `claude-20261112-71fe`. A leading `~` is the home directory. Reason: the shell does not expand `~` in `--path=~/dir`. With `--resume`, this applies when `--path` is given or the session has no record. |
+| `--path <dir>` | `prov.worktreesDir` from the git config of the clone, or `../<repo>.worktrees/`, from the base directory | The directory that holds the worktree. `<repo>` is the name of the base directory. The worktree is the directory `<dir>/<branch>`, with the leading `agent/` removed and each `/` replaced by `-`: `agent/claude/20261112-71fe` gives `claude-20261112-71fe`. A leading `~` is the home directory. Reason: the shell does not expand `~` in `--path=~/dir`. With `--resume`, this applies when `--path` is given or the session has no record. |
 | `--no-launch` | off | Create the worktree, print its path, and do not start the agent. Use this for agents in an IDE. |
 | `--resume <session>` | none | Open the worktree of that session and start the agent with its resume option. If the worktree was removed, `prov` creates it again on the session's branch. If the session has no record, also give `--branch`. |
 
-`prov` names the branch, not the session. Reason: the agent assigns the session ID at SessionStart, after the branch exists. The branch and worktree names are fixed conventions, not config keys. The date is the local date. It makes `git branch --list 'agent/*'` sort by time. If the branch exists, `prov start` stops with an error.
+`prov` names the branch, not the session. Reason: the agent assigns the session ID at SessionStart, after the branch exists. The branch and worktree names are fixed conventions, not config keys. The directory that holds the worktrees can be set for one clone with `git config prov.worktreesDir <dir>`. A relative value resolves against the base directory. It is a git config key, not a key of `.provenance.toml`. Reason: the right place depends on the machine, for example a local disk when the repository is on a slow mount, and `.provenance.toml` is shared by every clone (owner decision, 2026-11-13). The date is the local date. It makes `git branch --list 'agent/*'` sort by time. If the branch exists, `prov start` stops with an error.
 
 ### Binding rules
 

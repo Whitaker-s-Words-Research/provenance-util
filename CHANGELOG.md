@@ -87,6 +87,8 @@ Bug Fixes: clippy findings, a race in the git-ai service test, and `.gitignore` 
 - SPEC and the docs require a merge commit when a human branch goes into another one on a forge, for example a feature branch into `main`. A squash merge hides the AI lines from `prov check`.
 - `prov revise` counts lines inserted next to a merged line, counts lines that an earlier revision of the same merge changed, and takes `--of` more than once, with one `Prov-Revises` trailer for each merge. Before, it refused a revision that only inserted lines, and a second pass over revised lines.
 - `prov check <base>..<tip>` warns about a commit that adds lines and has no git-ai note, for example a squash made on a forge. The warning does not fail the check.
+- `prov start` refuses when an agent runs it.
+- `git config prov.worktreesDir <dir>` sets the directory of the agent worktrees for one clone.
 - `prov session close` is now `prov session archive`. Reason: "close" was easy to confuse with `prov finish`.
 - Every `--dry-run` and `--json` option has a help text.
 

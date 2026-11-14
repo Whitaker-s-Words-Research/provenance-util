@@ -40,7 +40,7 @@ These are not config keys.
 |---|---|
 | Agent branches | `agent/**` |
 | Name of a new agent branch | `agent/<agent>/<YYYYMMDD>-<name>` |
-| Worktrees | `../<repo>.worktrees/`, from the base directory |
+| Worktrees | `../<repo>.worktrees/`, from the base directory. For one clone, set another directory with `git config prov.worktreesDir <dir>`, for example a local disk when the repository is on a slow mount. |
 | Transcript archives | `<logs_dir>/<agent>/<session>-<12 hex characters of the hash>.tar.gz` |
 | Agent names | `claude` (adapter `claude-code`) |
 | Agent commit identity | `Claude <noreply@anthropic.com>` for Claude Code |
