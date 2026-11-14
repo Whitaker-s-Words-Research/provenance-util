@@ -672,7 +672,7 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 
 | Command | Run by | Effect |
 |---|---|---|
-| `prov init [--agent <name>]... [--force]` | Human, once in each clone | Writes `.provenance.toml`, the shims in the hooks directory and the Claude Code settings. Sets `merge.ff` and `pull.ff`. Adds `logs_dir` to `.gitignore` if it is inside a worktree. Refuses to overwrite a changed file without `--force`. |
+| `prov init [--agent <name>]... [--force]` | Human, once in each clone | Writes `.provenance.toml`, the shims in the hooks directory and the Claude Code settings. Sets `merge.ff` and `pull.ff`. Adds `logs_dir` to `.gitignore` if it is inside a worktree. Keeps an existing `.provenance.toml` that parses, and refuses to overwrite another changed file or hook without `--force`. `--force` always writes `.provenance.toml` again from the defaults, with the agents of `--agent` (owner decision, 2026-11-13). Reason: `--force` then has one meaning, a reset to the defaults. Commit your own settings first; git shows what the reset changed. |
 | `prov doctor [--deep]` | Human | Checks the items in "Doctor checks". Exit code 1 if one check fails. |
 | `prov check [<agent branch> \| <base>..<tip>]` | Human, CI | See "Checking". |
 | `prov start <agent>` | Human | See "Starting a session". |

@@ -89,6 +89,7 @@ Bug Fixes: clippy findings, a race in the git-ai service test, and `.gitignore` 
 - `prov check <base>..<tip>` warns about a commit that adds lines and has no git-ai note, for example a squash made on a forge. The warning does not fail the check.
 - `prov start` refuses when an agent runs it.
 - `git config prov.worktreesDir <dir>` sets the directory of the agent worktrees for one clone.
+- `prov init --force` always writes `.provenance.toml` again from the defaults. Before, it kept a file that parsed unless `--agent` named other agents.
 - `prov session close` is now `prov session archive`. Reason: "close" was easy to confuse with `prov finish`.
 - Every `--dry-run` and `--json` option has a help text.
 

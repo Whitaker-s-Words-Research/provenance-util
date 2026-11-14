@@ -27,7 +27,7 @@ prov init [--agent <name>]... [--force]
 Writes `.provenance.toml`, the hook shims and `.claude/settings.json`, sets `merge.ff = false` and `pull.ff = only`, and adds `logs_dir` to `.gitignore`. See [Getting started](getting-started.md#setting-up-a-repository).
 
 - `--agent <name>`: an agent in use. Default: the agents in the config, or `claude`.
-- It keeps an existing `.provenance.toml` that parses. `--force` replaces a file, a hook or a settings value that has other content.
+- It keeps an existing `.provenance.toml` that parses. `--force` writes `.provenance.toml` again from the defaults, which removes your own settings such as extra protected paths and `known_gaps`; `git diff` shows them. It also replaces a hook or a settings value that has other content.
 - The hooks directory must be outside every worktree, so that an agent branch cannot replace the hooks that run during its own merge. `prov init` accepts a `core.hooksPath` only if it is an absolute path outside every worktree.
 
 ## `prov doctor`

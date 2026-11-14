@@ -108,6 +108,14 @@ fn init_sets_up_a_clone_and_doctor_passes() {
     assert!(again["actions"].as_array().unwrap().iter().all(|a| a["result"] == "kept"), "{again}");
     assert_eq!(env.git(&repo, ["status", "--porcelain"]), "");
 
+    // A changed config is kept, and `--force` writes the defaults again.
+    let defaults = std::fs::read_to_string(repo.join(".provenance.toml")).unwrap();
+    std::fs::write(repo.join(".provenance.toml"), defaults.replace("protected = [", "protected = [\"secrets/**\", ")).unwrap();
+    env.prov(&repo, ["init"]).success();
+    assert!(std::fs::read_to_string(repo.join(".provenance.toml")).unwrap().contains("secrets/**"));
+    env.prov(&repo, ["init", "--force"]).success();
+    assert_eq!(std::fs::read_to_string(repo.join(".provenance.toml")).unwrap(), defaults);
+
     // A failing local hook makes the hook fail.
     std::fs::write(hooks.join("pre-commit.local"), "#!/bin/sh\nexit 1\n").unwrap();
     std::fs::write(repo.join("x.txt"), "x\n").unwrap();

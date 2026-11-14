@@ -31,7 +31,6 @@ Each goes to the owner as a question with a recommendation.
 - Choices from session 2 that the spec does not fix, never confirmed by the owner:
     - `prov approve` reads the typed `yes` from `/dev/tty`. With no terminal it refuses. `--dry-run` shows the items with no prompt.
     - `prov session archive` and `prov finish --override` run the archive step in the foreground, not in a detached process.
-    - `prov init` keeps an existing `.provenance.toml` that parses. It replaces the file only with `--force`, and only when `--agent` asks for other agents or the file does not parse. It replaces a differing value in `.claude/settings.json` only with `--force`.
     - `prov doctor` decides "git-ai allows the repository" from `git-ai config allow_repositories` and `exclude_repositories`, matched against the remote URLs. This repeats git-ai's rule; git-ai has no command that answers the question.
     - `prov trace export` finds the commits with a note through `git notes --ref=ai list`. The content comes from `git-ai diff --json`.
     - The content hash of a `--human` or `--ai` approval is the git blob ID of the file.
