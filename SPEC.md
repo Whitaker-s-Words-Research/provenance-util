@@ -61,7 +61,7 @@ Not in any version:
 
 ## Rules for all commands
 
-- `prov` changes git state only through the `git` command. It writes inside `.git` only in `.git/provenance/` and the hook shims in the hooks directory.
+- `prov` changes git state only through the `git` command. It writes inside `.git` only in `.git/provenance/`, the hook shims in the hooks directory, and a commit message that git is preparing: the file that git gives to `prepare-commit-msg`, or `.git/MERGE_MSG` during a merge. It changes a message only through `git interpret-trailers`. Reason: the gate and `prov approve --merge` record their results as trailers of the merge message (owner decision, 2026-11-13).
 - `prov` never writes git-ai data. It sets authorship only through public git-ai checkpoints, and git-ai writes the note.
 - `prov` reads authorship only through the JSON output of git-ai: `git-ai diff <commit> --json`, `git-ai blame <file> --json` and `git-ai stats <commit> --json`. It has no parser for the note format. Before it reads the note of a new commit, it runs `git-ai await --timeout 60`.
     - **Reason**: git-ai writes a note 1 to 6 seconds after the commit, after the commit hooks finish.
@@ -141,7 +141,7 @@ Agent work reaches a human branch only through an integration.
 - An Open session is stale when no agent event arrives for 24 hours, or when the agent process does not exist. Stale is calculated when the state is read. It is not stored.
 - To find the agent process, `prov` uses `CLAUDE_PID` for Claude Code and the parent process for other agents.
 - Each record has a generation. It increases by 1 each time the session enters Open or Closing.
-- `prov session archive <id>` moves an Open session to Closing. For a Failed session, it runs the archive step again. If the agent process still runs and `prov` knows its process ID, the session stays Closing until the process exits (R-SESS-3). `prov session archive` then prints the process ID that it waits for. If `prov` does not know the process ID, `prov session archive` and `prov finish` print a warning that names the accepted limit of R-SESS-3.
+- `prov session archive <id>` moves an Open session to Closing. It runs the archive step in the foreground, as `prov finish --override` does: the command waits and shows the result. Reason: a person who runs it wants to see whether the archive succeeded (owner decision, 2026-11-13). SessionEnd starts a detached process instead, because the agent gives the hook little time. For a Failed session, it runs the archive step again. If the agent process still runs and `prov` knows its process ID, the session stays Closing until the process exits (R-SESS-3). `prov session archive` then prints the process ID that it waits for. If `prov` does not know the process ID, `prov session archive` and `prov finish` print a warning that names the accepted limit of R-SESS-3.
 - `prov session drop <id>` deletes the record of a session. It keeps the transcript archive.
 - `prov doctor` reports stale and Failed sessions.
 - An integration deletes the records of the sessions on its branch. See "Sessions of an integration".
@@ -464,9 +464,9 @@ To stop instead, run `git merge --abort`.
 - Only a human can approve. `prov approve` refuses in every agent worktree, and when an agent environment variable is set.
 - Only a human can integrate. The gate refuses an integration when an agent environment variable is set. Reason: `git merge` runs no `pre-commit`, so the refusal of an agent commit on a human branch does not cover a merge commit. An agent session in a human worktree could otherwise merge an agent branch and write `Prov-Approved` trailers into the merge message itself.
 - A `Prov-Approved` trailer records the decision of the human who made the integration. It does not show that `prov approve` was used: a human can also write the trailer by hand.
-- `prov approve` asks for a typed `yes` at a terminal. For a protected path, it first shows the diff of that path between the human branch (`HEAD` of the merge) and the incoming tip.
+- `prov approve` asks for a typed `yes` at a terminal. It reads the answer from `/dev/tty`. With no terminal, it refuses; `--dry-run` shows the items without a question. Reason: an approval is a person's decision, so a script or an agent cannot pipe in the answer (owner decision, 2026-11-13). For a protected path, it first shows the diff of that path between the human branch (`HEAD` of the merge) and the incoming tip.
 - A merge approval exists only in the merge message of the merge in progress. `git merge --abort` discards it. `prov` keeps no other record of it, and you cannot approve before you start the merge.
-- `--human` and `--ai` are for lines whose author git-ai cannot know. Examples: code that you paste from an AI tool in a browser (`--ai`), and the output of a generator that you ran (`--human`). The approval stays in live state with the hash of the file content. A change to the file cancels it.
+- `--human` and `--ai` are for lines whose author git-ai cannot know. Examples: code that you paste from an AI tool in a browser (`--ai`), and the output of a generator that you ran (`--human`). The approval stays in live state with the git blob ID of the file content. Reason: git computes it already, and it is the ID that git uses for the content (owner decision, 2026-11-13). A change to the file cancels it.
 - `--human` and `--ai` apply to a complete file: to every change in it since the last checkpoint. They cannot mark a part of the changes.
 - At the commit, `prepare-commit-msg` adds `Prov-Approved: <path> human` or `Prov-Approved: <path> ai`. Then `prov` deletes the live state.
 - A checkpoint affects only the next commit. To change the authorship of committed lines, see "Replacing the authorship of a file".
@@ -655,10 +655,10 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 
 ## Trace export (optional)
 
-`prov trace export [<range>]` writes Agent Trace records as JSON Lines, one record per commit with a note. The default range is the branch that is checked out. It reads each commit with `git-ai diff <commit> --json`.
+`prov trace export [<range>]` writes Agent Trace records as JSON Lines, one record per commit with a note. The default range is the branch that is checked out. It finds the commits with a note with one `git notes --ref=ai list`, and reads each commit with `git-ai diff <commit> --json`. Reason: listing which commits have a note reads git, not the note format; asking git-ai for every commit would cost one process per commit (owner decision, 2026-11-13).
 
 - The schema is Agent Trace 0.1.0, pinned in `vendor/agent-trace/0.1.0/` with its CC BY 4.0 notice. `prov` supports only this version.
-- `prov` validates each record against the pinned schema before it writes the record.
+- `prov` validates each record against the pinned schema before it writes the record. The validator is written in-house (`crates/prov/src/schema.rs`) and knows only the keywords that the pinned schema uses. A keyword that it does not know is an error, so a new schema cannot pass without notice. Reason: a full JSON Schema crate brings many dependencies for one small, fixed schema (owner decision, 2026-11-13).
 - `version` is `"0.1"`. Reason: the schema requires the pattern `^[0-9]+\.[0-9]+$`.
 - `id` is a version 5 UUID of the commit SHA, in a fixed namespace that the `prov` source defines.
 - `timestamp` is the committer date of the commit.

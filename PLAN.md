@@ -5,7 +5,7 @@ The specification is [SPEC.md](SPEC.md); read it first. It has the rules with th
 ## Status
 
 - Phase 1 is done and merged into `main`: the core (sessions, hooks, sweep, merge gate, `prov check`), the commands, `prov cp`, `prov discard` (R-DISC-1), `prov revise` (R-REV-1), and the rules from the TLA+ model review.
-- The review of 2026-11-13 is worked through on the branch `agent/claude/20261113-6631`, not merged yet: whole-file items for binary files, mode changes and deleted files; the gate refuses an agent; merge commits only for human branches on a forge; `prov revise` counts insertions, later passes and several merges; `prov session close` is renamed to `prov session archive`.
+- The review of 2026-11-13 is worked through on the branch `agent/claude/20261113-6631`, not merged yet: whole-file items for binary files, mode changes and deleted files; the gate refuses an agent; merge commits only for human branches on a forge; `prov revise` counts insertions, later passes and several merges; `prov session close` is renamed to `prov session archive`; `prov check` warns about commits with no note. The open decisions of PLAN.md were decided on 2026-11-13 and 2026-11-14: `prov start` refuses an agent, `prov.worktreesDir`, `prov init --force` resets the config, the `allow_repositories` contract test, and the other choices written into SPEC.
 - Version 0.1.0, not released. There is no release process yet (SPEC, "Build and release").
 
 - Checks: 117 tests (`ci/dev.sh test --workspace --locked`; on 2026-11-13 also on the 9p mount with `PROV_TEST_REPOS`, all passed), 29 TLA+ model configs (`ci/dev.sh --models`), clippy with `-D warnings`.
@@ -28,20 +28,7 @@ The specification is [SPEC.md](SPEC.md); read it first. It has the rules with th
 Each goes to the owner as a question with a recommendation.
 
 - `prov revisions`, a report of the revisions of each integration, is out of scope for now (owner, 2026-11-13).
-- Choices from session 2 that the spec does not fix, never confirmed by the owner:
-    - `prov approve` reads the typed `yes` from `/dev/tty`. With no terminal it refuses. `--dry-run` shows the items with no prompt.
-    - `prov session archive` and `prov finish --override` run the archive step in the foreground, not in a detached process.
-    - `prov trace export` finds the commits with a note through `git notes --ref=ai list`. The content comes from `git-ai diff --json`.
-    - The content hash of a `--human` or `--ai` approval is the git blob ID of the file.
-    - The JSON Schema validator is written in-house (`crates/prov/src/schema.rs`), for the keywords that the pinned schema uses.
-- Items from an earlier spec review, known only by name. Ask the owner for the review's text:
-    - The incoming range when an agent branch merged a different human branch.
-    - `post-merge` and the first-parent line.
-    - `MERGE_MSG` and the rule near SPEC line 63 (`prov` writes inside `.git` only in `.git/provenance/` and the hook shims).
-    - git-ai `allow_repositories`.
-    - Untested environment variables.
-    - `prov approve` without a terminal.
-- The release process.
+- The release process. Left open (owner, 2026-11-13): there is one user, and the `Prov-Version: <version>+<build SHA>` trailer of each integration already names the exact source.
 
 ## How a design decision is made
 
