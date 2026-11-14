@@ -151,6 +151,28 @@ impl Env {
         }
     }
 
+    /// Starts `program` with the environment of [`Env::run`], and returns at
+    /// once, for a test that stops the process.
+    pub fn spawn<I, S>(&self, dir: &Path, program: &str, args: I) -> std::process::Child
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        Command::new(program)
+            .current_dir(dir)
+            .args(args)
+            .env_clear()
+            .env("HOME", self.home())
+            .env("PATH", &self.path)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("LC_ALL", "C")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap_or_else(|e| panic!("cannot run {program}: {e}"))
+    }
+
     /// `prov` with a controlling terminal, as a human at a keyboard has.
     /// `input` is what the human types. Standard output and standard error
     /// are captured as in [`Env::run`].
