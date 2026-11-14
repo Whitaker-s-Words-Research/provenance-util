@@ -1,0 +1,48 @@
+PLAN.md
+  h_dd7dcb3bf4c9d1 9-11
+AGENTS.md
+  h_dd7dcb3bf4c9d1 65
+SPEC.md
+  h_dd7dcb3bf4c9d1 277,411,502-535,663,911-925
+ci/dev.sh
+  h_dd7dcb3bf4c9d1 10-11,25,35-40,43-74
+crates/prov-core/src/trailer.rs
+  h_dd7dcb3bf4c9d1 16-17
+crates/prov-messages/src/git_hook.rs
+  h_dd7dcb3bf4c9d1 95-99
+crates/prov-messages/src/lib.rs
+  h_dd7dcb3bf4c9d1 47
+crates/prov-messages/src/revise.rs
+  h_dd7dcb3bf4c9d1 1-60
+crates/prov/src/git_hook.rs
+  h_dd7dcb3bf4c9d1 272
+crates/prov/src/main.rs
+  h_dd7dcb3bf4c9d1 19,124-136,364
+crates/prov/src/revise.rs
+  h_dd7dcb3bf4c9d1 1-259
+crates/prov/tests/help.rs
+  h_dd7dcb3bf4c9d1 12-13
+crates/prov/tests/revise.rs
+  h_dd7dcb3bf4c9d1 1-101
+crates/prov/tests/snapshots/help.txt
+  h_dd7dcb3bf4c9d1 15,188-204
+docs/commands.md
+  h_dd7dcb3bf4c9d1 12,90-105
+docs/development.md
+  h_dd7dcb3bf4c9d1 25
+docs/record.md
+  h_dd7dcb3bf4c9d1 11,41
+docs/workflow.md
+  h_dd7dcb3bf4c9d1 112-122
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "0b8339f9cd02e4e731b6988410fd7f86d2648abb",
+  "prompts": {},
+  "humans": {
+    "h_dd7dcb3bf4c9d1": {
+      "author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
