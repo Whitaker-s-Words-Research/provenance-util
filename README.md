@@ -2,7 +2,7 @@
 
 `prov` keeps a record of what AI agents contribute to a git repository, and makes a human approve it before it reaches the main branch.
 
-> **Status: version 0.1.0, not released.** Everything in this README is built and tested on Linux and macOS is not tested yet. The full rules are in the specification, [SPEC.md](SPEC.md).
+> **Status: version 0.1.0, not released.** Everything in this README is built and tested on Linux and macOS is not tested yet.
 
 ## Background
 
@@ -30,7 +30,7 @@ De-Claude-ing the vile Claude-speak below is a work-in-progress. Everything belo
 
 ### Shortcomings of git-ai out of the box
 
-These were tested with git-ai 1.7.6. The evidence is in "Appendix: test evidence" in [SPEC.md](SPEC.md).
+These were tested with git-ai 1.7.6.
 
 - **Changes outside a tool call are missed.** git-ai attributes a change through the checkpoints around it, and its Claude Code hooks place one before and one after each tool call. A file that a process writes after the call returns, for example a development server or a script left running, has no checkpoint. The agent's own hooks also record the model as `unknown`.
 - **A line with no checkpoint gets a default author.** git-ai labels it by rules about the commit, not by what happened. Depending on who commits and what else is in the commit, the line goes to the committer as human, to an AI session that git-ai invents, or to no one.
@@ -103,9 +103,9 @@ The guides are in [docs/](docs/README.md):
 - [The record](docs/record.md): trailers, transcript archives and Agent Trace export.
 - [How it works](docs/how-it-works.md): hooks, the sweep, taint and session states.
 - [Troubleshooting](docs/troubleshooting.md): `prov doctor`, common problems, and the limits of `prov`.
-- [Developing prov](docs/development.md): building and testing in Podman, and the TLA+ models.
+- [Developing prov](docs/development.md): building and testing in Podman.
 
-The full rules, with their reasons and the test evidence, are in [SPEC.md](SPEC.md). The current status and open work are in [PLAN.md](PLAN.md).
+The full rules, with their reasons, are in [SPEC.md](SPEC.md).
 
 ## License
 

@@ -1,6 +1,6 @@
 # How it works
 
-This page explains what `prov` does behind the commands. The rules, with their reasons, are in [SPEC.md](../SPEC.md); rule IDs such as R-SWEEP-2 refer to it.
+This page explains what `prov` does behind the commands. The full rules, with their reasons, are in [SPEC.md](../SPEC.md).
 
 ## Ground rules
 
@@ -52,7 +52,7 @@ A checkpoint covers only the changes since the one before it. Lines already reco
 
 ## Taint
 
-`prov` cannot see who made a change, only that a file changed. So for each agent worktree it remembers the *owner*: the session it last saw as the only occupant. Every hook in the worktree first works out the occupants. If they are not exactly the owner, for example a session crashed and a new one started, or two sessions run at once, the changes on disk at that moment are *tainted* (R-SWEEP-2).
+`prov` cannot see who made a change, only that a file changed. So for each agent worktree it remembers the *owner*: the session it last saw as the only occupant. Every hook in the worktree first works out the occupants. If they are not exactly the owner, for example a session crashed and a new one started, or two sessions run at once, the changes on disk at that moment are *tainted*.
 
 Tainted changes get a checkpoint from a tool named `prov-unattributed`, with model `unknown` and a new conversation ID. No session record or trailer names it, so its lines are doubtful at the gate, and you decide. A tainted line that you approve still says that an AI wrote it, in a session nobody knows.
 
@@ -69,14 +69,14 @@ A worktree with no occupant gets no sweep. Its changes are tainted when the next
 
 *Stale* is not stored: an Open session is stale when no event arrived for 24 hours, or its agent process is gone.
 
-Each record has a generation, which goes up each time the session enters Open or Closing. An archive process belongs to one generation, and changes the state only if the session is still Closing with that generation. Without this, a session that ends, is resumed, works and ends again could be marked Archived with the first, shorter transcript (R-SESS-2).
+Each record has a generation, which goes up each time the session enters Open or Closing. An archive process belongs to one generation, and changes the state only if the session is still Closing with that generation. Without this, a session that ends, is resumed, works and ends again could be marked Archived with the first, shorter transcript.
 
 ## The archive step
 
-1. Wait until the agent process exits, if `prov` knows its process ID (`CLAUDE_PID`). An archive made while the agent works would miss its last work (R-SESS-3).
+1. Wait until the agent process exits, if `prov` knows its process ID (`CLAUDE_PID`). An archive made while the agent works would miss its last work.
 2. Build a tar file of the transcript and the session's directory: sorted entries, time 0, owner 0, mode 0644, so the same files always give the same bytes.
 3. Hash the tar bytes with SHA-256.
-4. Write the gzip-compressed archive to a temporary file, then give it its final name with an operation that fails if the name exists. An existing archive with the same hash counts as success; one with another hash is a failure. `prov` never overwrites an archive (R-ARCH-1).
+4. Write the gzip-compressed archive to a temporary file, then give it its final name with an operation that fails if the name exists. An existing archive with the same hash counts as success; one with another hash is a failure. `prov` never overwrites an archive.
 5. Set the state to Archived, or to Failed with the error.
 
 ## The model
@@ -93,7 +93,3 @@ All files are in `.git/provenance/` in the common git directory, so every worktr
 | `worktrees/<key>.json` | the owner of one agent worktree | `prov finish`, or `prov doctor` finds the worktree gone |
 | `copies/<id>.json` | a copy plan and its check results | the copy check agrees |
 | `approvals/<key>.json` | a `--human` or `--ai` approval with the file hash | the approval becomes a trailer |
-
-## TLA+ models
-
-The rules that depend on the order of events are modelled in TLA+ in [`tla/`](../tla/README.md): the sweep and taint (`ProvSweep`), the session states and the archive process (`ProvSessions`), and the gate with its cleanup (`ProvIntegration`). The models found several ordering bugs in earlier drafts. A model checks the order of events; it cannot check what it assumes about git, git-ai or Claude Code. Those premises are tested separately, and the results are in "Appendix: test evidence" in SPEC.md.

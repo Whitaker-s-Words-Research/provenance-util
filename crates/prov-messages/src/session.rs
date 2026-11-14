@@ -130,7 +130,7 @@ pub fn no_agent_pid(id: impl Display) -> String {
     format!(
         "warning: prov does not know the process ID of the agent of session {id}, so it archives the \
          transcript now. If the agent still works, the archive misses its last work, until the next event \
-         of the agent opens the session again (R-SESS-3). End the agent first if it runs."
+         of the agent opens the session again. End the agent first if it runs."
     )
 }
 
