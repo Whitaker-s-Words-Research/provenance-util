@@ -135,3 +135,111 @@ fn discard_finishes_an_interrupted_discard() {
     env.prov(&repo, ["discard", &branch("half"), "--yes"]).success();
     assert!(!wt.exists() && !branch_exists(&env, &repo, "half"));
 }
+
+/// `prov discard` and a real `git merge` of the same branch, started at the
+/// same time, many times. Whatever order the processes take, every
+/// transcript hash that a merge commit records has its archive
+/// (`ProvDiscard`: `EvidenceKept`). Either the merge records the session and
+/// its archive stays, or the discard deletes it and no merge records it.
+#[test]
+fn discard_racing_a_merge_keeps_the_evidence() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let (mut merged, mut discarded, mut neither) = (0, 0, 0);
+    for round in 0..12u32 {
+        let name = format!("race-{round}");
+        let session = format!("sess-race-{round}");
+        let wt = env.worktree(&repo, &name);
+        env.start_session(&wt, &session).success();
+        env.agent_edit(&wt, &format!("{name}.py"), "a = 1\n", &session);
+        env.agent_commit(&wt, &session, "Add a file").success();
+        let archive = PathBuf::from(env.end_session(&wt, &session)["archive_file"].as_str().unwrap());
+        let head = env.git(&repo, ["rev-parse", "HEAD"]);
+        // Half the rounds start the merge late, half the discard, by 0 to 250 ms.
+        let late = std::time::Duration::from_millis(50 * u64::from(round / 2 % 6));
+        let (merge_delay, discard_delay) = if round % 2 == 0 { (late, std::time::Duration::ZERO) } else { (std::time::Duration::ZERO, late) };
+        let (merge, discard) = std::thread::scope(|s| {
+            let m = s.spawn(|| {
+                std::thread::sleep(merge_delay);
+                env.try_git(&repo, ["merge", "-m", "Merge", &branch(&name)])
+            });
+            let d = s.spawn(|| {
+                std::thread::sleep(discard_delay);
+                env.prov(&repo, ["discard", &branch(&name), "--yes"])
+            });
+            (m.join().unwrap(), d.join().unwrap())
+        });
+        if !merge.ok {
+            // A gate that refused leaves the merge in progress.
+            let _ = env.try_git(&repo, ["merge", "--abort"]);
+        }
+        let new_head = env.git(&repo, ["rev-parse", "HEAD"]);
+        let hashes: Vec<String> = env
+            .trailers(&repo, "HEAD")
+            .iter()
+            .filter_map(|t| t.strip_prefix("Prov-Transcript-SHA256: ").map(String::from))
+            .collect();
+        if new_head != head && !hashes.is_empty() {
+            // EvidenceKept: the archive of the recorded hash exists, with that hash.
+            assert!(archive.is_file(), "round {round}: merge recorded {hashes:?}, archive deleted\n{}\n{}", merge.stderr, discard.stderr);
+            assert_eq!(common::sha256_of_gunzipped(&archive), hashes[0], "round {round}");
+            // A discard after the merge finds no own commits and no records
+            // (post-commit deleted them, R-INT-2): it may remove the worktree
+            // and the branch, and keeps the archive.
+            merged += 1;
+        } else if discard.ok {
+            assert!(!archive.exists() && !branch_exists(&env, &repo, &name), "round {round}");
+            discarded += 1;
+        } else {
+            neither += 1;
+        }
+        assert_eq!(env.git(&repo, ["status", "--porcelain"]), "", "round {round}");
+    }
+    eprintln!("discard racing a merge: {merged} merged, {discarded} discarded, {neither} neither");
+    assert_eq!(merged + discarded + neither, 12);
+}
+
+/// `prov discard` and an agent event of the same session (a resume), at the
+/// same time. Either the discard refuses because the session is Open, or it
+/// deleted the session first. No Open record is left for a branch that is
+/// gone, and no hook fails.
+#[test]
+fn discard_racing_a_resume() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let (mut refused, mut deleted, mut orphans) = (0, 0, 0);
+    for round in 0..8 {
+        let name = format!("resume-{round}");
+        let session = format!("sess-resume-{round}");
+        let wt = env.worktree(&repo, &name);
+        env.start_session(&wt, &session).success();
+        env.agent_edit(&wt, &format!("{name}.py"), "a = 1\n", &session);
+        env.agent_commit(&wt, &session, "Add a file").success();
+        env.end_session(&wt, &session);
+        let delay = std::time::Duration::from_millis(10 * (round % 4));
+        let (event, discard) = std::thread::scope(|s| {
+            let e = s.spawn(|| {
+                std::thread::sleep(delay);
+                env.hook(&wt, "UserPromptSubmit", &session)
+            });
+            let d = s.spawn(|| env.prov(&repo, ["discard", &branch(&name), "--yes"]));
+            (e.join().unwrap(), d.join().unwrap())
+        });
+        let record = env.record(&repo, &session);
+        if discard.ok {
+            assert!(!branch_exists(&env, &repo, &name), "round {round}");
+            // Accepted limit (R-DISC-1): an event after step 2 makes a new
+            // Open record for the worktree that step 3 removes.
+            if record.as_ref().is_some_and(|r| r["state"] == "open") {
+                orphans += 1;
+            }
+            deleted += 1;
+        } else {
+            assert!(discard.stderr.contains("open") || discard.stderr.contains("changed"), "round {round}: {}", discard.stderr);
+            assert!(branch_exists(&env, &repo, &name), "round {round}");
+            refused += 1;
+        }
+        assert!(event.ok, "round {round}: the hook failed: {}", event.stderr);
+    }
+    eprintln!("discard racing a resume: {refused} refused, {deleted} deleted, {orphans} new Open record(s) after the discard");
+}
