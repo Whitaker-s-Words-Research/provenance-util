@@ -1,0 +1,36 @@
+crates/prov/src/start.rs
+  s_4ffffd06031ed5::t_63f3e40cb95f39 58-64,70-76,88-90
+docs/configuration.md
+  s_4ffffd06031ed5::t_3849bb6f2dea1c 43
+CHANGELOG.md
+  s_4ffffd06031ed5::t_3849bb6f2dea1c 90-91
+crates/prov/tests/snapshots/help.txt
+  s_4ffffd06031ed5::t_3849bb6f2dea1c 74
+docs/commands.md
+  s_4ffffd06031ed5::t_3849bb6f2dea1c 54
+crates/prov-messages/src/start.rs
+  s_4ffffd06031ed5::t_63f3e40cb95f39 5-8
+SPEC.md
+  s_4ffffd06031ed5::t_3849bb6f2dea1c 93,104,108
+crates/prov/tests/commands.rs
+  s_4ffffd06031ed5::t_b4f9ea77eaedc5 190-195,197-200
+  s_4ffffd06031ed5::t_1250e882b669a2 196
+crates/prov/src/main.rs
+  s_4ffffd06031ed5::t_63f3e40cb95f39 200-201
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "bd28ea24f20a694b3e26d77e9eca733d8fc3f94c",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
