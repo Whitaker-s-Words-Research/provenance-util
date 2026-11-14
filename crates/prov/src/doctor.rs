@@ -240,10 +240,10 @@ pub fn run(deep: bool, json: bool) -> Result<bool> {
             match file.check {
                 Some(CopyCheck::Failed) => problems.push(msg::doctor::copy_failed(&file.dest, commit, detail)),
                 Some(CopyCheck::Moved) => {
-                    notes.push(msg::doctor::copy_moved(&file.dest, commit, detail, ctx.store.copy_path(&copy.id)?.display()));
+                    notes.push(msg::doctor::copy_moved(&file.dest, commit, detail, quoted_path(&ctx.store.copy_path(&copy.id)?)));
                 }
                 Some(CopyCheck::Ignored) => {
-                    notes.push(msg::doctor::copy_ignored(&file.dest, commit, detail, ctx.store.copy_path(&copy.id)?.display()));
+                    notes.push(msg::doctor::copy_ignored(&file.dest, commit, detail, quoted_path(&ctx.store.copy_path(&copy.id)?)));
                 }
                 // The check waits for the note for a maximum of 60 seconds.
                 None if file.committed_at.is_some_and(|at| now().saturating_sub(at) > 120) => problems.push(msg::doctor::copy_unfinished(&file.dest, commit, &copy.id)),
@@ -275,7 +275,9 @@ pub fn run(deep: bool, json: bool) -> Result<bool> {
                 }
             }
             for note in &check.notes {
-                println!("{}", msg::doctor::note(note));
+                for (i, line) in note.lines().enumerate() {
+                    println!("{}{line}", if i == 0 { msg::doctor::NOTE_FIRST } else { msg::doctor::NOTE_NEXT });
+                }
             }
         }
         println!("{}", if report.ok { msg::doctor::ALL_PASS } else { msg::doctor::SOME_FAIL });
@@ -480,6 +482,11 @@ fn remote_matches(pattern: &str, url: &str) -> bool {
         }
     }
     pattern == url || glob(normalize_remote(pattern).as_bytes(), normalize_remote(url).as_bytes())
+}
+
+/// A path as one word for a POSIX shell, for a command in a message.
+fn quoted_path(path: &std::path::Path) -> String {
+    crate::gate::shell_quote(&path.to_string_lossy())
 }
 
 #[cfg(test)]

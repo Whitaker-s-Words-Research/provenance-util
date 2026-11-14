@@ -743,7 +743,7 @@ All files are in `.git/provenance/` in the common git directory, so every worktr
 |---|---|---|
 | `sessions/<id>.json` | state, generation, agent, worktree, branch, model, transcript path, archive file and hash, error text (Failed), agent PID, start time, last event time, `prov` version | an integration permits it (R-INT-2), `prov session drop`, or `prov discard` |
 | `worktrees/<key>.json` | for one agent worktree: the owner session (R-SWEEP-2) | `prov finish` or `prov discard` removes the worktree, or `prov doctor` finds that git no longer lists it |
-| `copies/<id>.json` | the plan, the blob ID of each copied file, the check result of each file | the copy check agrees for every file. A failed file is cleared when a later copy of the same path agrees. A record with a `moved` or `ignored` result stays until the human deletes the file. |
+| `copies/<id>.json` | the plan, the blob ID of each copied file, the check result of each file | the copy check agrees for every file. A failed file is cleared when a later copy of the same path agrees. A record with a `moved` or `ignored` result stays until the human deletes the file: it is the only place that holds the planned authors of those lines. The note of `prov doctor` ends with the command that deletes it (owner decision, 2026-11-13). |
 | `approvals/<key>.json` | path, choice (`human` or `ai`), content hash | the approval becomes a trailer. Merge approvals are not stored here. |
 
 ## Build and release

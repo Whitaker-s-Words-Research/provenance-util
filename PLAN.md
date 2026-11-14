@@ -34,9 +34,6 @@ Each goes to the owner as a question with a recommendation.
     - `prov trace export` finds the commits with a note through `git notes --ref=ai list`. The content comes from `git-ai diff --json`.
     - The content hash of a `--human` or `--ai` approval is the git blob ID of the file.
     - The JSON Schema validator is written in-house (`crates/prov/src/schema.rs`), for the keywords that the pinned schema uses.
-- Choices from session 3 made without asking:
-    - How `prov cp` reads `<dest>`: one file, one directory, several sources.
-    - A copy record with the result `moved` or `ignored` stays until someone deletes it.
 - Items from an earlier spec review, known only by name. Ask the owner for the review's text:
     - The incoming range when an agent branch merged a different human branch.
     - `post-merge` and the first-parent line.

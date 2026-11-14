@@ -327,7 +327,15 @@ fn the_guard_refuses_a_changed_copy_and_a_failed_check_is_replaced() {
     // A note of `prov doctor`, not a failure. The earlier failure of ai.py is still there.
     let doctor = env.prov(&repo, ["doctor"]).failure();
     assert!(doctor.stdout.contains("vendor/ai.py") && doctor.stdout.contains("has no line authorship"), "{}", doctor.stdout);
-    std::fs::remove_file(repo.join(".git/provenance/copies").join(format!("{}.json", ignored[0]["id"].as_str().unwrap()))).unwrap();
+    // The note ends with the command that removes it, on a line of its own.
+    let lines: Vec<&str> = doctor.stdout.lines().collect();
+    let at = lines.iter().position(|l| l.contains("vendor/ai.py")).unwrap();
+    let command = lines[at..].iter().map(|l| l.trim()).find(|l| l.starts_with("rm ")).unwrap();
+    assert!(command.contains(ignored[0]["id"].as_str().unwrap()), "{}", doctor.stdout);
+    let out = env.run(&repo, "sh", ["-c", command], &[], None);
+    assert!(out.ok, "{command}\n{}", out.stderr);
+    let doctor = env.prov(&repo, ["doctor"]).failure();
+    assert!(!doctor.stdout.contains("vendor/ai.py"), "{}", doctor.stdout);
 
     // Replacing the authorship of a file, as the specification describes it.
     env.git(&repo, ["rm", "-q", "ai.py"]);

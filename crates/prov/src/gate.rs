@@ -470,7 +470,8 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
     Ok(true)
 }
 
-fn shell_quote(s: &str) -> String {
+/// `s` as one word for a POSIX shell.
+pub(crate) fn shell_quote(s: &str) -> String {
     if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./+=:@".contains(c)) {
         s.to_string()
     } else {

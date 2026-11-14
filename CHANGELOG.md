@@ -90,6 +90,7 @@ Bug Fixes: clippy findings, a race in the git-ai service test, and `.gitignore` 
 - `prov start` refuses when an agent runs it.
 - `git config prov.worktreesDir <dir>` sets the directory of the agent worktrees for one clone.
 - `prov init --force` always writes `.provenance.toml` again from the defaults. Before, it kept a file that parsed unless `--agent` named other agents.
+- `prov doctor` prints notes as `note:` lines, and the note of a `moved` or `ignored` copy ends with the command that deletes its record.
 - `prov session close` is now `prov session archive`. Reason: "close" was easy to confuse with `prov finish`.
 - Every `--dry-run` and `--json` option has a help text.
 
