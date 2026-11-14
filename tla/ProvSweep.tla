@@ -145,8 +145,8 @@ Stop(s) ==
 
 (* SessionEnd. R-SWEEP-5: the hook first observes and sweeps with the     *)
 (* occupancy before the session leaves, then records the end. Then it      *)
-(* observes again with the occupancy after the end (R-SWEEP-2, owner       *)
-(* decision 2026-11-14): if one session is left, it becomes the owner now, *)
+(* observes again with the occupancy after the end, if a session is left   *)
+(* (R-SWEEP-2, owner decision 2026-11-14): one left becomes the owner now, *)
 (* so its next hook does not taint its own later work. The end sweep is    *)
 (* for complete attribution; SweepSound holds without it, so it has no     *)
 (* switch here.                                                            *)
@@ -159,7 +159,7 @@ End(s) ==
            own1  == NewOwner(occ1)
            cov1  == Covers(occ1, TRUE)
            left  == IF cov1 THEN {} ELSE Writers
-           mis2  == ~(own1 \in Sessions /\ occ2 = {own1})
+           mis2  == occ2 # {} /\ ~(own1 \in Sessions /\ occ2 = {own1})
            taint2 == TaintEnabled /\ mis2
        IN /\ st' = nst /\ alive' = nal
           /\ owner'    = IF mis2 THEN Sole(occ2) ELSE own1

@@ -110,9 +110,13 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
                 // this moment is tainted: it can be the work of either.
                 // Without this, the next event of that session would taint
                 // its own later work.
+                // With no session left, the next hook observes as before: the
+                // end sweep has just run, and this hook has little time.
                 let remaining = lock.open_in(&ctx.repo.toplevel)?;
-                if let Err(e) = sweep::observe(&ctx, &lock, &remaining) {
-                    out.push(msg::agent_hook::warning(format!("{e:#}")));
+                if !remaining.is_empty() {
+                    if let Err(e) = sweep::observe(&ctx, &lock, &remaining) {
+                        out.push(msg::agent_hook::warning(format!("{e:#}")));
+                    }
                 }
                 // The agent gives this hook little time: a detached process does the archive step.
                 match archive::spawn_detached(&ctx, &session.id, session.generation) {
