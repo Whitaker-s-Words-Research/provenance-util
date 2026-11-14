@@ -31,7 +31,7 @@ prov start claude -- --model opus                # arguments after -- go to the 
 - **One session in one worktree.** `prov` cannot stop a second session, but the worktree then becomes *contended*: Claude Code is told to stop, `prov` sweeps nothing there, and every commit there is refused until one of the sessions ends. Changes from that time become doubtful lines at the gate.
 - **Agents do not work in a human worktree.** A session in your checkout of `main`, or on any branch that is not `agent/**`, gets a warning and no record. An agent commit there is refused. If you commit that work yourself, `prov check` fails in CI.
 - **Do not edit files in an agent worktree yourself.** `prov` attributes every change in the worktree to the session that occupies it.
-- **Stop background processes when a session ends.** A process that keeps writing in the worktree, such as a development server, is not swept, and the next session there would take its changes as its own. `prov session close`, `prov finish` and `prov start --resume` list the processes that still run in the worktree.
+- **Stop background processes when a session ends.** A process that keeps writing in the worktree, such as a development server, is not swept, and the next session there would take its changes as its own. `prov session archive`, `prov finish` and `prov start --resume` list the processes that still run in the worktree.
 
 ### Ending, resuming and closing
 
@@ -41,12 +41,12 @@ When Claude Code exits, the session goes to Closing, and a detached process arch
 prov session list                        # every session with a record, and its state
 prov session show <id>
 prov start claude --resume <id>          # resume a session in its worktree
-prov session close <id>                  # end a session that did not end by itself
+prov session archive <id>                  # end a session that did not end by itself
 ```
 
 - A resumed Claude Code session keeps its ID. It returns to Open, and the next archive is a new file.
 - If the worktree of a resumed session was removed, `prov start --resume` creates it again on the session's branch.
-- `prov session close` is for a session that crashed or was left open. It waits for the agent process to exit before it archives. For a Failed session, it runs the archive step again.
+- `prov session archive` is for a session that crashed or was left open. It waits for the agent process to exit before it archives. For a Failed session, it runs the archive step again.
 
 A session that gets no event for 24 hours, or whose agent process is gone, is *stale*. It no longer occupies the worktree, but it must be closed before its branch can merge. `prov doctor` lists stale and Failed sessions.
 
@@ -78,7 +78,7 @@ The gate runs in `prepare-commit-msg` for every merge that brings in agent commi
 
 1. Reads `.provenance.toml` from `HEAD` (the human branch before the merge, not the agent's copy) and checks `required_version`.
 2. Waits for git-ai to write the notes of recent agent commits.
-3. Checks the sessions. Every session that made a commit must be Archived. Close an Open session with `prov session close` first.
+3. Checks the sessions. Every session that made a commit must be Archived. Archive an Open session with `prov session archive` first.
 4. Lists the doubtful items. Each needs an approval.
 
 An item is **doubtful** when:
@@ -176,7 +176,7 @@ prov discard agent/claude/20261111-parser-tests --yes      # deletes it
 
 - It deletes the worktree with its uncommitted changes, the branch, the session records and the transcript archives of the branch's sessions.
 - It keeps the agent's own transcripts, the git-ai notes and a remote branch. It prints the command that deletes the remote branch.
-- It refuses while a session of the branch is Open or Closing. Close it first with `prov session close`.
+- It refuses while a session of the branch is Open or Closing. Archive it first with `prov session archive`.
 - It refuses while a merge of the branch is in progress in any worktree.
 - It refuses when another ref names one of its sessions: a merge commit on a human branch, a merged agent commit, or another agent branch that started from this one. That ref needs the session's record or archive. Use `prov finish` to remove only the worktree.
 - It refuses when a `Copied-From` trailer or a copy in progress names one of the branch's commits as its source.

@@ -9,7 +9,7 @@ Commands:
   check        Applies the rules of the merge gate without a merge
   start        Creates a worktree on a new agent branch and starts the agent in it
   hook         Handles an agent or git event. For the hook shims only
-  session      Shows sessions, closes one, or deletes the record of one
+  session      Shows sessions, archives one, or deletes the record of one
   finish       Removes the worktree of a session. The branch stays
   discard      Deletes an agent branch that will not be integrated: its worktree, the branch, the session records and the transcript archives
   approve      Records a human decision about the authorship of paths
@@ -92,16 +92,16 @@ Options:
   -h, --help  Print help
 
 $ prov session --help
-Shows sessions, closes one, or deletes the record of one
+Shows sessions, archives one, or deletes the record of one
 
 Usage: prov session <COMMAND>
 
 Commands:
-  list   Lists the sessions that have a record
-  show   Shows one session
-  close  Moves an Open session to Closing and archives it. For a Failed session: runs the archive step again
-  drop   Deletes the record of a session. The transcript archive stays
-  help   Print this message or the help of the given subcommand(s)
+  list     Lists the sessions that have a record
+  show     Shows one session
+  archive  Moves an Open session to Closing and archives it. For a Failed session: runs the archive step again
+  drop     Deletes the record of a session. The transcript archive stays
+  help     Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help  Print help
@@ -127,10 +127,10 @@ Options:
       --json  Print the result as JSON
   -h, --help  Print help
 
-$ prov session close --help
+$ prov session archive --help
 Moves an Open session to Closing and archives it. For a Failed session: runs the archive step again
 
-Usage: prov session close [OPTIONS] <SESSION>
+Usage: prov session archive [OPTIONS] <SESSION>
 
 Arguments:
   <SESSION>  

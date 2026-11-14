@@ -44,7 +44,7 @@ pub fn contended(others: impl Display, agent: impl Display) -> String {
         "prov: STOP. This agent worktree already has an open session ({others}). An agent worktree holds one \
          open session at a time. While more than one is open, prov runs no sweep here and refuses every \
          commit. Change no files. Tell the human to end the other session or to run \
-         `prov session close <id>`, or to start this session in its own worktree with `prov start {agent}`."
+         `prov session archive <id>`, or to start this session in its own worktree with `prov start {agent}`."
     )
 }
 

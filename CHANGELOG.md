@@ -82,6 +82,8 @@ Bug Fixes: clippy findings, a race in the git-ai service test, and `.gitignore` 
 - The user guides, the README and the messages of prov no longer show rule IDs, TLA+ models or test evidence.
 - The merge gate reads the session records under the lock.
 - After an integration, post-commit and post-merge print a hint about `prov revise`.
+- `prov session close` is now `prov session archive`. Reason: "close" was easy to confuse with `prov finish`.
+- Every `--dry-run` and `--json` option has a help text.
 
 ### Major bug fixes
 
@@ -89,4 +91,4 @@ Bug Fixes: clippy findings, a race in the git-ai service test, and `.gitignore` 
 
 ### Bug Fixes
 
-Bug Fixes: `ci/dev.sh` with `PROV_UPDATE_SNAPSHOTS` now copies the snapshot files back to the checkout.
+Bug Fixes: `ci/dev.sh` with `PROV_UPDATE_SNAPSHOTS` now copies the snapshot files back to the checkout; the waits of the merge gate for late notes share one limit of 60 seconds, instead of 60 seconds for each commit; a session record that does not parse is reported as such, not as a missing record.

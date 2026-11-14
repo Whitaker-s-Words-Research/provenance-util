@@ -10,7 +10,7 @@ Every command that changes something accepts `--dry-run`. Every command that sho
 | [`prov check`](#prov-check) | A person, CI | Applies the rules of the merge gate without a merge. |
 | [`prov approve`](#prov-approve) | A person | Records a decision about the authorship of files. |
 | [`prov revise`](#prov-revise) | A person | Commits your changes to the lines of a merge of agent work. |
-| [`prov session`](#prov-session) | A person | Lists, shows, closes or drops sessions. |
+| [`prov session`](#prov-session) | A person | Lists, shows, archives or drops sessions. |
 | [`prov finish`](#prov-finish) | A person | Removes an agent worktree and keeps the branch. |
 | [`prov discard`](#prov-discard) | A person | Deletes an agent branch that will not be merged, with its worktree, records and archives. |
 | [`prov cp`](#prov-cp) | A person | Copies files from another repository with an author for every line. |
@@ -108,14 +108,14 @@ Commits your staged changes to the lines of an integration, with a `Prov-Revises
 ```text
 prov session list
 prov session show <id>
-prov session close <id>
+prov session archive <id>
 prov session drop <id>
 ```
 
 - `list` and `show` print the session records: state, worktree, branch, model, archive.
 - `list` shows the start of each session ID, as much as tells the sessions apart. Every command that takes `<id>` accepts it.
 - `list` and `show` also show the title that Claude Code gave the session. They read it from the `ai-title` records in the transcript. Claude Code does not document these records, so a new version can drop them; the title is then missing. No rule depends on the title.
-- `close` moves an Open session to Closing and archives it, after the agent process exits. For a Failed session, it runs the archive step again.
+- `archive` moves an Open session to Closing and archives it, after the agent process exits. For a Failed session, it runs the archive step again.
 - `drop` deletes the record of a session. The transcript archive stays. Use it for a record that `prov doctor` says is left over after a merge. To throw away a branch and everything of its sessions, use [`prov discard`](#prov-discard).
 
 ## `prov finish`

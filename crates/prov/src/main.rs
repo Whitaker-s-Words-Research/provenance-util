@@ -89,7 +89,7 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Shows sessions, closes one, or deletes the record of one.
+    /// Shows sessions, archives one, or deletes the record of one.
     Session {
         #[command(subcommand)]
         action: SessionCmd,
@@ -231,7 +231,7 @@ enum SessionCmd {
         json: bool,
     },
     /// Moves an Open session to Closing and archives it. For a Failed session: runs the archive step again.
-    Close {
+    Archive {
         #[arg(add = ArgValueCandidates::new(complete::sessions))]
         session: String,
         /// Show what the command would do, and change nothing.
@@ -359,7 +359,7 @@ fn main() -> ExitCode {
             Cmd::Session { action } => match action {
                 SessionCmd::List { json } => session::run(session::Action::List, json, false),
                 SessionCmd::Show { session, json } => session::run(session::Action::Show(session), json, false),
-                SessionCmd::Close { session, dry_run, json } => session::run(session::Action::Close(session), json, dry_run),
+                SessionCmd::Archive { session, dry_run, json } => session::run(session::Action::Archive(session), json, dry_run),
                 SessionCmd::Drop { session, dry_run, json } => session::run(session::Action::Drop(session), json, dry_run),
             },
             Cmd::Finish { target, override_, force, dry_run, json } => {

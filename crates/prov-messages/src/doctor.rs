@@ -91,11 +91,11 @@ pub fn session_merged(id: impl Display, state: impl Display, branch: impl Displa
 }
 
 pub fn session_stale(id: impl Display) -> String {
-    format!("session {id} is stale (no event for 24 hours, or its agent process is gone). Close it: prov session close {id}")
+    format!("session {id} is stale (no event for 24 hours, or its agent process is gone). Archive it: prov session archive {id}")
 }
 
 pub fn session_failed(id: impl Display, error: impl Display) -> String {
-    format!("session {id} is failed: {error}. Run the archive step again: prov session close {id}")
+    format!("session {id} is failed: {error}. Run the archive step again: prov session archive {id}")
 }
 
 pub fn worktree_contended(worktree: impl Display, ids: impl Display) -> String {

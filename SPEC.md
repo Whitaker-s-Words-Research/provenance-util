@@ -115,7 +115,7 @@ prov start <agent> [options] [-- <agent arguments>]
     - `prov` records the second session as Open.
     - For Claude Code, the SessionStart hook prints an instruction to stop. Claude Code adds that text to the session context.
     - **[R-SWEEP-3]** `prov` runs no sweep in a contended worktree, and `pre-commit` refuses every commit there.
-    - The worktree stays contended until only one session occupies it. A session ends by itself, or the human runs `prov session close`.
+    - The worktree stays contended until only one session occupies it. A session ends by itself, or the human runs `prov session archive`.
     - Changes from that time are tainted (R-SWEEP-2), so they become doubtful lines. `prov` does not attribute them to one of the sessions.
 - A session finds its record by its worktree. The agent's own environment variable is a cross-check. Claude Code sets `CLAUDE_CODE_SESSION_ID`.
 
@@ -133,15 +133,15 @@ Agent work reaches a human branch only through an integration.
 
 | State | Entered when |
 |---|---|
-| Open | The first event records the session. **[R-SESS-1]** Any later agent event of a session that is Closing, Archived or Failed also returns it to Open, whether or not it is a resume. SessionEnd is the exception: it never reopens a session. Reason: an event shows that the agent still works, for example after `prov session close`; a session that stayed Closing would be archived without that work. |
-| Closing | SessionEnd occurs, or the human runs `prov session close`. A detached process starts the archive step. |
+| Open | The first event records the session. **[R-SESS-1]** Any later agent event of a session that is Closing, Archived or Failed also returns it to Open, whether or not it is a resume. SessionEnd is the exception: it never reopens a session. Reason: an event shows that the agent still works, for example after `prov session archive`; a session that stayed Closing would be archived without that work. |
+| Closing | SessionEnd occurs, or the human runs `prov session archive`. A detached process starts the archive step. |
 | Archived | The archive step stores the transcript. |
 | Failed | The archive step cannot finish. The record holds the error text. A session that is Closing for 5 minutes with no live archive process is also Failed. That case is calculated when the state is read, like stale; it is not stored, so no process writes it. |
 
 - An Open session is stale when no agent event arrives for 24 hours, or when the agent process does not exist. Stale is calculated when the state is read. It is not stored.
 - To find the agent process, `prov` uses `CLAUDE_PID` for Claude Code and the parent process for other agents.
 - Each record has a generation. It increases by 1 each time the session enters Open or Closing.
-- `prov session close <id>` moves an Open session to Closing. For a Failed session, it runs the archive step again. If the agent process still runs and `prov` knows its process ID, the session stays Closing until the process exits (R-SESS-3). `prov session close` then prints the process ID that it waits for. If `prov` does not know the process ID, `prov session close` and `prov finish` print a warning that names the accepted limit of R-SESS-3.
+- `prov session archive <id>` moves an Open session to Closing. For a Failed session, it runs the archive step again. If the agent process still runs and `prov` knows its process ID, the session stays Closing until the process exits (R-SESS-3). `prov session archive` then prints the process ID that it waits for. If `prov` does not know the process ID, `prov session archive` and `prov finish` print a warning that names the accepted limit of R-SESS-3.
 - `prov session drop <id>` deletes the record of a session. It keeps the transcript archive.
 - `prov doctor` reports stale and Failed sessions.
 - An integration deletes the records of the sessions on its branch. See "Sessions of an integration".
@@ -165,7 +165,7 @@ git-ai takes a model only from a checkpoint that records a change. When every ed
 
 **[R-SESS-2]** An archive process belongs to one generation of its session. It changes the state, to Archived or to Failed, only under the lock and only if the session is still Closing with that generation. Otherwise it stores its file and changes nothing in the record. The 5-minute rule in "Session states" needs no such condition: it is calculated when read and never written. Reason: without the generation, this fails: a session ends, is resumed, does more work and ends again, and the first archive process then sets Archived with a transcript that does not cover the new work.
 
-0. **[R-SESS-3]** Wait until the agent process has exited, if `prov` knows its process ID. While the process runs, the session stays Closing, and the archive process counts as live for the 5-minute rule. If the agent sends an event meanwhile, the session returns to Open (R-SESS-1), and this process ends without a change (R-SESS-2). If `prov` does not know the process ID, the step does not wait. This is an accepted limit: a session that the human closes while its agent works can then be Archived with a transcript that does not cover the last work, until the next event of the agent returns it to Open. The model `ProvSessions.limit-no-pid` records it. Reason for the wait: `prov session close` and `prov finish --override` can close a session while its agent still works, and an archive made then misses the agent's last work (`ProvSessions.bug-no-wait`).
+0. **[R-SESS-3]** Wait until the agent process has exited, if `prov` knows its process ID. While the process runs, the session stays Closing, and the archive process counts as live for the 5-minute rule. If the agent sends an event meanwhile, the session returns to Open (R-SESS-1), and this process ends without a change (R-SESS-2). If `prov` does not know the process ID, the step does not wait. This is an accepted limit: a session that the human closes while its agent works can then be Archived with a transcript that does not cover the last work, until the next event of the agent returns it to Open. The model `ProvSessions.limit-no-pid` records it. Reason for the wait: `prov session archive` and `prov finish --override` can close a session while its agent still works, and an archive made then misses the agent's last work (`ProvSessions.bug-no-wait`).
 1. Build the archive through the adapter. The adapter decides how it gets the transcript. The archive is a tar file that `prov` builds:
     - Claude Code: the file at the transcript path from the hook payload, as `transcript.jsonl`, and every file of the directory `<session ID>/` next to the transcript, with its relative path. Reason: Claude Code stores large tool results in `<session ID>/tool-results/` and the messages of subagents in `<session ID>/subagents/`, not in the transcript.
     - The entries are sorted by name, and each entry has modification time 0, owner 0 and mode 0644, so the same files always give the same bytes. `tar -tv` therefore shows each entry with the date 1970-01-01 (owner decision, 2026-11-12: kept). A real time would make two archives of the same transcript differ, and R-ARCH-1 would then fail a retry.
@@ -215,7 +215,7 @@ It refuses in each of these cases:
 
 - It runs in an agent worktree, or an agent environment variable is set. Only a human runs it.
 - The branch is checked out in the worktree where it runs.
-- A session of the discard is Open, also when it is stale, or Closing. Close it with `prov session close` first. A Failed session does not stop it.
+- A session of the discard is Open, also when it is stale, or Closing. Archive it with `prov session archive` first. A Failed session does not stop it.
 - A `Prov-Session` trailer in a commit on another ref names a session of the discard. Reason: an integration group, or an agent commit that is already merged or is on another agent branch, needs the record or the archive of that session. To delete only the worktree, use `prov finish`.
 - A session that a trailer of the branch's own commits names has a record for another branch. Discard that branch first, or drop the record.
 - A `Copied-From` trailer in a commit on another ref, or a copy record, names one of the branch's own commits as its source. Reason: "Copying files" says that the transcript of an inherited session is found through `Copied-From`.
@@ -319,7 +319,7 @@ So in an agent commit, git-ai gives every line with no checkpoint to an AI sessi
     - `git rebase` and `git cherry-pick` do not run `pre-commit` for the commits that they make, and `git merge` does not run it for the merge commit. The check does not cover them. This is an accepted limit.
 - The human does not edit files in an agent worktree.
 - **[R-SWEEP-4]** Processes that continue after SessionEnd, for example a development server, are not swept, and the sweep of a later session would take their changes. Stop them before another session starts in the worktree, and before `prov finish`. This is an accepted limit. The model `ProvSweep.limit-background` records it.
-    - `prov session close`, `prov finish` and `prov start --resume` (in a worktree that exists) list the processes whose current directory is in the worktree, as a warning (owner decision, 2026-11-12). Left out: `prov` itself, its ancestors, shells (a person's terminal writes no files by itself), and processes that are not there in two scans 300 ms apart (git and git-ai start short processes in a worktree). On Linux the scan reads `/proc`; on macOS it runs `lsof`. A process that writes into the worktree from another current directory is not found.
+    - `prov session archive`, `prov finish` and `prov start --resume` (in a worktree that exists) list the processes whose current directory is in the worktree, as a warning (owner decision, 2026-11-12). Left out: `prov` itself, its ancestors, shells (a person's terminal writes no files by itself), and processes that are not there in two scans 300 ms apart (git and git-ai start short processes in a worktree). On Linux the scan reads `/proc`; on macOS it runs `lsof`. A process that writes into the worktree from another current directory is not found.
 
 **[R-SWEEP-2] Taint.** Live state keeps, for each agent worktree, the *owner*: the session that `prov` last saw as the only occupant.
 
@@ -358,7 +358,7 @@ The sessions of an integration are those named in a `Prov-Session` trailer or in
 
 One exception: a session that only a note names, and that has no record. git-ai invents such a session for lines with no checkpoint in a commit with an agent identity, for example after `git commit --no-verify`, which skips the sweep. No transcript exists for it. It is not a session of the integration, and its lines are doubtful lines. `prov check <base>..<tip>` has no records: there, a session that only a note names is a session of the integration if the merge has a trailer group for it.
 
-- The integration fails if one of these sessions is not Archived, or has no record. Close an Open session with `prov session close` first.
+- The integration fails if one of these sessions is not Archived, or has no record. Archive an Open session with `prov session archive` first.
 - The gate reads the records under the lock, and holds it until it has written the trailers (R-DISC-1).
 - The integration fails while a session is Open in a worktree whose branch tip is in the incoming range.
 - **[R-INT-1]** After the integration, `post-commit` reads the trailers of the commit that was made (`HEAD`), not the trailers that the gate added. Reason: git opens the editor after the gate, so the commit's trailers can differ from the gate's.
@@ -795,9 +795,9 @@ OpenCode has no session-start event and no reliable session-end event. Reason: o
 
 - `prov` starts a session at the first forwarded event of that session. It ignores a session whose directory is outside the repository.
 - A child session (a subagent) is not a session of its own for `prov`. The plugin adds the parent ID from `ctx.session.get`, and `prov` handles an event of a child session as an event of its top-level parent. Reason: a child session would otherwise make the worktree contended.
-- OpenCode sends no event when the user changes to a new session. The old session stays Open, so a second session in the same worktree makes the worktree contended. Close the old session first with `prov session close`.
+- OpenCode sends no event when the user changes to a new session. The old session stays Open, so a second session in the same worktree makes the worktree contended. Archive the old session first with `prov session archive`.
 - `prov start opencode` does not replace itself with OpenCode. It waits until OpenCode exits, then moves each Open session in that worktree to Closing.
-- A session that was started without `prov start` becomes stale. Close it with `prov session close`.
+- A session that was started without `prov start` becomes stale. Archive it with `prov session archive`.
 
 `prov` does these actions for the forwarded events:
 
@@ -954,7 +954,7 @@ The setup: a human branch and an agent branch with `ai_agent` checkpoints. The a
 | A session with one subagent | The subagent's messages are in `<session ID>/subagents/agent-<id>.jsonl`. The transcript holds only the prompt and the result. | Archive step stores the directory |
 | `CLAUDE_PID` in the environment of a hook: `prov start claude -- -p ...`, 2026-11-12 | The `agent_pid` that the hook recorded was the process ID of `claude` itself (`prov start` replaces itself with `claude`). The same after `prov start --resume`, with the new process ID. | R-SESS-3 |
 | A live run: `prov start claude -- -p <task> --model haiku`, the agent writes one file and commits; then `prov start --resume <id> -- -p <task>`; then `git merge` on `main` | Commit identity and `Prov-Session` correct. Each run archived after the process exited (generations 2 and 4, two archive files). The gate passed with no doubtful line; the merge got the hash of the second archive; the record was deleted. `prov check <base>..<tip>` and `prov doctor --deep` passed. | "Starting a session", "Resuming", "Archive step", the merge gate |
-| `prov session close` during a live run: `prov start claude -- -p <task>`, the task starts with `sleep 15`, the close 4 s after the start | The session went to Closing (generation 2), and the command waited for the agent process. 16 s later the agent's next event opened the session again (generation 3, R-SESS-1), and its SessionEnd closed it (generation 4). The archive of generation 4 was the whole transcript; the step of generation 2 wrote nothing. The agent's commit while the session was Closing had no `Prov-Session` trailer (no occupant); the gate found the session through the note, and `prov check` of the range passed. | R-SESS-1, R-SESS-2, R-SESS-3 |
+| `prov session archive` during a live run: `prov start claude -- -p <task>`, the task starts with `sleep 15`, the close 4 s after the start | The session went to Closing (generation 2), and the command waited for the agent process. 16 s later the agent's next event opened the session again (generation 3, R-SESS-1), and its SessionEnd closed it (generation 4). The archive of generation 4 was the whole transcript; the step of generation 2 wrote nothing. The agent's commit while the session was Closing had no `Prov-Session` trailer (no occupant); the gate found the session through the note, and `prov check` of the range passed. | R-SESS-1, R-SESS-2, R-SESS-3 |
 | The transcript of the live run, compared with the archive that `prov` made after `claude` exited | Byte for byte the same, and unchanged four hours later. One run. | The transcript does not grow after the agent exits (R-SESS-3) |
 | The same run: the model in the note | `unknown` for the first commit, `claude-haiku-5-5` for the second (the record had the model from the first Stop). The transcript had the model in the assistant message of the `git commit` call, before the call. | "Agent model" |
 

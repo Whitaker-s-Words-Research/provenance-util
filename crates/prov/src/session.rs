@@ -1,4 +1,4 @@
-//! `prov session list | show | close | drop`.
+//! `prov session list | show | archive | drop`.
 
 use anyhow::{bail, Result};
 use prov_messages as msg;
@@ -11,7 +11,7 @@ use crate::context::{say, Ctx};
 pub enum Action {
     List,
     Show(String),
-    Close(String),
+    Archive(String),
     Drop(String),
 }
 
@@ -180,14 +180,14 @@ pub fn run(action: Action, json: bool, dry_run: bool) -> Result<bool> {
             }
             Ok(true)
         }
-        Action::Close(id) => {
+        Action::Archive(id) => {
             let record = resolve(&ctx.store, &id)?;
             let after = close(&ctx, &record.id, dry_run)?;
             if json {
                 println!("{}", serde_json::json!({"session": record.id, "dry_run": dry_run, "state": after.state.as_str(),
                     "error": after.error, "archive_file": after.archive_file, "archive_sha256": after.archive_sha256}));
             } else if dry_run {
-                println!("{}", msg::session::close_dry_run(&record.id, record.state.as_str()));
+                println!("{}", msg::session::archive_dry_run(&record.id, record.state.as_str()));
             } else {
                 match after.state {
                     State::Archived => println!(

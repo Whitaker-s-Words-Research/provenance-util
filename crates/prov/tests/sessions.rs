@@ -378,7 +378,7 @@ fn a_commit_before_the_first_stop_gets_the_model_of_the_transcript() {
 }
 
 /// P4 of `ProvSessions`, as seen in a live run: the human closes a session
-/// while its agent works. `prov session close` waits for the agent; the
+/// while its agent works. `prov session archive` waits for the agent; the
 /// agent's next event opens the session again, and the command says so.
 #[test]
 fn a_session_closed_while_its_agent_works_goes_on() {
@@ -387,7 +387,7 @@ fn a_session_closed_while_its_agent_works_goes_on() {
     let wt = env.worktree(&repo, "busy");
     env.start_session(&wt, "sess-busy").success();
     let close = std::thread::scope(|scope| {
-        let closing = scope.spawn(|| env.prov(&repo, ["session", "close", "sess-busy"]));
+        let closing = scope.spawn(|| env.prov(&repo, ["session", "archive", "sess-busy"]));
         // The command waits for the agent; the agent sends its next event.
         let begin = Instant::now();
         while env.state(&repo, "sess-busy") != "closing" {

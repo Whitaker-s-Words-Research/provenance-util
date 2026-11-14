@@ -57,7 +57,7 @@ pub fn session_no_record(session: impl Display) -> String {
 }
 
 pub fn session_open(session: impl Display, id: impl Display) -> String {
-    format!("session {session} is open. Close it first: prov session close {id}")
+    format!("session {session} is open. Archive it first: prov session archive {id}")
 }
 
 pub fn session_closing(session: impl Display) -> String {
@@ -65,7 +65,7 @@ pub fn session_closing(session: impl Display) -> String {
 }
 
 pub fn session_failed(session: impl Display, error: impl Display, id: impl Display) -> String {
-    format!("session {session} is failed ({error}). Run the archive step again: prov session close {id}")
+    format!("session {session} is failed ({error}). Run the archive step again: prov session archive {id}")
 }
 
 /// A Failed session with no error text.
@@ -76,7 +76,7 @@ pub fn session_no_hash(session: impl Display) -> String {
 }
 
 pub fn session_open_in_range(session: impl Display, worktree: impl Display, branch: impl Display, id: impl Display) -> String {
-    format!("session {session} is open in the worktree {worktree} on the branch {branch}. Close it first: prov session close {id}")
+    format!("session {session} is open in the worktree {worktree} on the branch {branch}. Archive it first: prov session archive {id}")
 }
 
 pub const ARCHIVED_NO_HASH: &str = "an archived session has no transcript hash";

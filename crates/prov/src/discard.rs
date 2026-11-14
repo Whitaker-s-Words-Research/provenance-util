@@ -230,7 +230,7 @@ fn collect(ctx: &Ctx, branch: &str) -> Result<Plan> {
         .map(|v| format!("{} ({})", v.record.id, state_text(v.record.state, v.stale)))
         .collect();
     if !busy.is_empty() {
-        bail!("refused: a session of {branch} is open or closing: {}. Close it first: prov session close <id>", busy.join(", "));
+        bail!("refused: a session of {branch} is open or closing: {}. Archive it first: prov session archive <id>", busy.join(", "));
     }
 
     // Other refs that name a session, or copy from an own commit.

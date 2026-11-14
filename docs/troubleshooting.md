@@ -37,11 +37,11 @@ git-ai ignores every checkpoint in a repository that is not in its `allow_reposi
 
 ### A commit is refused in a contended worktree
 
-Two sessions are Open in one worktree. End one of them, or close it:
+Two sessions are Open in one worktree. End one of them, or archive it:
 
 ```sh
 prov session list
-prov session close <id>
+prov session archive <id>
 ```
 
 Changes from the contended time become doubtful lines at the gate.
@@ -50,11 +50,11 @@ Changes from the contended time become doubtful lines at the gate.
 
 Every session that made a commit must be Archived before its branch merges.
 
-- **Open or stale:** `prov session close <id>`. It waits for the agent process to exit.
-- **Failed:** `prov session show <id>` shows the error. `prov session close <id>` runs the archive step again.
+- **Open or stale:** `prov session archive <id>`. It waits for the agent process to exit.
+- **Failed:** `prov session show <id>` shows the error. `prov session archive <id>` runs the archive step again.
 - **No record:** the session's records are local to the clone that ran it. Merge from that clone.
 
-### `prov session close` warns that it does not know the process ID
+### `prov session archive` warns that it does not know the process ID
 
 It archives at once, and the archive can miss the agent's last work. If the agent is still running, let it finish first. Its next event returns the session to Open, and its next end archives the full transcript.
 
