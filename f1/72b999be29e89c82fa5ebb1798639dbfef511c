@@ -1,0 +1,23 @@
+crates/prov/tests/discard.rs
+  s_4ffffd06031ed5::t_1ce91b37875cd6 138-141,144-148,150-151,157,161,166,168-185,189-209,211-213,219-230,236-241,243,245
+  s_4ffffd06031ed5::t_8d6376e16e2eec 142
+  s_4ffffd06031ed5::t_583eac33521eef 152-156,210,214-218,231-235,242,244
+  s_4ffffd06031ed5::t_75141382d22eaf 143,186-188
+  s_4ffffd06031ed5::t_290b0f0d3307e1 149,158-160,162-165,167
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "f172b999be29e89c82fa5ebb1798639dbfef511c",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": null
+    }
+  }
+}
