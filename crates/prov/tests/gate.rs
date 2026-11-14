@@ -71,6 +71,12 @@ fn protected_paths_need_approval() {
 
     approve(&env, &repo, &[".claude/settings.json", "AGENTS.md", "src/CLAUDE.md"]);
     env.try_git(&repo, ["commit", "--no-edit"]).success();
+    // The gate ran three times on one message: each trailer is there once.
+    let trailers = env.trailers(&repo, "HEAD");
+    for key in ["Prov-Session:", "Prov-Transcript-SHA256:", "Prov-Version:"] {
+        assert_eq!(trailers.iter().filter(|t| t.starts_with(key)).count(), 1, "{key} {trailers:?}");
+    }
+    assert_eq!(trailers.iter().filter(|t| t.starts_with("Prov-Approved:")).count(), 4, "{trailers:?}");
     let base = env.git(&repo, ["rev-parse", "HEAD^1"]);
     // prov check reads the config at the first parent, so the paths are still protected there.
     env.await_notes(&repo);

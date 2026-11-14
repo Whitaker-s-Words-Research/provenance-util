@@ -152,4 +152,10 @@ fn revise_two_integrations() {
     env.try_git(&repo, ["add", "-A"]).success();
     let out = env.prov(&repo, ["revise", "--dry-run"]).success();
     assert!(out.stdout.contains(&format!("Revises {}", &second[..7])) && !out.stdout.contains(&first[..7]), "{}", out.stdout);
+
+    // `--of` must be an ancestor of HEAD.
+    env.try_git(&repo, ["reset", "-q", "--hard"]).success();
+    env.try_git(&repo, ["checkout", "-q", "-b", "side", first]).success();
+    let out = env.prov(&repo, ["revise", "--dry-run", "--of", second]).failure();
+    assert!(out.stderr.contains("is not an ancestor of HEAD"), "{}", out.stderr);
 }
