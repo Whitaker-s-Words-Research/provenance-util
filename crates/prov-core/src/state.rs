@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use serde::{Deserialize, Serialize};
 
 /// An Open session with no event for this long is stale.
@@ -120,7 +121,7 @@ impl SessionRecord {
                 self.error = None;
                 Ok(())
             }
-            State::Archived => bail!("session {} is already archived", self.id),
+            State::Archived => bail!(msg::state::already_archived(&self.id)),
         }
     }
 
@@ -154,7 +155,7 @@ impl SessionRecord {
     pub fn at(mut self, now: u64) -> Self {
         if self.closing_timed_out(now) {
             self.state = State::Failed;
-            self.error = Some("the archive step did not finish in 5 minutes".into());
+            self.error = Some(msg::state::ARCHIVE_TIMED_OUT.into());
         }
         self
     }
@@ -356,7 +357,7 @@ impl Store {
         let entries = match fs::read_dir(self.approvals_dir()) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
-            Err(e) => return Err(e).context("cannot read the approval records"),
+            Err(e) => return Err(e).context(msg::state::CANNOT_READ_APPROVALS),
         };
         for entry in entries {
             let path = entry?.path();
@@ -366,13 +367,13 @@ impl Store {
             match fs::read(&path) {
                 Ok(bytes) => {
                     let record: ApprovalRecord =
-                        serde_json::from_slice(&bytes).with_context(|| format!("{} does not parse", path.display()))?;
+                        serde_json::from_slice(&bytes).with_context(|| msg::fs::does_not_parse(path.display()))?;
                     if record.worktree == worktree {
                         out.push(record);
                     }
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+                Err(e) => return Err(e).with_context(|| msg::fs::cannot_read(path.display())),
             }
         }
         out.sort_by(|a, b| a.path.cmp(&b.path));
@@ -388,11 +389,11 @@ impl Store {
     pub fn worktree(&self, worktree: &Path) -> Result<WorktreeRecord> {
         let path = self.worktree_path(worktree);
         match fs::read(&path) {
-            Ok(bytes) => serde_json::from_slice(&bytes).with_context(|| format!("{} does not parse", path.display())),
+            Ok(bytes) => serde_json::from_slice(&bytes).with_context(|| msg::fs::does_not_parse(path.display())),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 Ok(WorktreeRecord { worktree: worktree.to_path_buf(), owner: None })
             }
-            Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
+            Err(e) => Err(e).with_context(|| msg::fs::cannot_read(path.display())),
         }
     }
 
@@ -402,7 +403,7 @@ impl Store {
         let entries = match fs::read_dir(self.dir.join("worktrees")) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
-            Err(e) => return Err(e).context("cannot read the worktree records"),
+            Err(e) => return Err(e).context(msg::state::CANNOT_READ_WORKTREES),
         };
         for entry in entries {
             let path = entry?.path();
@@ -411,10 +412,10 @@ impl Store {
             }
             match fs::read(&path) {
                 Ok(bytes) => out.push(
-                    serde_json::from_slice(&bytes).with_context(|| format!("{} does not parse", path.display()))?,
+                    serde_json::from_slice(&bytes).with_context(|| msg::fs::does_not_parse(path.display()))?,
                 ),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+                Err(e) => return Err(e).with_context(|| msg::fs::cannot_read(path.display())),
             }
         }
         Ok(out)
@@ -430,7 +431,7 @@ impl Store {
         let entries = match fs::read_dir(self.copies_dir()) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
-            Err(e) => return Err(e).context("cannot read the copy records"),
+            Err(e) => return Err(e).context(msg::state::CANNOT_READ_COPIES),
         };
         for entry in entries {
             let path = entry?.path();
@@ -440,10 +441,10 @@ impl Store {
             match fs::read(&path) {
                 Ok(bytes) => out.push(
                     serde_json::from_slice::<CopyRecord>(&bytes)
-                        .with_context(|| format!("{} does not parse", path.display()))?,
+                        .with_context(|| msg::fs::does_not_parse(path.display()))?,
                 ),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+                Err(e) => return Err(e).with_context(|| msg::fs::cannot_read(path.display())),
             }
         }
         out.sort_by(|a, b| (a.created_at, &a.id).cmp(&(b.created_at, &b.id)));
@@ -458,15 +459,15 @@ impl Store {
 
     /// Takes the advisory lock. All writes go through the returned guard.
     pub fn lock(&self) -> Result<Locked<'_>> {
-        fs::create_dir_all(self.sessions_dir()).with_context(|| format!("cannot create {}", self.dir.display()))?;
+        fs::create_dir_all(self.sessions_dir()).with_context(|| msg::fs::cannot_create(self.dir.display()))?;
         let path = self.dir.join("lock");
         let file = File::options()
             .create(true)
             .truncate(false)
             .write(true)
             .open(&path)
-            .with_context(|| format!("cannot open {}", path.display()))?;
-        file.lock().with_context(|| format!("cannot lock {}", path.display()))?;
+            .with_context(|| msg::fs::cannot_open(path.display()))?;
+        file.lock().with_context(|| msg::fs::cannot_lock(path.display()))?;
         Ok(Locked { store: self, _file: file })
     }
 
@@ -476,10 +477,10 @@ impl Store {
         let path = self.session_path(id)?;
         match fs::read(&path) {
             Ok(bytes) => Ok(Some(
-                serde_json::from_slice(&bytes).with_context(|| format!("{} does not parse", path.display()))?,
+                serde_json::from_slice(&bytes).with_context(|| msg::fs::does_not_parse(path.display()))?,
             )),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
+            Err(e) => Err(e).with_context(|| msg::fs::cannot_read(path.display())),
         }
     }
 
@@ -489,7 +490,7 @@ impl Store {
         let entries = match fs::read_dir(self.sessions_dir()) {
             Ok(entries) => entries,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(out),
-            Err(e) => return Err(e).context("cannot read the session records"),
+            Err(e) => return Err(e).context(msg::state::CANNOT_READ_SESSIONS),
         };
         for entry in entries {
             let path = entry?.path();
@@ -499,11 +500,11 @@ impl Store {
             match fs::read(&path) {
                 Ok(bytes) => out.push(
                     serde_json::from_slice::<SessionRecord>(&bytes)
-                        .with_context(|| format!("{} does not parse", path.display()))?,
+                        .with_context(|| msg::fs::does_not_parse(path.display()))?,
                 ),
                 // Deleted between the listing and the read.
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-                Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+                Err(e) => return Err(e).with_context(|| msg::fs::cannot_read(path.display())),
             }
         }
         out.sort_by(|a, b| (a.started_at, &a.id).cmp(&(b.started_at, &b.id)));
@@ -540,11 +541,11 @@ impl Locked<'_> {
     pub fn put(&self, record: &SessionRecord) -> Result<()> {
         let path = self.store.session_path(&record.id)?;
         let tmp = path.with_extension("json.tmp");
-        let mut file = File::create(&tmp).with_context(|| format!("cannot write {}", tmp.display()))?;
+        let mut file = File::create(&tmp).with_context(|| msg::fs::cannot_write(tmp.display()))?;
         file.write_all(&serde_json::to_vec_pretty(record)?)?;
         file.write_all(b"\n")?;
         drop(file);
-        fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
+        fs::rename(&tmp, &path).with_context(|| msg::fs::cannot_write(path.display()))
     }
 
     pub fn delete(&self, id: &str) -> Result<bool> {
@@ -552,20 +553,20 @@ impl Locked<'_> {
         match fs::remove_file(&path) {
             Ok(()) => Ok(true),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(e).with_context(|| format!("cannot delete {}", path.display())),
+            Err(e) => Err(e).with_context(|| msg::fs::cannot_delete(path.display())),
         }
     }
 
     pub fn put_approval(&self, record: &ApprovalRecord) -> Result<()> {
         let dir = self.store.approvals_dir();
-        fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        fs::create_dir_all(&dir).with_context(|| msg::fs::cannot_create(dir.display()))?;
         let path = dir.join(format!("{}.json", record.key()));
         let tmp = path.with_extension("json.tmp");
-        let mut file = File::create(&tmp).with_context(|| format!("cannot write {}", tmp.display()))?;
+        let mut file = File::create(&tmp).with_context(|| msg::fs::cannot_write(tmp.display()))?;
         file.write_all(&serde_json::to_vec_pretty(record)?)?;
         file.write_all(b"\n")?;
         drop(file);
-        fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
+        fs::rename(&tmp, &path).with_context(|| msg::fs::cannot_write(path.display()))
     }
 
     pub fn delete_approval(&self, record: &ApprovalRecord) -> Result<bool> {
@@ -573,7 +574,7 @@ impl Locked<'_> {
         match fs::remove_file(&path) {
             Ok(()) => Ok(true),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(e).with_context(|| format!("cannot delete {}", path.display())),
+            Err(e) => Err(e).with_context(|| msg::fs::cannot_delete(path.display())),
         }
     }
 
@@ -587,34 +588,34 @@ impl Locked<'_> {
 
     pub fn put_worktree(&self, record: &WorktreeRecord) -> Result<()> {
         let path = self.store.worktree_path(&record.worktree);
-        let dir = path.parent().context("no directory")?;
-        fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        let dir = path.parent().context(msg::state::NO_DIRECTORY)?;
+        fs::create_dir_all(dir).with_context(|| msg::fs::cannot_create(dir.display()))?;
         let tmp = path.with_extension("json.tmp");
-        let mut file = File::create(&tmp).with_context(|| format!("cannot write {}", tmp.display()))?;
+        let mut file = File::create(&tmp).with_context(|| msg::fs::cannot_write(tmp.display()))?;
         file.write_all(&serde_json::to_vec_pretty(record)?)?;
         file.write_all(b"\n")?;
         drop(file);
-        fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
+        fs::rename(&tmp, &path).with_context(|| msg::fs::cannot_write(path.display()))
     }
 
     pub fn delete_worktree(&self, worktree: &Path) -> Result<()> {
         match fs::remove_file(self.store.worktree_path(worktree)) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(e).context("cannot delete the worktree record"),
+            Err(e) => Err(e).context(msg::state::CANNOT_DELETE_WORKTREE),
         }
     }
 
     pub fn put_copy(&self, record: &CopyRecord) -> Result<()> {
         let path = self.store.copy_path(&record.id)?;
         let dir = self.store.copies_dir();
-        fs::create_dir_all(&dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        fs::create_dir_all(&dir).with_context(|| msg::fs::cannot_create(dir.display()))?;
         let tmp = path.with_extension("json.tmp");
-        let mut file = File::create(&tmp).with_context(|| format!("cannot write {}", tmp.display()))?;
+        let mut file = File::create(&tmp).with_context(|| msg::fs::cannot_write(tmp.display()))?;
         file.write_all(&serde_json::to_vec_pretty(record)?)?;
         file.write_all(b"\n")?;
         drop(file);
-        fs::rename(&tmp, &path).with_context(|| format!("cannot write {}", path.display()))
+        fs::rename(&tmp, &path).with_context(|| msg::fs::cannot_write(path.display()))
     }
 
     pub fn delete_copy(&self, id: &str) -> Result<bool> {
@@ -622,7 +623,7 @@ impl Locked<'_> {
         match fs::remove_file(&path) {
             Ok(()) => Ok(true),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
-            Err(e) => Err(e).with_context(|| format!("cannot delete {}", path.display())),
+            Err(e) => Err(e).with_context(|| msg::fs::cannot_delete(path.display())),
         }
     }
 
@@ -640,7 +641,7 @@ fn check_id(id: &str) -> Result<()> {
         && !id.starts_with('.')
         && id.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
     if !ok {
-        bail!("invalid session ID `{id}`");
+        bail!(msg::state::invalid_session_id(id));
     }
     Ok(())
 }

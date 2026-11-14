@@ -1,6 +1,6 @@
 # prov documentation
 
-These pages explain how to use `prov`. The full rules, with their reasons and the test evidence, are in the specification, [SPEC.md](../SPEC.md). When a page here and the specification disagree, the specification is right.
+These pages explain how to use `prov`. The full rules, with their reasons, are in [SPEC.md](../SPEC.md).
 
 | Page | Read it to |
 |---|---|

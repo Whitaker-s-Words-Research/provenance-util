@@ -1,0 +1,243 @@
+$ prov --help
+Provenance for repositories where AI agents and humans commit
+
+Usage: prov <COMMAND>
+
+Commands:
+  init         Sets up this clone: the config file, the hook shims, the agent settings and the git options
+  doctor       Checks the setup of this clone
+  check        Applies the rules of the merge gate without a merge
+  start        Creates a worktree on a new agent branch and starts the agent in it
+  hook         Handles an agent or git event. For the hook shims only
+  session      Shows sessions, closes one, or deletes the record of one
+  finish       Removes the worktree of a session. The branch stays
+  approve      Records a human decision about the authorship of paths
+  completions  Prints the line that turns on tab completion, or adds it to your shell's startup file
+  trace        Agent Trace records
+  cp           Copies files from a commit of a local clone, with an author for every line
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+
+$ prov init --help
+Sets up this clone: the config file, the hook shims, the agent settings and the git options
+
+Usage: prov init [OPTIONS]
+
+Options:
+      --agent <NAME>  An agent in use. Default: the agents of the config file, or `claude`
+      --force         Replace a file or a hook that has other content
+      --dry-run       
+      --json          
+  -h, --help          Print help
+
+$ prov doctor --help
+Checks the setup of this clone
+
+Usage: prov doctor [OPTIONS]
+
+Options:
+      --deep  Also run `git-ai debug`
+      --json  
+  -h, --help  Print help
+
+$ prov check --help
+Applies the rules of the merge gate without a merge
+
+Usage: prov check [OPTIONS] [TARGET]
+
+Arguments:
+  [TARGET]  An agent branch, or `<base>..<tip>` for commits that are already on a human branch
+
+Options:
+      --into <BRANCH>  The branch that the agent branch will merge into. Default: the branch that is checked out
+      --json           
+  -h, --help           Print help
+
+$ prov start --help
+Creates a worktree on a new agent branch and starts the agent in it
+
+Usage: prov start [OPTIONS] <AGENT> [-- <AGENT_ARGS>...]
+
+Arguments:
+  <AGENT>          The agent, for example `claude`
+  [AGENT_ARGS]...  Arguments for the agent, after `--`
+
+Options:
+      --name <SLUG>       The `<name>` part of the branch name. Default: 4 random hex characters
+      --branch <NAME>     The full branch name. It must match `agent/**`
+      --from <REF>        The start point of the new branch. Default: the branch that is checked out
+      --path <DIR>        The directory that holds the worktree. The worktree is a new directory in it, named after the branch. Default: `../<repo>.worktrees/`
+      --no-launch         Create the worktree, print its path, and do not start the agent
+      --resume <SESSION>  Open the worktree of that session and start the agent with its resume option
+      --dry-run           
+      --json              
+  -h, --help              Print help
+
+$ prov hook --help
+Handles an agent or git event. For the hook shims only
+
+Usage: prov hook <ADAPTER> <EVENT> [ARGS]...
+
+Arguments:
+  <ADAPTER>  `git`, or the name of an agent adapter, for example `claude-code`
+  <EVENT>    The event or the git hook name
+  [ARGS]...  The arguments that git gives the hook
+
+Options:
+  -h, --help  Print help
+
+$ prov session --help
+Shows sessions, closes one, or deletes the record of one
+
+Usage: prov session <COMMAND>
+
+Commands:
+  list   Lists the sessions that have a record
+  show   Shows one session
+  close  Moves an Open session to Closing and archives it. For a Failed session: runs the archive step again
+  drop   Deletes the record of a session. The transcript archive stays
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+
+$ prov session list --help
+Lists the sessions that have a record
+
+Usage: prov session list [OPTIONS]
+
+Options:
+      --json  
+  -h, --help  Print help
+
+$ prov session show --help
+Shows one session
+
+Usage: prov session show [OPTIONS] <SESSION>
+
+Arguments:
+  <SESSION>  
+
+Options:
+      --json  
+  -h, --help  Print help
+
+$ prov session close --help
+Moves an Open session to Closing and archives it. For a Failed session: runs the archive step again
+
+Usage: prov session close [OPTIONS] <SESSION>
+
+Arguments:
+  <SESSION>  
+
+Options:
+      --dry-run  
+      --json     
+  -h, --help     Print help
+
+$ prov session drop --help
+Deletes the record of a session. The transcript archive stays
+
+Usage: prov session drop [OPTIONS] <SESSION>
+
+Arguments:
+  <SESSION>  
+
+Options:
+      --dry-run  
+      --json     
+  -h, --help     Print help
+
+$ prov finish --help
+Removes the worktree of a session. The branch stays
+
+Usage: prov finish [OPTIONS] <TARGET>
+
+Arguments:
+  <TARGET>  A session ID, or the branch of the worktree
+
+Options:
+      --override  Remove the worktree also while a session in it is open. Each open session is closed first
+      --force     Passed to `git worktree remove`: remove a worktree with changes that are not committed
+      --dry-run   
+      --json      
+  -h, --help      Print help
+
+$ prov approve --help
+Records a human decision about the authorship of paths
+
+Usage: prov approve [OPTIONS] <PATHS>...
+
+Arguments:
+  <PATHS>...  
+
+Options:
+      --merge          While a merge is in progress: the lines keep their git-ai attribution
+      --human          Before your own commit: you wrote the changes, or a generator that you ran
+      --ai             Before your own commit: an AI wrote the changes
+      --agent <TOOL>   With --ai: the tool. Default: `unknown`
+      --model <MODEL>  With --ai: the model. Default: `unknown`
+      --dry-run        
+      --json           
+  -h, --help           Print help
+
+$ prov completions --help
+Prints the line that turns on tab completion, or adds it to your shell's startup file
+
+Usage: prov completions [OPTIONS]
+
+Options:
+      --shell <SHELL>  `bash`, `zsh` or `fish`. Default: the shell of `$SHELL` [possible values: bash, zsh, fish]
+      --install        Add the line to the startup file, if it is not there yet
+      --dry-run        
+      --json           
+  -h, --help           Print help
+
+$ prov trace --help
+Agent Trace records
+
+Usage: prov trace <COMMAND>
+
+Commands:
+  export  Writes Agent Trace 0.1.0 records as JSON Lines, one record for each commit with a note
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help  Print help
+
+$ prov trace export --help
+Writes Agent Trace 0.1.0 records as JSON Lines, one record for each commit with a note
+
+Usage: prov trace export [RANGE]
+
+Arguments:
+  [RANGE]  A git range, for example `main..HEAD`. Default: the branch that is checked out
+
+Options:
+  -h, --help  Print help
+
+$ prov cp --help
+Copies files from a commit of a local clone, with an author for every line
+
+Usage: prov cp [OPTIONS] [PATH]...
+
+Arguments:
+  [PATH]...  The paths in the source, relative to its root, and then the destination
+
+Options:
+      --from <REPO>       The path of a local clone: the source repository
+      --rev <REV>         The source commit. Default: `HEAD` of the source
+      --all <AUTHOR>      The author of every line: `human` or `ai`. The source's notes are ignored
+      --missing <AUTHOR>  The author of every line that has none from the source: `human` or `ai`
+      --agent <TOOL>      With `ai`: the tool. Default: `unknown`
+      --model <MODEL>     With `ai`: the model. Default: `unknown`
+      --session <ID>      With `--all ai`: the conversation ID. Default: the plan ID
+      --plan <FILE>       Write the plan to a file and stop
+      --apply <FILE>      Apply a plan file
+      --dry-run           
+      --json              
+  -h, --help              Print help
+

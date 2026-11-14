@@ -8,6 +8,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
+use prov_messages as msg;
 use prov_core::plan::{PlanFile, Who};
 use prov_core::trailer::{self, Trailer};
 use prov_core::{now, CopyCheck, CopyFile, CopyRecord};
@@ -66,12 +67,7 @@ pub fn guard(ctx: &Ctx) -> Result<bool> {
     for file in records.iter().flat_map(|r| &r.files).filter(|f| f.commit.is_none()) {
         let Some(entry) = staged.get(&file.dest) else { continue };
         if !is_copied_bytes(file, entry) {
-            say(format!(
-                "refused: {} is a file of `prov cp`, and it is different from the copied bytes. Commit the copy \
-                 unchanged; change the file in a later commit.\nTo give up the copy: git rm -f --cached -- {} (and \
-                 delete the file), then copy it again if necessary.",
-                file.dest, file.dest
-            ));
+            say(msg::copy_check::changed_copy(&file.dest));
             ok = false;
         }
     }
@@ -131,7 +127,7 @@ pub fn committed(ctx: &Ctx, head: &str) -> Result<()> {
     for id in started {
         // The check waits for the note. git gives a hook no time for that.
         if let Err(e) = spawn_detached(ctx, &id) {
-            say(format!("warning: the copy check did not start: {e:#}. Run it: prov copy-check {id}"));
+            say(msg::copy_check::not_started(format!("{e:#}"), &id));
         }
     }
     Ok(())
@@ -139,7 +135,7 @@ pub fn committed(ctx: &Ctx, head: &str) -> Result<()> {
 
 /// Starts `prov copy-check <id>` in its own process session.
 fn spawn_detached(ctx: &Ctx, id: &str) -> Result<u32> {
-    let exe = std::env::current_exe().context("cannot find the prov binary")?;
+    let exe = std::env::current_exe().context(msg::archive::NO_BINARY)?;
     let mut cmd = Command::new(exe);
     cmd.args(["copy-check", id]).current_dir(&ctx.repo.toplevel).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     // The hook environment names an index file that git removes.
@@ -153,7 +149,7 @@ fn spawn_detached(ctx: &Ctx, id: &str) -> Result<u32> {
             Ok(())
         });
     }
-    Ok(cmd.spawn().context("cannot start the copy check")?.id())
+    Ok(cmd.spawn().context(msg::copy_check::CANNOT_SPAWN)?.id())
 }
 
 fn same_author(plan: &Who, actual: &Author) -> bool {
@@ -166,9 +162,9 @@ fn same_author(plan: &Who, actual: &Author) -> bool {
 
 fn describe(actual: &Author) -> String {
     match actual {
-        Author::Human => "human".into(),
-        Author::Ai(s) => format!("ai {}/{} ({})", s.tool, s.model, s.id),
-        Author::Untracked => "no author".into(),
+        Author::Human => msg::copy_check::AUTHOR_HUMAN.into(),
+        Author::Ai(s) => msg::copy_check::author_ai(&s.tool, &s.model, &s.id),
+        Author::Untracked => msg::copy_check::AUTHOR_NONE.into(),
     }
 }
 
@@ -176,7 +172,7 @@ fn describe(actual: &Author) -> String {
 /// of identical lines, the set of authors must agree with the plan.
 pub fn compare(lines: &[&[u8]], plan: &[&Who], actual: &[Author]) -> (CopyCheck, Option<String>) {
     if lines.len() != plan.len() || actual.len() != plan.len() {
-        return (CopyCheck::Failed, Some(format!("the plan has {} lines, and the committed file has {}", plan.len(), lines.len())));
+        return (CopyCheck::Failed, Some(msg::copy_check::line_counts(plan.len(), lines.len())));
     }
     let differ: Vec<usize> = (0..plan.len()).filter(|&i| !same_author(plan[i], &actual[i])).collect();
     let Some(&first) = differ.first() else { return (CopyCheck::Agrees, None) };
@@ -187,7 +183,7 @@ pub fn compare(lines: &[&[u8]], plan: &[&Who], actual: &[Author]) -> (CopyCheck,
     }
     for (line, author) in lines.iter().zip(actual) {
         // Each line is in a group: the loop above made one for every line.
-        let Some(group) = groups.get_mut(line) else { return (CopyCheck::Failed, Some(format!("line {}: no group", first + 1))) };
+        let Some(group) = groups.get_mut(line) else { return (CopyCheck::Failed, Some(msg::copy_check::no_group(first + 1))) };
         match group.iter().position(|who| same_author(who, author)) {
             Some(at) => {
                 group.swap_remove(at);
@@ -195,18 +191,12 @@ pub fn compare(lines: &[&[u8]], plan: &[&Who], actual: &[Author]) -> (CopyCheck,
             None => {
                 return (
                     CopyCheck::Failed,
-                    Some(format!(
-                        "line {}: the plan has `{}`, and the note has `{}` ({} line(s) differ)",
-                        first + 1,
-                        plan[first],
-                        describe(&actual[first]),
-                        differ.len()
-                    )),
+                    Some(msg::copy_check::differs(first + 1, plan[first], describe(&actual[first]), differ.len())),
                 );
             }
         }
     }
-    (CopyCheck::Moved, Some(format!("the authors of {} line(s) moved between identical lines", differ.len())))
+    (CopyCheck::Moved, Some(msg::copy_check::moved(differ.len())))
 }
 
 /// True if `refs/notes/ai` has a note for the commit. This is a read of git;
@@ -221,13 +211,13 @@ pub fn run(id: &str) -> Result<()> {
     let path = here.store.copy_path(id)?;
     let read = || -> Result<Option<CopyRecord>> {
         match std::fs::read(&path) {
-            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes).with_context(|| format!("{} does not parse", path.display()))?)),
+            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes).with_context(|| msg::fs::does_not_parse(path.display()))?)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
-            Err(e) => Err(e).with_context(|| format!("cannot read {}", path.display())),
+            Err(e) => Err(e).with_context(|| msg::fs::cannot_read(path.display())),
         }
     };
     let Some(record) = read()? else { return Ok(()) };
-    let ctx = Ctx::discover(&record.worktree)?.with_context(|| format!("{} is not a worktree", record.worktree.display()))?;
+    let ctx = Ctx::discover(&record.worktree)?.with_context(|| msg::copy_check::not_a_worktree(record.worktree.display()))?;
 
     // Wait for the note of each commit, for a maximum of 60 seconds. The
     // service learns of a commit only when `git commit` ends, after `post-commit`.
@@ -292,19 +282,19 @@ fn check_file(ctx: &Ctx, file: &CopyFile, commit: &str) -> Result<(CopyCheck, Op
     let repo = &ctx.repo;
     let blob = repo.git_opt(["rev-parse", "-q", "--verify", &format!("{commit}:{}", file.dest)])?;
     if blob.as_deref() != Some(file.blob.as_str()) {
-        return Ok((CopyCheck::Failed, Some(format!("the file in the commit {commit} is different from the copied bytes"))));
+        return Ok((CopyCheck::Failed, Some(msg::copy_check::different_bytes(commit))));
     }
     // A binary file and a symbolic link have no line authorship.
     if !file.text {
         return Ok((CopyCheck::Agrees, None));
     }
     if !has_note(ctx, commit) {
-        return Ok((CopyCheck::Failed, Some(format!("the commit {commit} has no git-ai note after {AWAIT_TIMEOUT_SECS} seconds"))));
+        return Ok((CopyCheck::Failed, Some(msg::copy_check::no_note(commit, AWAIT_TIMEOUT_SECS))));
     }
     let bytes = repo.git_bytes(["cat-file", "blob", &file.blob])?;
     let lines: Vec<&[u8]> = bytes.split_inclusive(|b| *b == b'\n').collect();
     let plan_file = PlanFile { path: file.path.clone(), dest: file.dest.clone(), binary: false, symlink: false, ranges: file.ranges.clone() };
-    plan_file.check_cover(u32::try_from(lines.len()).context("the file has too many lines")?)?;
+    plan_file.check_cover(u32::try_from(lines.len()).context(msg::copy_check::TOO_MANY_LINES)?)?;
     let plan = plan_file.line_authors();
     let mut actual = vec![Author::Untracked; lines.len()];
     let added: Vec<_> = ctx.gitai.diff(&repo.toplevel, commit)?.added.into_iter().filter(|r| r.path == file.dest).collect();
@@ -313,11 +303,7 @@ fn check_file(ctx: &Ctx, file: &CopyFile, commit: &str) -> Result<(CopyCheck, Op
         // files. It then drops the checkpoints and lists no line of the file.
         return Ok((
             CopyCheck::Ignored,
-            Some(format!(
-                "git-ai lists no line of {} in the commit {commit}. git-ai ignores some paths (for example \
-                 `**/vendor/**` and lock files) and records no authorship for them",
-                file.dest
-            )),
+            Some(msg::copy_check::ignored(&file.dest, commit)),
         ));
     }
     for range in added {

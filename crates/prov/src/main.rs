@@ -318,7 +318,7 @@ fn main() -> ExitCode {
                     (true, false, false) => Ok(approve::Mode::Merge),
                     (false, true, false) => Ok(approve::Mode::Human),
                     (false, false, true) => Ok(approve::Mode::Ai),
-                    _ => Err(anyhow::anyhow!("give exactly one of --merge, --human and --ai")),
+                    _ => Err(anyhow::anyhow!(prov_messages::cli::APPROVE_MODE)),
                 };
                 mode.and_then(|mode| {
                     approve::run(&approve::Args {
@@ -357,7 +357,7 @@ fn main() -> ExitCode {
         Ok(true) => ExitCode::SUCCESS,
         Ok(false) => ExitCode::from(1),
         Err(e) => {
-            eprintln!("prov: error: {e:#}");
+            eprintln!("{}", prov_messages::cli::error(format!("{e:#}")));
             // Never 2: Claude Code treats exit code 2 of a hook as a request to block.
             ExitCode::from(1)
         }

@@ -13,6 +13,7 @@ use serde_json::{json, Map, Value};
 use sha1::{Digest, Sha1};
 
 use prov_core::trailer;
+use prov_messages as msg;
 
 use crate::context::Ctx;
 use crate::schema;
@@ -111,11 +112,11 @@ pub fn record(sha: &str, timestamp: &str, mut added: Vec<AddedRange>) -> Value {
 pub fn run(range: Option<&str>) -> Result<bool> {
     let ctx = Ctx::here()?;
     let repo = &ctx.repo;
-    let schema: Value = serde_json::from_str(SCHEMA).context("the pinned Agent Trace schema does not parse")?;
+    let schema: Value = serde_json::from_str(SCHEMA).context(msg::trace::SCHEMA_DOES_NOT_PARSE)?;
     // The default range is the branch that is checked out.
     let range = range.unwrap_or("HEAD");
     if range.starts_with('-') {
-        bail!("give a range, for example main..HEAD");
+        bail!(msg::trace::GIVE_RANGE);
     }
     // Which commits have a note. The content of a note is read only through git-ai.
     let noted: BTreeSet<String> = repo
@@ -154,7 +155,7 @@ pub fn run(range: Option<&str>) -> Result<bool> {
         }
         let record = record(sha, timestamp, added);
         schema::validate(&schema, &record)
-            .map_err(|e| anyhow!("the record of commit {sha} is not valid Agent Trace 0.1.0: {e}"))?;
+            .map_err(|e| anyhow!(msg::trace::invalid_record(sha, e)))?;
         writeln!(out, "{}", serde_json::to_string(&record)?)?;
     }
     Ok(true)

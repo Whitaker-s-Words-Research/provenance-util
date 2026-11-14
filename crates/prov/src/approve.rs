@@ -9,6 +9,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use prov_core::trailer::{self, Trailer};
 use prov_core::{now, ApprovalRecord};
 use serde::Serialize;
@@ -43,11 +44,9 @@ struct Report {
 
 /// Asks for a typed `yes` at the terminal. With no terminal, nobody can approve.
 fn confirm(question: &str) -> Result<bool> {
-    let tty = std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty").context(
-        "`prov approve` needs a terminal: only a human can approve, with a typed `yes`. Use --dry-run to see what it will do.",
-    )?;
+    let tty = std::fs::OpenOptions::new().read(true).write(true).open("/dev/tty").context(msg::approve::NEEDS_TERMINAL)?;
     let mut out = tty.try_clone()?;
-    write!(out, "{question}\nType `yes` to approve: ")?;
+    write!(out, "{question}\n{}", msg::approve::TYPE_YES)?;
     out.flush()?;
     let mut line = String::new();
     BufReader::new(tty).read_line(&mut line)?;
@@ -58,16 +57,16 @@ pub fn run(args: &Args) -> Result<bool> {
     let ctx = Ctx::here()?;
     let repo = &ctx.repo;
     if let Some(var) = prov_adapters::agent_env_marker() {
-        bail!("refused: only a human can approve. {var} is set: an agent started this command.");
+        bail!(msg::approve::agent_env(var));
     }
     if ctx.on_agent_branch() {
-        bail!("refused: only a human can approve, and not in an agent worktree. Approve where you merge or commit.");
+        bail!(msg::approve::AGENT_WORKTREE);
     }
     if args.paths.is_empty() {
-        bail!("give one path or more");
+        bail!(msg::approve::NO_PATHS);
     }
     if args.mode != Mode::Ai && (args.agent.is_some() || args.model.is_some()) {
-        bail!("--agent and --model go with --ai");
+        bail!(msg::approve::AGENT_MODEL_WITHOUT_AI);
     }
     let mut paths = Vec::new();
     for path in &args.paths {
@@ -95,9 +94,9 @@ pub fn run(args: &Args) -> Result<bool> {
     if args.json {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else if args.dry_run {
-        println!("Dry run: nothing changed.");
+        println!("{}", msg::approve::DRY_RUN);
     } else if !approved {
-        println!("Not approved. Nothing changed.");
+        println!("{}", msg::approve::NOT_APPROVED);
     }
     Ok(approved || args.dry_run)
 }
@@ -107,15 +106,15 @@ fn approve_merge(ctx: &Ctx, paths: &[String], args: &Args) -> Result<bool> {
     let heads = repo.merge_heads()?;
     let [tip] = heads.as_slice() else {
         if heads.is_empty() {
-            bail!("no merge is in progress. Start the merge first: a merge approval exists only in the merge message.");
+            bail!(msg::approve::NO_MERGE);
         }
-        bail!("an octopus merge is in progress. The gate refuses it: git merge --abort");
+        bail!(msg::approve::OCTOPUS);
     };
     let message_file = repo.git_path("MERGE_MSG")?;
     if !message_file.is_file() {
-        bail!("{} does not exist. Run `git commit` once, so that the gate lists the items.", message_file.display());
+        bail!(msg::approve::no_message_file(message_file.display()));
     }
-    let config = repo.config_at("HEAD")?.context("HEAD has no .provenance.toml")?;
+    let config = repo.config_at("HEAD")?.context(msg::approve::HEAD_NO_CONFIG)?;
     let mut analysis = gate::analyze(repo, &ctx.gitai, &config, "HEAD", tip)?;
     analysis.drop_unknown_sessions(|s| gate::has_record(ctx, s));
 
@@ -126,14 +125,15 @@ fn approve_merge(ctx: &Ctx, paths: &[String], args: &Args) -> Result<bool> {
         let items: Vec<&gate::Item> = analysis.items.iter().filter(|i| i.path == *path).collect();
         if items.is_empty() {
             let open: Vec<&str> = gate::unapproved(&analysis.items, &done).iter().map(|i| i.path.as_str()).collect();
-            bail!(
-                "nothing in this merge needs an approval for `{path}`.{}",
-                if open.is_empty() { String::new() } else { format!(" Open items: {}", open.join(", ")) }
-            );
+            let mut text = msg::approve::nothing_to_approve(path);
+            if !open.is_empty() {
+                text.push_str(&msg::approve::open_items(open.join(", ")));
+            }
+            bail!(text);
         }
-        println!("{path}:");
+        println!("{}", msg::approve::path_header(path));
         for item in &items {
-            println!("  {}", item.describe());
+            println!("{}", msg::approve::item(item.describe()));
         }
         if items.iter().any(|i| i.reason == Reason::Protected) {
             // HEAD is the human branch before the integration.
@@ -148,14 +148,14 @@ fn approve_merge(ctx: &Ctx, paths: &[String], args: &Args) -> Result<bool> {
         return Ok(false);
     }
     if new.is_empty() {
-        println!("Each path is already approved in the merge message. Run: git commit");
+        println!("{}", msg::approve::ALREADY_APPROVED);
         return Ok(true);
     }
-    if !confirm(&format!("The lines keep their git-ai attribution. You approve {} path(s) for this merge.", new.len()))? {
+    if !confirm(&msg::approve::confirm_merge(new.len()))? {
         return Ok(false);
     }
     repo.add_trailers(&message_file, &new)?;
-    println!("Approved in the merge message. Run: git commit");
+    println!("{}", msg::approve::APPROVED_MERGE);
     Ok(true)
 }
 
@@ -165,32 +165,28 @@ fn approve_own(ctx: &Ctx, paths: &[String], args: &Args) -> Result<bool> {
     for path in paths {
         let file = repo.toplevel.join(path);
         if !file.is_file() {
-            bail!("{path} is not a file");
+            bail!(msg::approve::not_a_file(path));
         }
         files.push(file);
     }
     if !ctx.gitai.service_available(&repo.toplevel) {
-        bail!("the git-ai service is not available, so a checkpoint would record nothing. Start it: git-ai bg start");
+        bail!(msg::approve::GITAI_UNAVAILABLE);
     }
     let (choice, who) = match args.mode {
         Mode::Ai => (
             "ai",
-            format!(
-                "an AI (agent `{}`, model `{}`)",
-                args.agent.as_deref().unwrap_or("unknown"),
-                args.model.as_deref().unwrap_or("unknown")
-            ),
+            msg::approve::who_ai(args.agent.as_deref().unwrap_or("unknown"), args.model.as_deref().unwrap_or("unknown")),
         ),
-        _ => ("human", "you".to_string()),
+        _ => ("human", msg::approve::WHO_HUMAN.to_string()),
     };
-    println!("Every change to these files since the last checkpoint gets the author: {who}.");
+    println!("{}", msg::approve::author(who));
     for path in paths {
-        println!("  {path}");
+        println!("{}", msg::approve::path(path));
     }
     if args.dry_run {
         return Ok(false);
     }
-    if !confirm("This applies to each complete file, not to a part of its changes.")? {
+    if !confirm(msg::approve::CONFIRM_OWN)? {
         return Ok(false);
     }
     let at = now();
@@ -206,7 +202,7 @@ fn approve_own(ctx: &Ctx, paths: &[String], args: &Args) -> Result<bool> {
     }
     // The checkpoint is applied after it is received; the commit can follow at once.
     if let Err(e) = ctx.gitai.await_notes(&repo.toplevel) {
-        crate::context::say(format!("warning: {e:#}"));
+        crate::context::say(msg::context::warning(format!("{e:#}")));
     }
     let lock = ctx.store.lock()?;
     for (path, file) in paths.iter().zip(&files) {
@@ -220,6 +216,6 @@ fn approve_own(ctx: &Ctx, paths: &[String], args: &Args) -> Result<bool> {
             approved_at: at,
         })?;
     }
-    println!("Recorded. The commit of these files gets `Prov-Approved: <path> {choice}`. A change to a file cancels its approval.");
+    println!("{}", msg::approve::recorded(choice));
     Ok(true)
 }

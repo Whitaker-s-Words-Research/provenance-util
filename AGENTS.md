@@ -59,6 +59,12 @@ A model checks the order of events. It cannot check a premise. See [tla/README.m
 - Conventional Commits: `feat(prov-core): ...`, `fix(prov): ...`, `docs: ...`, `chore: ...`. Do not copy older subjects such as `Plan: ...`.
 - Agent commits use the identity `Claude <noreply@anthropic.com>` and are not signed. `.claude/settings.json` sets both; do not override them.
 
+## User-facing text
+
+- Put every text that prov shows to a person or an agent in `crates/prov-messages`, in the module of its area. A fixed text is a `const`, and a text with values is a function. The code adds no words to a text. See "User-facing text" in [docs/development.md](docs/development.md).
+- Help texts are the doc comments in `crates/prov/src/main.rs`. After a change, write `crates/prov/tests/snapshots/help.txt` again: `PROV_UPDATE_SNAPSHOTS=1 cargo test -p prov --test help`.
+- Not in `prov-messages`: the JSON output, trailer names, and the files that `prov init` writes. A change to them is a change of format.
+
 ## Writing style
 
 SPEC.md, the docs and the help texts use plain, short sentences: one fact per sentence, active voice, "Reason:" for the why. Follow that style, and keep a term the same everywhere (human branch, agent worktree, doubtful line, integration).

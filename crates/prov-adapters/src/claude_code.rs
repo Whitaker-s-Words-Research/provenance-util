@@ -5,6 +5,7 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use serde::Deserialize;
 
 use serde_json::{json, Map, Value};
@@ -32,9 +33,9 @@ fn has_hook(entries: Option<&Value>, command: &str) -> bool {
 fn parse_settings(existing: Option<&str>) -> Result<Map<String, Value>> {
     match existing.map(str::trim).filter(|t| !t.is_empty()) {
         None => Ok(Map::new()),
-        Some(text) => match serde_json::from_str::<Value>(text).context(".claude/settings.json does not parse")? {
+        Some(text) => match serde_json::from_str::<Value>(text).context(msg::claude_code::SETTINGS_DO_NOT_PARSE)? {
             Value::Object(map) => Ok(map),
-            _ => bail!(".claude/settings.json is not a JSON object"),
+            _ => bail!(msg::claude_code::SETTINGS_NOT_OBJECT),
         },
     }
 }
@@ -105,11 +106,11 @@ impl Adapter for ClaudeCode {
             "UserPromptSubmit" => EventKind::Activity,
             "Stop" => EventKind::WorkDone,
             "SessionEnd" => EventKind::End,
-            other => bail!("unknown Claude Code event `{other}`"),
+            other => bail!(msg::claude_code::unknown_event(other)),
         };
-        let p: Payload = serde_json::from_str(payload).context("the hook payload does not parse")?;
+        let p: Payload = serde_json::from_str(payload).context(msg::claude_code::PAYLOAD_DOES_NOT_PARSE)?;
         if p.session_id.is_empty() {
-            bail!("the hook payload has no session_id");
+            bail!(msg::claude_code::PAYLOAD_NO_SESSION);
         }
         let non_empty = |s: Option<String>| s.filter(|s| !s.is_empty());
         Ok(AgentEvent {
@@ -180,9 +181,9 @@ impl Adapter for ClaudeCode {
     /// `<session ID>/` next to it. Claude Code stores large tool results and
     /// the messages of subagents there, not in the transcript.
     fn archive_entries(&self, session_id: &str, transcript: Option<&Path>) -> Result<Vec<ArchiveEntry>> {
-        let transcript = transcript.context("the session has no transcript path")?;
+        let transcript = transcript.context(msg::claude_code::NO_TRANSCRIPT_PATH)?;
         if !transcript.is_file() {
-            bail!("the transcript {} does not exist", transcript.display());
+            bail!(msg::claude_code::transcript_missing(transcript.display()));
         }
         let mut entries = vec![ArchiveEntry { name: "transcript.jsonl".into(), source: transcript.to_path_buf() }];
         if let Some(dir) = transcript.parent().map(|p| p.join(session_id)) {
@@ -216,12 +217,12 @@ impl Adapter for ClaudeCode {
     fn merge_settings(&self, existing: Option<&str>, identity: &Identity) -> Result<String> {
         let mut root = parse_settings(existing)?;
         let env = root.entry("env").or_insert_with(|| json!({}));
-        let Some(env) = env.as_object_mut() else { bail!("`env` in .claude/settings.json is not an object") };
+        let Some(env) = env.as_object_mut() else { bail!(msg::claude_code::ENV_NOT_OBJECT) };
         for (key, value) in commit_env(identity) {
             env.insert(key.to_string(), Value::String(value));
         }
         let hooks = root.entry("hooks").or_insert_with(|| json!({}));
-        let Some(hooks) = hooks.as_object_mut() else { bail!("`hooks` in .claude/settings.json is not an object") };
+        let Some(hooks) = hooks.as_object_mut() else { bail!(msg::claude_code::HOOKS_NOT_OBJECT) };
         for event in EVENTS {
             let command = hook_command(event);
             if has_hook(hooks.get(event), &command) {
@@ -229,7 +230,7 @@ impl Adapter for ClaudeCode {
             }
             let entries = hooks.entry(event).or_insert_with(|| json!([]));
             let Some(entries) = entries.as_array_mut() else {
-                bail!("`hooks.{event}` in .claude/settings.json is not an array")
+                bail!(msg::claude_code::hooks_event_not_array(event))
             };
             entries.push(json!({"hooks": [{"type": "command", "command": command}]}));
         }
@@ -238,7 +239,7 @@ impl Adapter for ClaudeCode {
 
     fn settings_problems(&self, existing: Option<&str>, identity: &Identity) -> Vec<String> {
         let root = match (existing, parse_settings(existing)) {
-            (None, _) => return vec![".claude/settings.json does not exist".into()],
+            (None, _) => return vec![msg::claude_code::SETTINGS_MISSING.into()],
             (_, Err(e)) => return vec![format!("{e:#}")],
             (_, Ok(root)) => root,
         };
@@ -247,12 +248,12 @@ impl Adapter for ClaudeCode {
         for (key, value) in commit_env(identity) {
             let found = env.and_then(|e| e.get(key)).and_then(Value::as_str);
             if found != Some(value.as_str()) {
-                problems.push(format!("`env.{key}` is {}, not `{value}`", found.map_or("not set".into(), |f| format!("`{f}`"))));
+                problems.push(msg::claude_code::env_wrong(key, found, value));
             }
         }
         for event in EVENTS {
             if !has_hook(root.get("hooks").and_then(|h| h.get(event)), &hook_command(event)) {
-                problems.push(format!("no hook `{}` for the event {event}", hook_command(event)));
+                problems.push(msg::claude_code::hook_missing(hook_command(event), event));
             }
         }
         problems
@@ -262,8 +263,8 @@ impl Adapter for ClaudeCode {
     /// events into the user's Claude Code settings.
     fn gitai_integration(&self, home: &Path) -> std::result::Result<(), String> {
         let path = home.join(".claude/settings.json");
-        let text = std::fs::read_to_string(&path).map_err(|_| format!("{} does not exist", path.display()))?;
-        let root: Value = serde_json::from_str(&text).map_err(|e| format!("{} does not parse: {e}", path.display()))?;
+        let text = std::fs::read_to_string(&path).map_err(|_| msg::fs::does_not_exist(path.display()))?;
+        let root: Value = serde_json::from_str(&text).map_err(|e| msg::claude_code::settings_does_not_parse(path.display(), e))?;
         for event in ["PreToolUse", "PostToolUse"] {
             let found = root.get("hooks").and_then(|h| h.get(event)).and_then(Value::as_array).is_some_and(|groups| {
                 groups.iter().any(|group| {
@@ -275,7 +276,7 @@ impl Adapter for ClaudeCode {
                 })
             });
             if !found {
-                return Err(format!("{} has no `git-ai checkpoint` hook for {event}. Run: git-ai install-hooks", path.display()));
+                return Err(msg::claude_code::gitai_hook_missing(path.display(), event));
             }
         }
         Ok(())
@@ -283,10 +284,10 @@ impl Adapter for ClaudeCode {
 }
 
 fn collect(dir: &Path, prefix: &str, out: &mut Vec<ArchiveEntry>) -> Result<()> {
-    for entry in std::fs::read_dir(dir).with_context(|| format!("cannot read {}", dir.display()))? {
+    for entry in std::fs::read_dir(dir).with_context(|| msg::fs::cannot_read(dir.display()))? {
         let entry = entry?;
         let name = entry.file_name();
-        let Some(name) = name.to_str() else { bail!("a file name in {} is not UTF-8", dir.display()) };
+        let Some(name) = name.to_str() else { bail!(msg::claude_code::file_name_not_utf8(dir.display())) };
         let name = format!("{prefix}/{name}");
         let kind = entry.file_type()?;
         if kind.is_dir() {

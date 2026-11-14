@@ -356,6 +356,7 @@ dependencies = [
  "prov-core",
  "prov-git",
  "prov-gitai",
+ "prov-messages",
  "regex-lite",
  "serde",
  "serde_json",
@@ -371,6 +372,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "prov-core",
+ "prov-messages",
  "serde",
  "serde_json",
  "tempfile",
@@ -382,6 +384,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "libc",
+ "prov-messages",
  "semver",
  "serde",
  "serde_json",
@@ -395,6 +398,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "prov-core",
+ "prov-messages",
 ]
 
 [[package]]
@@ -402,9 +406,14 @@ name = "prov-gitai"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "prov-messages",
  "serde",
  "serde_json",
 ]
+
+[[package]]
+name = "prov-messages"
+version = "0.1.0"
 
 [[package]]
 name = "quote"

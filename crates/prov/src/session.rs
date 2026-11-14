@@ -1,6 +1,7 @@
 //! `prov session list | show | close | drop`.
 
 use anyhow::{bail, Result};
+use prov_messages as msg;
 use prov_core::{now, SessionRecord, State, Store};
 use serde::Serialize;
 
@@ -49,12 +50,12 @@ pub fn resolve(store: &Store, text: &str) -> Result<SessionRecord> {
     let matches: Vec<&SessionRecord> = sessions.iter().filter(|s| !text.is_empty() && s.id.starts_with(text)).collect();
     match matches.as_slice() {
         [one] => Ok((*one).clone()),
-        [] => bail!("no record of a session `{text}`. See: prov session list"),
-        many => bail!(
-            "`{text}` matches {} sessions: {}",
+        [] => bail!(msg::session::no_match(text)),
+        many => bail!(msg::session::ambiguous(
+            text,
             many.len(),
             many.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join(", ")
-        ),
+        )),
     }
 }
 
@@ -77,10 +78,10 @@ pub fn views(ctx: &Ctx) -> Result<Vec<View>> {
 fn state_text(view: &View) -> String {
     let mut text = view.record.state.as_str().to_string();
     if view.stale {
-        text.push_str(", stale");
+        text.push_str(msg::session::STALE);
     }
     if view.contended {
-        text.push_str(", contended");
+        text.push_str(msg::session::CONTENDED);
     }
     text
 }
@@ -116,10 +117,10 @@ fn tilde(path: &std::path::Path) -> String {
 
 fn age(seconds: u64) -> String {
     match seconds {
-        s if s < 120 => format!("{s} s"),
-        s if s < 2 * 3600 => format!("{} min", s / 60),
-        s if s < 48 * 3600 => format!("{} h", s / 3600),
-        s => format!("{} d", s / 86400),
+        s if s < 120 => msg::session::age_seconds(s),
+        s if s < 2 * 3600 => msg::session::age_minutes(s / 60),
+        s if s < 48 * 3600 => msg::session::age_hours(s / 3600),
+        s => msg::session::age_days(s / 86400),
     }
 }
 
@@ -132,22 +133,18 @@ pub fn run(action: Action, json: bool, dry_run: bool) -> Result<bool> {
             if json {
                 println!("{}", serde_json::to_string_pretty(&views)?);
             } else if views.is_empty() {
-                println!("No session has a record. Integrated sessions are in the trailers of their merge commits.");
+                println!("{}", msg::session::NONE);
             } else {
                 let now = now();
                 let ids: Vec<&str> = views.iter().map(|v| v.record.id.as_str()).collect();
                 for (v, id) in views.iter().zip(short_ids(&ids)) {
-                    let mut line = format!(
-                        "{}  {id}  {}  {} ago",
-                        v.record.agent,
-                        state_text(v),
-                        age(now.saturating_sub(v.record.last_event_at))
-                    );
+                    let mut line =
+                        msg::session::list_line(&v.record.agent, id, state_text(v), age(now.saturating_sub(v.record.last_event_at)));
                     if let Some(title) = &v.title {
                         line.push_str("  ");
                         line.push_str(title);
                     }
-                    println!("{line}\n    {}   {}", v.record.branch, tilde(&v.record.worktree));
+                    println!("{line}\n{}", msg::session::list_location(&v.record.branch, tilde(&v.record.worktree)));
                 }
             }
             Ok(true)
@@ -155,31 +152,31 @@ pub fn run(action: Action, json: bool, dry_run: bool) -> Result<bool> {
         Action::Show(id) => {
             let record = resolve(&ctx.store, &id)?;
             let view = views(&ctx)?.into_iter().find(|v| v.record.id == record.id);
-            let Some(mut view) = view else { bail!("no record of a session `{id}`") };
+            let Some(mut view) = view else { bail!(msg::session::no_record(&id)) };
             view.read_title();
             if json {
                 println!("{}", serde_json::to_string_pretty(&view)?);
             } else {
                 let r = &view.record;
-                println!("session:    {}:{}", r.agent, r.id);
+                println!("{}", msg::session::show_session(&r.agent, &r.id));
                 if let Some(title) = &view.title {
-                    println!("title:      {title}");
+                    println!("{}", msg::session::show_title(title));
                 }
-                println!("state:      {}", state_text(&view));
-                println!("branch:     {}", r.branch);
-                println!("worktree:   {}", r.worktree.display());
-                println!("model:      {}", r.model);
+                println!("{}", msg::session::show_state(state_text(&view)));
+                println!("{}", msg::session::show_branch(&r.branch));
+                println!("{}", msg::session::show_worktree(r.worktree.display()));
+                println!("{}", msg::session::show_model(&r.model));
                 if let Some(t) = &r.transcript_path {
-                    println!("transcript: {}", t.display());
+                    println!("{}", msg::session::show_transcript(t.display()));
                 }
                 if let (Some(file), Some(hash)) = (&r.archive_file, &r.archive_sha256) {
-                    println!("archive:    {}", file.display());
-                    println!("sha256:     {hash} (of the decompressed archive)");
+                    println!("{}", msg::session::show_archive(file.display()));
+                    println!("{}", msg::session::show_sha256(hash));
                 }
                 if let Some(error) = &r.error {
-                    println!("error:      {error}");
+                    println!("{}", msg::session::show_error(error));
                 }
-                println!("last event: {} ago", age(now().saturating_sub(r.last_event_at)));
+                println!("{}", msg::session::show_last_event(age(now().saturating_sub(r.last_event_at))));
             }
             Ok(true)
         }
@@ -190,24 +187,22 @@ pub fn run(action: Action, json: bool, dry_run: bool) -> Result<bool> {
                 println!("{}", serde_json::json!({"session": record.id, "dry_run": dry_run, "state": after.state.as_str(),
                     "error": after.error, "archive_file": after.archive_file, "archive_sha256": after.archive_sha256}));
             } else if dry_run {
-                println!("Dry run: session {} is {}; `prov session close` will run the archive step.", record.id, record.state.as_str());
+                println!("{}", msg::session::close_dry_run(&record.id, record.state.as_str()));
             } else {
                 match after.state {
                     State::Archived => println!(
-                        "session {} is archived: {}",
-                        after.id,
-                        after.archive_file.as_deref().map_or_default(|p| p.display().to_string())
+                        "{}",
+                        msg::session::archived(&after.id, after.archive_file.as_deref().map_or_default(|p| p.display().to_string()))
                     ),
                     State::Failed => println!(
-                        "session {} is failed: {}\nCorrect the cause, then run the command again.",
-                        after.id,
-                        after.error.as_deref().unwrap_or("no error text")
+                        "{}",
+                        msg::session::failed(&after.id, after.error.as_deref().unwrap_or(msg::session::NO_ERROR_TEXT))
                     ),
-                    other => println!("session {} is {}", after.id, other.as_str()),
+                    other => println!("{}", msg::session::state(&after.id, other.as_str())),
                 }
             }
             if !dry_run && after.worktree.is_dir() {
-                crate::procs::warn_if_busy(&after.worktree, "Stop them before another session starts there.");
+                crate::procs::warn_if_busy(&after.worktree, msg::session::STOP_PROCESSES);
             }
             Ok(dry_run || after.state == State::Archived)
         }
@@ -220,22 +215,13 @@ pub fn run(action: Action, json: bool, dry_run: bool) -> Result<bool> {
                 println!("{}", serde_json::json!({"session": record.id, "dry_run": dry_run, "dropped": !dry_run,
                     "archive_file": record.archive_file}));
             } else {
-                println!(
-                    "{} the record of session {}.{}",
-                    if dry_run { "Dry run: will delete" } else { "Deleted" },
-                    record.id,
-                    match &record.archive_file {
-                        Some(file) => format!(" The transcript archive stays: {}", file.display()),
-                        None => String::new(),
-                    }
-                );
+                let mut line = if dry_run { msg::session::will_drop(&record.id) } else { msg::session::dropped(&record.id) };
+                if let Some(file) = &record.archive_file {
+                    line.push_str(&msg::session::archive_stays(file.display()));
+                }
+                println!("{line}");
                 if record.state != State::Archived {
-                    println!(
-                        "The session was {}: it has no transcript archive, and its branch `{}` can no longer integrate \
-                         with a session record. Its lines will be doubtful lines.",
-                        record.state.as_str(),
-                        record.branch
-                    );
+                    println!("{}", msg::session::dropped_unarchived(record.state.as_str(), &record.branch));
                 }
             }
             Ok(true)
@@ -249,11 +235,11 @@ pub fn close(ctx: &Ctx, id: &str, dry_run: bool) -> Result<SessionRecord> {
     let now = now();
     let generation = {
         let lock = ctx.store.lock()?;
-        let Some(mut record) = lock.get(id)?.map(|r| r.at(now)) else { bail!("no record of session {id}") };
+        let Some(mut record) = lock.get(id)?.map(|r| r.at(now)) else { bail!(msg::session::no_record_of(id)) };
         match record.state {
-            State::Archived => bail!("session {id} is already archived"),
+            State::Archived => bail!(msg::state::already_archived(id)),
             State::Closing if record.archive_pid.is_some_and(prov_core::state::pid_alive) => {
-                bail!("session {id} is closing: its archive step runs now. Wait, then see: prov session show {id}")
+                bail!(msg::session::closing_now(id))
             }
             _ => {}
         }
@@ -262,11 +248,7 @@ pub fn close(ctx: &Ctx, id: &str, dry_run: bool) -> Result<SessionRecord> {
         }
         if record.agent_pid.is_none() {
             // R-SESS-3, accepted limit: the step cannot wait for the agent.
-            say(format!(
-                "warning: prov does not know the process ID of the agent of session {id}, so it archives the \
-                 transcript now. If the agent still works, the archive misses its last work, until the next event \
-                 of the agent opens the session again (R-SESS-3). End the agent first if it runs."
-            ));
+            say(msg::session::no_agent_pid(id));
         }
         record.close(now)?;
         lock.put(&record)?;
@@ -279,15 +261,11 @@ pub fn close(ctx: &Ctx, id: &str, dry_run: bool) -> Result<SessionRecord> {
             if record.generation != generation {
                 // R-SESS-1: an event of the agent opened the session again while
                 // the step waited, and this step stopped without a change.
-                say(format!(
-                    "the agent of session {id} sent another event while prov waited, so the session went on \
-                     (now {}). It is archived when the agent ends. See: prov session show {id}",
-                    record.state.as_str()
-                ));
+                say(msg::session::resumed(id, record.state.as_str()));
             }
             Ok(record)
         }
-        None => bail!("the record of session {id} was deleted during the archive step"),
+        None => bail!(msg::session::deleted_during_archive(id)),
     }
 }
 

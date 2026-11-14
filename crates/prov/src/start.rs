@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use prov_core::pattern::is_agent_branch;
 use serde::Serialize;
 
@@ -50,7 +51,7 @@ fn local_date() -> String {
 fn random_name() -> Result<String> {
     use std::io::Read;
     let mut bytes = [0u8; 2];
-    std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes)).context("cannot read /dev/urandom")?;
+    std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes)).context(msg::start::CANNOT_READ_URANDOM)?;
     Ok(format!("{:02x}{:02x}", bytes[0], bytes[1]))
 }
 
@@ -61,8 +62,8 @@ fn worktrees_dir(ctx: &Ctx, path: Option<&Path>) -> Result<PathBuf> {
         return absolute(path);
     }
     let base = ctx.repo.base_dir();
-    let name = base.file_name().and_then(|n| n.to_str()).context("the base directory has no name")?;
-    Ok(base.parent().context("the base directory has no parent")?.join(format!("{name}.worktrees")))
+    let name = base.file_name().and_then(|n| n.to_str()).context(msg::start::BASE_NO_NAME)?;
+    Ok(base.parent().context(msg::start::BASE_NO_PARENT)?.join(format!("{name}.worktrees")))
 }
 
 /// The directory name of a worktree: the branch without `agent/`, with `-`
@@ -76,13 +77,13 @@ pub fn run(args: &Args) -> Result<bool> {
     let repo = &ctx.repo;
     let config = repo.config_here()?;
     if !config.agents.contains(&args.agent) {
-        bail!("the agent `{}` is not in `agents` of .provenance.toml ({})", args.agent, config.agents.join(", "));
+        bail!(msg::start::agent_not_configured(&args.agent, config.agents.join(", ")));
     }
     let adapter =
-        prov_adapters::by_agent_name(&args.agent).with_context(|| format!("no adapter for the agent `{}`", args.agent))?;
+        prov_adapters::by_agent_name(&args.agent).with_context(|| msg::archive::no_adapter(&args.agent))?;
     if let Some(name) = &args.name {
         if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-') {
-            bail!("--name takes letters, digits and `-` only");
+            bail!(msg::start::NAME_CHARACTERS);
         }
     }
 
@@ -96,10 +97,10 @@ pub fn run(args: &Args) -> Result<bool> {
         };
         let branch = args.branch.clone().unwrap_or_else(|| format!("agent/{}/{date}-{name}", args.agent));
         if !is_agent_branch(&branch) {
-            bail!("the branch `{branch}` does not match `agent/**`");
+            bail!(msg::start::not_agent_branch(&branch));
         }
         if repo.git_ok(["show-ref", "--verify", "-q", &format!("refs/heads/{branch}")])? {
-            bail!("the branch `{branch}` exists. Give another --name, or continue its session with --resume.");
+            bail!(msg::start::branch_exists(&branch));
         }
         // The start point is the branch that is checked out: a feature branch too.
         let from = match &args.from {
@@ -107,11 +108,11 @@ pub fn run(args: &Args) -> Result<bool> {
             None => repo.branch.clone().unwrap_or_else(|| "HEAD".to_string()),
         };
         if repo.rev_parse(&from)?.is_none() {
-            bail!("no branch or commit `{from}`");
+            bail!(msg::check::no_branch(from));
         }
         let worktree = worktrees_dir(&ctx, args.path.as_deref())?.join(worktree_name(&branch));
         if worktree.exists() {
-            bail!("{} exists", worktree.display());
+            bail!(msg::start::exists(worktree.display()));
         }
         if !args.dry_run {
             repo.git([
@@ -144,16 +145,10 @@ pub fn run(args: &Args) -> Result<bool> {
     } else {
         // The path alone on standard output: `cd "$(prov start claude --no-launch)"`.
         println!("{}", report.worktree.display());
-        eprintln!(
-            "prov: {}worktree {} on the branch {}{}",
-            if args.dry_run { "dry run: " } else { "" },
-            if report.created { "created" } else { "exists" },
-            report.branch,
-            report.from.as_ref().map_or_default(|f| format!(", from {f}")),
-        );
+        eprintln!("{}", msg::start::worktree(args.dry_run, report.created, &report.branch, report.from.as_ref()));
     }
     if args.resume.is_some() && !report.created {
-        crate::procs::warn_if_busy(&report.worktree, "Stop them before the session goes on, or its sweep takes their changes.");
+        crate::procs::warn_if_busy(&report.worktree, msg::start::STOP_PROCESSES);
     }
     let Some(command) = &report.command else { return Ok(true) };
     if args.dry_run {
@@ -161,14 +156,14 @@ pub fn run(args: &Args) -> Result<bool> {
     }
 
     // The agent replaces this process. Its commits get the agent identity and no signature.
-    let identity = prov_adapters::identity(&config, &args.agent).context("the agent has no commit identity")?;
+    let identity = prov_adapters::identity(&config, &args.agent).context(msg::start::NO_IDENTITY)?;
     let mut cmd = Command::new(&command[0]);
     cmd.args(&command[1..]).current_dir(&report.worktree);
     for (key, value) in prov_adapters::commit_env(&identity) {
         cmd.env(key, value);
     }
     let error = cmd.exec();
-    Err(error).with_context(|| format!("cannot start `{}`", command[0]))
+    Err(error).with_context(|| msg::start::cannot_start(&command[0]))
 }
 
 /// The absolute path, with `.` and `..` removed by text, not by following
@@ -196,17 +191,17 @@ fn resume(ctx: &Ctx, args: &Args, session: &str) -> Result<Report> {
     let record = ctx.store.get(session).ok().flatten();
     let branch = match (&record, &args.branch) {
         (Some(record), Some(branch)) if record.branch != *branch => {
-            bail!("the session {session} is on the branch `{}`, not `{branch}`", record.branch)
+            bail!(msg::start::session_on_other_branch(session, &record.branch, branch))
         }
         (Some(record), _) => record.branch.clone(),
         (None, Some(branch)) => branch.clone(),
-        (None, None) => bail!("the session {session} has no record (it is integrated, or it ran in another clone). Also give --branch."),
+        (None, None) => bail!(msg::start::session_no_record(session)),
     };
     if !is_agent_branch(&branch) {
-        bail!("the branch `{branch}` does not match `agent/**`");
+        bail!(msg::start::not_agent_branch(&branch));
     }
     if !repo.git_ok(["show-ref", "--verify", "-q", &format!("refs/heads/{branch}")])? {
-        bail!("no branch `{branch}`");
+        bail!(msg::start::no_branch(&branch));
     }
     // A worktree that has the branch checked out now.
     if let Some(existing) = repo.worktrees()?.into_iter().find(|w| w.branch.as_deref() == Some(branch.as_str())) {
@@ -223,7 +218,7 @@ fn resume(ctx: &Ctx, args: &Args, session: &str) -> Result<Report> {
         (path, _) => worktrees_dir(ctx, path.as_deref())?.join(worktree_name(&branch)),
     };
     if worktree.exists() {
-        bail!("{} exists, and it does not have the branch `{branch}` checked out", worktree.display());
+        bail!(msg::start::other_checkout(worktree.display(), &branch));
     }
     if !args.dry_run {
         repo.git(["worktree".as_ref(), "add".as_ref(), "-q".as_ref(), worktree.as_os_str(), branch.as_ref()])?;

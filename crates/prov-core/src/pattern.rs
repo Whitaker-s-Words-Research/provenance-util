@@ -15,6 +15,7 @@
 //! Not supported: negation with `!`. Such a pattern is an error.
 
 use anyhow::{bail, Result};
+use prov_messages as msg;
 
 /// The fixed pattern for agent branches.
 pub const AGENT_BRANCH_PATTERN: &str = "agent/**";
@@ -38,21 +39,21 @@ impl PathSet {
             let raw = raw.as_ref();
             let text = raw.trim();
             if text.is_empty() {
-                bail!("invalid pattern `{raw}`: empty");
+                bail!(msg::pattern::empty(raw));
             }
             if text.starts_with('!') {
-                bail!("invalid pattern `{raw}`: negation is not supported");
+                bail!(msg::pattern::negation(raw));
             }
             let dir_only = text.ends_with('/');
             let body = text.trim_end_matches('/');
             let anchored = body.contains('/');
             let body = body.trim_start_matches('/');
             if body.is_empty() {
-                bail!("invalid pattern `{raw}`");
+                bail!(msg::pattern::invalid(raw));
             }
             let mut segments: Vec<String> = body.split('/').map(String::from).collect();
             if segments.iter().any(String::is_empty) {
-                bail!("invalid pattern `{raw}`: empty path component");
+                bail!(msg::pattern::empty_component(raw));
             }
             if !anchored && segments[0] != "**" {
                 segments.insert(0, "**".to_string());

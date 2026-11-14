@@ -4,6 +4,7 @@
 use std::path::PathBuf;
 
 use anyhow::{bail, Result};
+use prov_messages as msg;
 use prov_core::State;
 use serde::Serialize;
 
@@ -43,18 +44,18 @@ pub fn run(args: &Args) -> Result<bool> {
     let found = worktrees.iter().find(|w| w.branch.as_deref() == Some(args.target.as_str())).cloned();
     let (worktree, branch) = if let Some(w) = found { (w.path, w.branch) } else {
         let record = session::resolve(&ctx.store, &args.target).map_err(|e| {
-            anyhow::anyhow!("`{}` is not a branch with a worktree, and not a session: {e}", args.target)
+            anyhow::anyhow!(msg::finish::unknown_target(&args.target, e))
         })?;
         match worktrees.iter().find(|w| w.path == record.worktree) {
             Some(w) => (w.path.clone(), w.branch.clone()),
-            None => bail!("the worktree {} of session {} does not exist", record.worktree.display(), record.id),
+            None => bail!(msg::finish::worktree_missing(record.worktree.display(), &record.id)),
         }
     };
     if worktrees.first().is_some_and(|main| main.path == worktree) {
-        bail!("{} is the main worktree. `prov finish` removes only a linked worktree.", worktree.display());
+        bail!(msg::finish::main_worktree(worktree.display()));
     }
     if repo.toplevel == worktree {
-        bail!("this command runs inside {}. Run it from another worktree.", worktree.display());
+        bail!(msg::finish::runs_inside(worktree.display()));
     }
 
     let busy: Vec<_> = session::views(&ctx)?
@@ -62,13 +63,8 @@ pub fn run(args: &Args) -> Result<bool> {
         .filter(|v| v.record.worktree == worktree && matches!(v.record.state, State::Open | State::Closing))
         .collect();
     if !busy.is_empty() && !args.r#override {
-        let list: Vec<String> = busy.iter().map(|v| format!("{} ({})", v.record.id, v.record.state.as_str())).collect();
-        bail!(
-            "refused: a session in {} is open or closing: {}. End the session or run `prov session close <id>`. \
-             `--override` closes each open session first.",
-            worktree.display(),
-            list.join(", ")
-        );
+        let list: Vec<String> = busy.iter().map(|v| msg::finish::session_state(&v.record.id, v.record.state.as_str())).collect();
+        bail!(msg::finish::busy(worktree.display(), list.join(", ")));
     }
 
     // Merged into HEAD here: `git branch -d` then deletes it, if the branch
@@ -93,18 +89,14 @@ pub fn run(args: &Args) -> Result<bool> {
         if !args.dry_run {
             let after = session::close(&ctx, &v.record.id, false)?;
             if after.state != State::Archived {
-                bail!(
-                    "session {} did not archive ({}). The worktree stays.",
-                    after.id,
-                    after.error.as_deref().unwrap_or(after.state.as_str())
-                );
+                bail!(msg::finish::not_archived(&after.id, after.error.as_deref().unwrap_or(after.state.as_str())));
             }
         }
         report.closed.push(v.record.id.clone());
     }
     // R-SWEEP-4: a process that runs on writes into a worktree that is gone,
     // or into one that `prov start --resume` creates again.
-    crate::procs::warn_if_busy(&worktree, "Stop them: the worktree is removed now.");
+    crate::procs::warn_if_busy(&worktree, msg::finish::STOP_PROCESSES);
     if !args.dry_run {
         let mut git: Vec<&std::ffi::OsStr> = vec!["worktree".as_ref(), "remove".as_ref()];
         if args.force {
@@ -121,20 +113,20 @@ pub fn run(args: &Args) -> Result<bool> {
         println!("{}", serde_json::to_string_pretty(&report)?);
     } else {
         for id in &report.closed {
-            println!("{} session {id}", if args.dry_run { "will close" } else { "closed" });
+            println!("{}", if args.dry_run { msg::finish::will_close(id) } else { msg::finish::closed(id) });
         }
-        println!(
-            "{} the worktree {}. The branch {} stays.",
-            if args.dry_run { "Dry run: will remove" } else { "Removed" },
-            worktree.display(),
-            report.branch.as_deref().unwrap_or("(detached)"),
-        );
+        let branch = report.branch.as_deref().unwrap_or(msg::finish::DETACHED);
+        if args.dry_run {
+            println!("{}", msg::finish::will_remove(worktree.display(), branch));
+        } else {
+            println!("{}", msg::finish::removed(worktree.display(), branch));
+        }
         if let (Some(command), Some(merged)) = (&report.delete_command, report.merged) {
             let here = repo.branch.as_deref().unwrap_or("HEAD");
             if merged {
-                println!("It is merged into {here}. To delete it: {command}");
+                println!("{}", msg::finish::merged(here, command));
             } else {
-                println!("It is not merged into {here}. To delete it anyway, with its commits: {command}");
+                println!("{}", msg::finish::not_merged(here, command));
             }
         }
     }

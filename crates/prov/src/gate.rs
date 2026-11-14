@@ -5,6 +5,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 
 use anyhow::{Context, Result};
+use prov_messages as msg;
 use prov_core::trailer::{self, Approval, SessionRef, Trailer};
 use prov_core::{Config, SessionRecord, State};
 use prov_git::{CommitInfo, Repo};
@@ -85,51 +86,21 @@ impl Item {
 
     pub fn describe(&self) -> String {
         let commit = self.commit.as_deref().map_or("?", |c| &c[..c.len().min(10)]);
+        let path = &self.path;
+        let (start, end) = (self.start_line.unwrap_or(0), self.end_line.unwrap_or(0));
         match self.reason {
-            Reason::Protected => format!("{}: protected path changed", self.path),
-            Reason::MergeResolution => format!(
-                "{}: changed by the merge commit {commit} on the incoming branch (a conflict resolution?)",
-                self.path
-            ),
-            Reason::NoRanges => format!(
-                "{}: commit {commit} adds lines, and git-ai lists none of them (a path that git-ai ignores, for \
-                 example vendor/ or a lock file?)",
-                self.path
-            ),
-            Reason::UnknownSession if self.session.as_deref().is_some_and(|s| s.starts_with(prov_gitai::UNATTRIBUTED_TOOL)) => format!(
-                "{}: lines {}-{} of commit {commit} changed while the occupant of the agent worktree changed (a session \
-                 that crashed or ended with no Stop, or two sessions at once). prov does not know which session wrote them.",
-                self.path,
-                self.start_line.unwrap_or(0),
-                self.end_line.unwrap_or(0),
-            ),
-            Reason::UnknownSession => format!(
-                "{}: lines {}-{} of commit {commit} belong to the session {}, which has no Prov-Session trailer and \
-                 no record (lines with no checkpoint, in a commit that skipped the hooks?)",
-                self.path,
-                self.start_line.unwrap_or(0),
-                self.end_line.unwrap_or(0),
-                self.session.as_deref().unwrap_or("?"),
-            ),
-            Reason::NoNote => format!(
-                "{}: lines {}-{} of commit {commit} have no author: the commit has no git-ai note (was the git-ai \
-                 service running at the commit?)",
-                self.path,
-                self.start_line.unwrap_or(0),
-                self.end_line.unwrap_or(0),
-            ),
-            reason => format!(
-                "{}: lines {}-{} of commit {} {}",
-                self.path,
-                self.start_line.unwrap_or(0),
-                self.end_line.unwrap_or(0),
-                commit,
-                if reason == Reason::Human {
-                    "are attributed to a human, in an agent commit"
-                } else {
-                    "have no author (untracked)"
-                },
-            ),
+            Reason::Protected => msg::gate::item_protected(path),
+            Reason::MergeResolution => msg::gate::item_merge_resolution(path, commit),
+            Reason::NoRanges => msg::gate::item_no_ranges(path, commit),
+            Reason::UnknownSession if self.session.as_deref().is_some_and(|s| s.starts_with(prov_gitai::UNATTRIBUTED_TOOL)) => {
+                msg::gate::item_tainted(path, start, end, commit)
+            }
+            Reason::UnknownSession => {
+                msg::gate::item_unknown_session(path, start, end, commit, self.session.as_deref().unwrap_or("?"))
+            }
+            Reason::NoNote => msg::gate::item_no_note(path, start, end, commit),
+            Reason::Human => msg::gate::item_human(path, start, end, commit),
+            Reason::Untracked => msg::gate::item_untracked(path, start, end, commit),
         }
     }
 }
@@ -197,7 +168,7 @@ fn wait_for_note(repo: &Repo, commit: &str) -> Result<bool> {
     while begin.elapsed() < limit {
         std::thread::sleep(std::time::Duration::from_millis(250));
         if has_note(repo, commit)? {
-            say(format!("note: the git-ai note of commit {commit} came {:?} after `git-ai await` returned", begin.elapsed()));
+            say(msg::gate::late_note(commit, format!("{:?}", begin.elapsed())));
             return Ok(true);
         }
     }
@@ -309,21 +280,15 @@ pub fn check_sessions(ctx: &Ctx, analysis: &Analysis) -> Result<(Vec<SessionReco
         // An ID that cannot be a record name has no record.
         let record = ctx.store.get(&session.id).ok().flatten().filter(|r| r.agent == session.agent).map(|r| r.at(prov_core::now()));
         match record {
-            None => problems.push(format!(
-                "session {session} has no record in this clone. A session is integrated from the clone that ran it."
-            )),
+            None => problems.push(msg::gate::session_no_record(session)),
             Some(r) if r.state == State::Archived && r.archive_sha256.as_deref().is_some_and(trailer::is_sha256) => {
                 records.push(r);
             }
             Some(r) => problems.push(match r.state {
-                State::Open => format!("session {session} is open. Close it first: prov session close {}", r.id),
-                State::Closing => format!("session {session} is closing. Wait for the archive step, then try again."),
-                State::Failed => format!(
-                    "session {session} is failed ({}). Run the archive step again: prov session close {}",
-                    r.error.as_deref().unwrap_or("no error text"),
-                    r.id
-                ),
-                State::Archived => format!("session {session} has no transcript hash."),
+                State::Open => msg::gate::session_open(session, &r.id),
+                State::Closing => msg::gate::session_closing(session),
+                State::Failed => msg::gate::session_failed(session, r.error.as_deref().unwrap_or(msg::gate::NO_ERROR_TEXT), &r.id),
+                State::Archived => msg::gate::session_no_hash(session),
             }),
         }
     }
@@ -334,13 +299,11 @@ pub fn check_sessions(ctx: &Ctx, analysis: &Analysis) -> Result<(Vec<SessionReco
         }
         if let Some(tip) = ctx.repo.rev_parse(&format!("refs/heads/{}", r.branch))? {
             if incoming.contains(tip.as_str()) {
-                problems.push(format!(
-                    "session {}:{} is open in the worktree {} on the branch {}. Close it first: prov session close {}",
-                    r.agent,
-                    r.id,
+                problems.push(msg::gate::session_open_in_range(
+                    SessionRef::new(&r.agent, &r.id),
                     r.worktree.display(),
-                    r.branch,
-                    r.id
+                    &r.branch,
+                    &r.id,
                 ));
             }
         }
@@ -354,7 +317,7 @@ pub fn integration_trailers(records: &[SessionRecord]) -> Result<Vec<Trailer>> {
     let mut out = Vec::new();
     for r in records {
         out.push(Trailer::new(trailer::PROV_SESSION, SessionRef::new(&r.agent, &r.id).to_string())?);
-        let hash = r.archive_sha256.clone().context("an archived session has no transcript hash")?;
+        let hash = r.archive_sha256.clone().context(msg::gate::ARCHIVED_NO_HASH)?;
         out.push(Trailer::new(trailer::PROV_TRANSCRIPT_SHA256, hash)?);
         // The note can lack the model: git-ai takes it only from a checkpoint
         // that records a change, and the agent's own hooks give none.
@@ -369,13 +332,13 @@ pub fn integration_trailers(records: &[SessionRecord]) -> Result<Vec<Trailer>> {
 /// Removes the integration trailers from a message file, so that they can go
 /// in again as one complete block.
 fn strip_integration_trailers(message_file: &Path) -> Result<()> {
-    let text = std::fs::read_to_string(message_file).with_context(|| format!("cannot read {}", message_file.display()))?;
+    let text = std::fs::read_to_string(message_file).with_context(|| msg::fs::cannot_read(message_file.display()))?;
     let keys = [trailer::PROV_SESSION, trailer::PROV_TRANSCRIPT_SHA256, trailer::PROV_MODEL, trailer::PROV_VERSION];
     let kept: Vec<&str> =
         text.lines().filter(|line| !keys.iter().any(|k| line.strip_prefix(k).is_some_and(|rest| rest.starts_with(':')))).collect();
     let mut out = kept.join("\n");
     out.push('\n');
-    std::fs::write(message_file, out).with_context(|| format!("cannot write {}", message_file.display()))
+    std::fs::write(message_file, out).with_context(|| msg::fs::cannot_write(message_file.display()))
 }
 
 /// The gate, for the merge in progress. Returns false to refuse the commit.
@@ -396,18 +359,18 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
         return Ok(true);
     }
     if heads.len() > 1 {
-        say("an octopus merge that contains agent commits is refused. Merge one agent branch at a time.\nTo stop: git merge --abort");
+        say(msg::gate::OCTOPUS);
         return Ok(false);
     }
     let tip = &heads[0];
 
     // 1. The config and the version.
     let Some(config) = head_config else {
-        say("HEAD has no .provenance.toml. Run `prov init` on this branch and commit the file.\nTo stop: git merge --abort");
+        say(msg::gate::NO_CONFIG);
         return Ok(false);
     };
     if let Err(e) = config.check_version(prov_core::VERSION) {
-        say(format!("the integration fails: {e}.\nTo stop: git merge --abort"));
+        say(msg::gate::version_fails(e));
         return Ok(false);
     }
 
@@ -416,7 +379,7 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
     // not depend on it: `analyze` waits for the note of each recent commit,
     // and a commit with no note gives items that need an approval.
     if let Err(e) = ctx.gitai.await_notes(&repo.toplevel) {
-        say(format!("warning: {e:#}. prov checks the note of each commit instead."));
+        say(msg::gate::await_failed(format!("{e:#}")));
     }
 
     // 3. The sessions.
@@ -430,28 +393,25 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
     let open = unapproved(&analysis.items, &approvals);
 
     if !problems.is_empty() || !open.is_empty() {
-        say("the merge gate refuses this integration.");
+        say(msg::gate::REFUSED);
         for p in &problems {
-            say(format!("  session: {p}"));
+            say(msg::gate::problem(p));
         }
         if open.is_empty() {
-            say("The merge is still in progress. Correct the sessions, then run: git commit");
+            say(msg::gate::FIX_SESSIONS);
         } else {
-            say("  these items need the approval of a human:");
+            say(msg::gate::ITEMS_HEADER);
             for item in &open {
-                say(format!("    {}", item.describe()));
+                say(msg::gate::item(item.describe()));
             }
             let mut paths: Vec<&str> = open.iter().map(|i| i.path.as_str()).collect();
             paths.dedup();
             let paths: BTreeSet<&str> = paths.into_iter().collect();
-            say("The merge is still in progress. Next steps:");
-            say(format!(
-                "  1. prov approve --merge {}",
-                paths.iter().map(|p| shell_quote(p)).collect::<Vec<_>>().join(" ")
-            ));
-            say("  2. git commit");
+            say(msg::gate::NEXT_STEPS);
+            say(msg::gate::step_approve(paths.iter().map(|p| shell_quote(p)).collect::<Vec<_>>().join(" ")));
+            say(msg::gate::STEP_COMMIT);
         }
-        say("To stop instead: git merge --abort");
+        say(msg::gate::TO_STOP);
         return Ok(false);
     }
 

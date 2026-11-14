@@ -10,6 +10,7 @@ description = "Provenance for git repositories where AI agents and humans commit
 build = "build.rs"
 
 [dependencies]
+prov-messages.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

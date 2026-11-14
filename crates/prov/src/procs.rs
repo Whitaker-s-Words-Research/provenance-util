@@ -11,6 +11,8 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
+use prov_messages as msg;
+
 use crate::context::say;
 
 /// Shells are left out: a person's terminal in the worktree is common, and a
@@ -123,14 +125,11 @@ pub fn warn_if_busy(worktree: &Path, then: &str) {
     if procs.is_empty() {
         return;
     }
-    let mut text = format!("warning: processes still run in the worktree {}:\n", worktree.display());
+    let mut text = format!("{}\n", msg::procs::busy_header(worktree.display()));
     for p in &procs {
-        let _ = writeln!(text, "  {} {}", p.pid, p.command);
+        let _ = writeln!(text, "{}", msg::procs::busy_process(p.pid, &p.command));
     }
-    text.push_str(
-        "If one of them writes files there (a development server, a watcher, a build), the next session in this \
-         worktree takes those changes as its own work (R-SWEEP-4). ",
-    );
+    text.push_str(msg::procs::BUSY_RISK);
     text.push_str(then);
     say(text);
 }

@@ -1,0 +1,12 @@
+[package]
+name = "prov-messages"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+publish.workspace = true
+description = "Every text that prov shows to a person or an agent, in one place for review"
+
+[lints]
+workspace = true

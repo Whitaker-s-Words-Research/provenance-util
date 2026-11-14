@@ -3,6 +3,7 @@
 //! the pinned schema cannot pass without notice.
 
 use regex_lite::Regex;
+use prov_messages as msg;
 use serde_json::Value;
 
 /// Keywords that describe and do not constrain.
@@ -14,7 +15,7 @@ pub fn validate(root: &Value, value: &Value) -> Result<(), String> {
 }
 
 fn check(root: &Value, schema: &Value, value: &Value, at: &str) -> Result<(), String> {
-    let Some(schema) = schema.as_object() else { return Err(format!("{at}: the schema is not an object")) };
+    let Some(schema) = schema.as_object() else { return Err(msg::schema::not_an_object(at)) };
     for (keyword, rule) in schema {
         match keyword.as_str() {
             k if ANNOTATIONS.contains(&k) => {}
@@ -23,7 +24,7 @@ fn check(root: &Value, schema: &Value, value: &Value, at: &str) -> Result<(), St
                     .as_str()
                     .and_then(|r| r.strip_prefix('#'))
                     .and_then(|pointer| root.pointer(pointer))
-                    .ok_or_else(|| format!("{at}: cannot resolve $ref {rule}"))?;
+                    .ok_or_else(|| msg::schema::cannot_resolve(at, rule))?;
                 check(root, target, value, at)?;
             }
             "type" => {
@@ -34,23 +35,23 @@ fn check(root: &Value, schema: &Value, value: &Value, at: &str) -> Result<(), St
                     Some("integer") => value.is_i64() || value.is_u64(),
                     Some("number") => value.is_number(),
                     Some("boolean") => value.is_boolean(),
-                    _ => return Err(format!("{at}: unsupported type {rule}")),
+                    _ => return Err(msg::schema::unsupported_type(at, rule)),
                 };
                 if !ok {
-                    return Err(format!("{at}: is not of type {rule}"));
+                    return Err(msg::schema::wrong_type(at, rule));
                 }
             }
             "enum" => {
                 if !rule.as_array().is_some_and(|options| options.contains(value)) {
-                    return Err(format!("{at}: {value} is not one of {rule}"));
+                    return Err(msg::schema::not_in_enum(at, value, rule));
                 }
             }
             "pattern" => {
-                let pattern = rule.as_str().ok_or_else(|| format!("{at}: pattern is not a string"))?;
-                let regex = Regex::new(pattern).map_err(|e| format!("{at}: invalid pattern {pattern}: {e}"))?;
+                let pattern = rule.as_str().ok_or_else(|| msg::schema::pattern_not_string(at))?;
+                let regex = Regex::new(pattern).map_err(|e| msg::schema::invalid_pattern(at, pattern, e))?;
                 if let Some(text) = value.as_str() {
                     if !regex.is_match(text) {
-                        return Err(format!("{at}: {text:?} does not match {pattern}"));
+                        return Err(msg::schema::no_match(at, text, pattern));
                     }
                 }
             }
@@ -60,24 +61,24 @@ fn check(root: &Value, schema: &Value, value: &Value, at: &str) -> Result<(), St
                         Some("uuid") => is_uuid(text),
                         Some("date-time") => is_date_time(text),
                         Some("uri") => is_uri(text),
-                        _ => return Err(format!("{at}: unsupported format {rule}")),
+                        _ => return Err(msg::schema::unsupported_format(at, rule)),
                     };
                     if !ok {
-                        return Err(format!("{at}: {text:?} is not a valid {rule}"));
+                        return Err(msg::schema::invalid_format(at, text, rule));
                     }
                 }
             }
             "minimum" => {
                 if let (Some(number), Some(minimum)) = (value.as_f64(), rule.as_f64()) {
                     if number < minimum {
-                        return Err(format!("{at}: {number} is less than {minimum}"));
+                        return Err(msg::schema::below_minimum(at, number, minimum));
                     }
                 }
             }
             "maxLength" => {
                 if let (Some(text), Some(max)) = (value.as_str(), rule.as_u64()) {
                     if text.chars().count() as u64 > max {
-                        return Err(format!("{at}: longer than {max} characters"));
+                        return Err(msg::schema::too_long(at, max));
                     }
                 }
             }
@@ -85,7 +86,7 @@ fn check(root: &Value, schema: &Value, value: &Value, at: &str) -> Result<(), St
                 if let Some(object) = value.as_object() {
                     for name in rule.as_array().into_iter().flatten().filter_map(Value::as_str) {
                         if !object.contains_key(name) {
-                            return Err(format!("{at}: no property {name}"));
+                            return Err(msg::schema::missing_property(at, name));
                         }
                     }
                 }
@@ -107,7 +108,7 @@ fn check(root: &Value, schema: &Value, value: &Value, at: &str) -> Result<(), St
                             continue;
                         }
                         match rule {
-                            Value::Bool(false) => return Err(format!("{at}: unknown property {name}")),
+                            Value::Bool(false) => return Err(msg::schema::unknown_property(at, name)),
                             Value::Bool(true) => {}
                             sub => check(root, sub, v, &format!("{at}.{name}"))?,
                         }
@@ -119,7 +120,7 @@ fn check(root: &Value, schema: &Value, value: &Value, at: &str) -> Result<(), St
                     check(root, rule, v, &format!("{at}[{i}]"))?;
                 }
             }
-            other => return Err(format!("{at}: the schema uses the keyword `{other}`, which this validator does not support")),
+            other => return Err(msg::schema::unsupported_keyword(at, other)),
         }
     }
     Ok(())
