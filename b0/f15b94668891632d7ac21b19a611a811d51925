@@ -1,0 +1,41 @@
+docs/troubleshooting.md
+  s_4ffffd06031ed5::t_443e0aa6e1aeb2 94
+CHANGELOG.md
+  s_4ffffd06031ed5::t_7816e5b1f8a61b 85
+crates/prov-messages/src/gate.rs
+  s_4ffffd06031ed5::t_5bfc04ebfe36a7 17-18,22-23
+  s_4ffffd06031ed5::t_8270ff0b7517da 24-25
+crates/prov/tests/gitai_contract.rs
+  s_4ffffd06031ed5::t_594c0bff025d03 242-272
+crates/prov-git/src/lib.rs
+  s_4ffffd06031ed5::t_572e41d7dfe619 284-290,398-441
+  s_4ffffd06031ed5::t_5bfc04ebfe36a7 447-472
+  s_4ffffd06031ed5::t_14e96afd2839d0 442
+SPEC.md
+  s_4ffffd06031ed5::t_7c31b73aa8775b 423-430,917
+  s_4ffffd06031ed5::t_f9ecdc026ae356 422
+crates/prov/src/gate.rs
+  s_4ffffd06031ed5::t_54451edb4ed3d3 11
+  s_4ffffd06031ed5::t_5bfc04ebfe36a7 56-60,62-63,99,225-234
+crates/prov/tests/gate.rs
+  s_4ffffd06031ed5::t_54451edb4ed3d3 463,490-535
+  s_4ffffd06031ed5::t_e1f81abc87e87f 536
+docs/workflow.md
+  s_4ffffd06031ed5::t_443e0aa6e1aeb2 89-90
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "b0f15b94668891632d7ac21b19a611a811d51925",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
