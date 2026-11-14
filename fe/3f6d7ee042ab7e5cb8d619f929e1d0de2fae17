@@ -1,0 +1,47 @@
+crates/prov-messages/src/git.rs
+  s_4ffffd06031ed5::t_fd03c7f4de75b4 8-9
+crates/prov-git/src/lib.rs
+  s_4ffffd06031ed5::t_80a1fbf188c108 194-195
+  s_4ffffd06031ed5::t_fd03c7f4de75b4 213
+  s_4ffffd06031ed5::t_6d920f3ca39ef4 173-193,196-212,214-222
+crates/prov/tests/sessions.rs
+  s_4ffffd06031ed5::t_6803bc0e6f940c 465-469
+crates/prov/src/detach.rs
+  s_4ffffd06031ed5::t_de0d47ff86680b 1-35,37-57
+  s_4ffffd06031ed5::t_13180a46a07343 36
+crates/prov/src/copy_check.rs
+  s_4ffffd06031ed5::t_6d920f3ca39ef4 233-234,236-245,282-284,286-300,302-303,305-314,316-320,326,330,332
+  s_4ffffd06031ed5::t_de0d47ff86680b 139,144
+  s_4ffffd06031ed5::t_8f13648af77551 327
+  s_4ffffd06031ed5::t_0ddb6f99ccd864 6
+crates/prov/tests/copy.rs
+  s_4ffffd06031ed5::t_4b8bd1230781e5 470-479
+  s_4ffffd06031ed5::t_5096add2b7b9fa 351-405,409,411-429,434-435,437-440
+  s_4ffffd06031ed5::t_427c0dcd9cc951 430-433,436
+  s_4ffffd06031ed5::t_b250829006eeb9 441-442,449-460,462-464,467,469,480-482,492
+  s_4ffffd06031ed5::t_e37c0fa3211b51 406-408,410
+  s_4ffffd06031ed5::t_13180a46a07343 443-448,461,465-466,468,483-491
+crates/prov/src/main.rs
+  s_4ffffd06031ed5::t_de0d47ff86680b 12
+crates/prov/src/archive.rs
+  s_4ffffd06031ed5::t_0ddb6f99ccd864 7
+  s_4ffffd06031ed5::t_de0d47ff86680b 25-26
+ci/Containerfile
+  s_4ffffd06031ed5::t_8851548b8e5100 3-4,27-37
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "fe3f6d7ee042ab7e5cb8d619f929e1d0de2fae17",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
