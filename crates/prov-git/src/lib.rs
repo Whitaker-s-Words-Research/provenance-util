@@ -281,21 +281,13 @@ impl Repo {
         Ok(text.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())
     }
 
-    /// The paths of text files to which a commit adds lines, by
-    /// `git diff-tree --numstat`. Not for a merge commit.
-    pub fn paths_with_added_lines(&self, commit: &str) -> Result<Vec<String>> {
-        let text = self.git(["diff-tree", "--no-commit-id", "--numstat", "--no-renames", "-r", "--root", "-z", commit])?;
-        let mut out = Vec::new();
-        for record in text.split('\0') {
-            // `<added>\t<deleted>\t<path>`; `-` for a binary file.
-            let mut parts = record.splitn(3, '\t');
-            if let (Some(added), Some(_), Some(path)) = (parts.next(), parts.next(), parts.next()) {
-                if added.parse::<u64>().is_ok_and(|n| n > 0) {
-                    out.push(path.to_string());
-                }
-            }
-        }
-        Ok(out)
+    /// The paths that a commit changes, each with the kind of change, by one
+    /// `git diff-tree --raw --numstat`. Not for a merge commit.
+    pub fn path_changes(&self, commit: &str) -> Result<Vec<(String, PathChange)>> {
+        let text = self.git([
+            "diff-tree", "--no-commit-id", "--raw", "--numstat", "--no-renames", "-r", "--root", "-z", commit,
+        ])?;
+        Ok(parse_path_changes(&text))
     }
 
     /// The paths that differ between the merge base of `base` and `tip`, and `tip`.
@@ -403,9 +395,80 @@ impl Repo {
     }
 }
 
+/// How a commit changes a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathChange {
+    /// The commit deletes the file.
+    Deleted,
+    /// The commit adds lines, changes a binary file, or changes the mode or
+    /// the type of the file.
+    Content,
+    /// The commit only deletes lines of the file, or does not change its
+    /// content at all.
+    LinesDeleted,
+}
+
+/// Parses `git diff-tree --raw --numstat -z`: first a raw record for each
+/// path (`:<old mode> <new mode> <old id> <new id> <status>`, then the
+/// path), then a numstat record for each path (`<added>\t<deleted>\t<path>`,
+/// `-` for a binary file).
+fn parse_path_changes(text: &str) -> Vec<(String, PathChange)> {
+    let mut out: Vec<(String, PathChange)> = Vec::new();
+    let mut records = text.split('\0').filter(|r| !r.is_empty());
+    while let Some(record) = records.next() {
+        if let Some(raw) = record.strip_prefix(':') {
+            let Some(path) = records.next() else { break };
+            let fields: Vec<&str> = raw.split(' ').collect();
+            let change = match fields.as_slice() {
+                [_, _, _, _, status] if status.starts_with('D') => PathChange::Deleted,
+                [old_mode, new_mode, ..] if old_mode != new_mode && *old_mode != "000000" => PathChange::Content,
+                [_, _, _, _, status] if status.starts_with('T') => PathChange::Content,
+                _ => PathChange::LinesDeleted,
+            };
+            out.push((path.to_string(), change));
+        } else {
+            let mut parts = record.splitn(3, '\t');
+            let (Some(added), Some(_), Some(path)) = (parts.next(), parts.next(), parts.next()) else { continue };
+            let content = added == "-" || added.parse::<u64>().is_ok_and(|n| n > 0);
+            if let Some(entry) = out.iter_mut().find(|(p, _)| p == path) {
+                if content && entry.1 == PathChange::LinesDeleted {
+                    entry.1 = PathChange::Content;
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Output of git 2.53 for a commit that changes a binary file, deletes
+    /// a file, makes a script executable, adds a file with a space in its
+    /// name and deletes a line of a text file.
+    #[test]
+    fn reads_path_changes() {
+        let raw = [
+            ":100644 100644 d5d0 5d9e M", "b.bin",
+            ":100644 000000 1191 0000 D", "g.txt",
+            ":100644 100755 fa11 fa11 M", "s.sh",
+            ":000000 100644 0000 8ba3 A", "sp ace.txt",
+            ":100644 100644 422c 7898 M", "t.txt",
+            "-\t-\tb.bin", "0\t2\tg.txt", "0\t0\ts.sh", "1\t0\tsp ace.txt", "0\t1\tt.txt", "",
+        ]
+        .join("\0");
+        assert_eq!(
+            parse_path_changes(&raw),
+            vec![
+                ("b.bin".to_string(), PathChange::Content),
+                ("g.txt".to_string(), PathChange::Deleted),
+                ("s.sh".to_string(), PathChange::Content),
+                ("sp ace.txt".to_string(), PathChange::Content),
+                ("t.txt".to_string(), PathChange::LinesDeleted),
+            ]
+        );
+    }
 
     #[test]
     fn reads_the_branch_from_the_head_file() {

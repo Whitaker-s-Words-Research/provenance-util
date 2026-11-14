@@ -14,9 +14,13 @@ pub fn item_merge_resolution(path: impl Display, commit: impl Display) -> String
 
 pub fn item_no_ranges(path: impl Display, commit: impl Display) -> String {
     format!(
-        "{path}: commit {commit} adds lines, and git-ai lists none of them (a path that git-ai ignores, for \
-         example vendor/ or a lock file?)"
+        "{path}: commit {commit} changes the file, and git-ai lists no line of it (a binary file, a change of \
+         mode, or a path that git-ai ignores, for example vendor/ or a lock file)"
     )
+}
+
+pub fn item_deleted_file(path: impl Display, commit: impl Display) -> String {
+    format!("{path}: commit {commit} deletes the file")
 }
 
 pub fn item_tainted(path: impl Display, start: impl Display, end: impl Display, commit: impl Display) -> String {

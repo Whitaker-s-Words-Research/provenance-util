@@ -460,7 +460,7 @@ fn a_file_that_git_ai_ignores_needs_approval() {
     env.end_session(&wt, "sess-i");
 
     let merge = env.try_git(&repo, ["merge", &branch("ignored")]).failure();
-    assert!(merge.stderr.contains("vendor/lib.py") && merge.stderr.contains("git-ai lists none of them"), "{}", merge.stderr);
+    assert!(merge.stderr.contains("vendor/lib.py") && merge.stderr.contains("git-ai lists no line of it"), "{}", merge.stderr);
     assert!(!merge.stderr.contains("src/ok.py"), "{}", merge.stderr);
     approve(&env, &repo, &["vendor/lib.py"]);
     env.try_git(&repo, ["commit", "--no-edit"]).success();
@@ -486,4 +486,51 @@ fn a_record_that_does_not_parse_is_not_a_missing_record() {
     env.git(&repo, ["merge", "--abort"]);
     let check = env.prov(&repo, ["check", &branch("broken")]).failure();
     assert!(check.stderr.contains("sess-x.json does not parse"), "{}{}", check.stdout, check.stderr);
+}
+
+/// git-ai lists no range for a binary file or a change of mode. Each such
+/// path, and each deleted file, is one item. A file that only loses lines is
+/// not: a deleted line has no author to doubt.
+#[test]
+fn binary_files_mode_changes_and_deleted_files_need_approval() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    for (file, content) in [("logo.png", "old\0png"), ("run.sh", "echo run\n"), ("gone.txt", "gone\n"), ("short.txt", "1\n2\n")] {
+        env.human_edit(&repo, file, content);
+    }
+    env.git(&repo, ["add", "-A"]);
+    env.git(&repo, ["commit", "-q", "-m", "Files"]);
+
+    let wt = env.worktree(&repo, "nontext");
+    env.start_session(&wt, "sess-n").success();
+    env.agent_edit(&wt, "logo.png", "new\0png", "sess-n");
+    env.agent_edit(&wt, "icon.png", "\u{89}PNG\0icon", "sess-n");
+    std::fs::set_permissions(wt.join("run.sh"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::remove_file(wt.join("gone.txt")).unwrap();
+    env.agent_edit(&wt, "short.txt", "1\n", "sess-n");
+    env.agent_edit(&wt, "ok.py", "ok = True\n", "sess-n");
+    env.agent_commit(&wt, "sess-n", "Change non-text files").success();
+    env.end_session(&wt, "sess-n");
+
+    let check = env.prov(&repo, ["check", &branch("nontext"), "--json"]).failure();
+    let report: serde_json::Value = serde_json::from_str(&check.stdout).unwrap();
+    let mut items: Vec<(String, String)> = report["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| (i["path"].as_str().unwrap().to_string(), i["reason"].as_str().unwrap().to_string()))
+        .collect();
+    items.sort();
+    let expected = [("gone.txt", "deleted_file"), ("icon.png", "no_ranges"), ("logo.png", "no_ranges"), ("run.sh", "no_ranges")];
+    assert_eq!(items, expected.map(|(p, r)| (p.to_string(), r.to_string())), "{}", check.stdout);
+
+    let merge = env.try_git(&repo, ["merge", &branch("nontext")]).failure();
+    assert!(merge.stderr.contains("gone.txt: commit") && merge.stderr.contains("deletes the file"), "{}", merge.stderr);
+    assert!(!merge.stderr.contains("short.txt") && !merge.stderr.contains("ok.py"), "{}", merge.stderr);
+    let approve = env.prov_tty(&repo, ["approve", "--merge", "gone.txt", "icon.png", "logo.png", "run.sh"], "yes\n");
+    assert!(approve.ok, "{}{}", approve.stdout, approve.stderr);
+    env.try_git(&repo, ["commit", "--no-edit"]).success();
+    let base = env.git(&repo, ["rev-parse", "HEAD^1"]);
+    env.await_notes(&repo);
+    env.prov(&repo, ["check", &format!("{base}..HEAD")]).success();
 }

@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use prov_messages as msg;
 use prov_core::trailer::{self, Approval, SessionRef, Trailer};
 use prov_core::{Config, SessionRecord, State};
-use prov_git::{CommitInfo, Repo};
+use prov_git::{CommitInfo, PathChange, Repo};
 use prov_gitai::{Author, GitAi};
 use serde::Serialize;
 
@@ -53,10 +53,14 @@ pub enum Reason {
     /// every parent: the author of the merge wrote the result, for example to
     /// resolve a conflict. git-ai gives no usable line record for a merge.
     MergeResolution,
-    /// git shows added lines for the file, and git-ai lists no range of it.
-    /// git-ai ignores some paths, for example `**/vendor/**` and lock files:
-    /// it drops their checkpoints and lists none of their lines.
+    /// git shows added lines, a binary change or a new mode for the file,
+    /// and git-ai lists no range of it. git-ai ignores some paths, for
+    /// example `**/vendor/**` and lock files: it drops their checkpoints and
+    /// lists none of their lines. It also lists no range for a binary file
+    /// or a change of mode.
     NoRanges,
+    /// The agent commit deletes the file.
+    DeletedFile,
 }
 
 /// Something that the human must approve before the integration.
@@ -92,6 +96,7 @@ impl Item {
             Reason::Protected => msg::gate::item_protected(path),
             Reason::MergeResolution => msg::gate::item_merge_resolution(path, commit),
             Reason::NoRanges => msg::gate::item_no_ranges(path, commit),
+            Reason::DeletedFile => msg::gate::item_deleted_file(path, commit),
             Reason::UnknownSession if self.session.as_deref().is_some_and(|s| s.starts_with(prov_gitai::UNATTRIBUTED_TOOL)) => {
                 msg::gate::item_tainted(path, start, end, commit)
             }
@@ -217,18 +222,16 @@ pub fn analyze(repo: &Repo, gitai: &GitAi, config: &Config, base: &str, tip: &st
         for s in &authorship.sessions {
             add(&mut sessions, SessionRef::new(&s.tool, &s.id));
         }
-        // A file with added lines that git-ai does not list at all.
-        for path in repo.paths_with_added_lines(&commit.sha)? {
-            if !authorship.added.iter().any(|r| r.path == path) {
-                items.push(Item {
-                    path,
-                    reason: Reason::NoRanges,
-                    commit: Some(commit.sha.clone()),
-                    start_line: None,
-                    end_line: None,
-                    session: None,
-                });
-            }
+        // A deleted file, and a changed file that git-ai does not list at all.
+        // A file that only loses lines needs no approval: a deleted line has
+        // no author to doubt.
+        for (path, change) in repo.path_changes(&commit.sha)? {
+            let reason = match change {
+                PathChange::Deleted => Reason::DeletedFile,
+                PathChange::Content if !authorship.added.iter().any(|r| r.path == path) => Reason::NoRanges,
+                PathChange::Content | PathChange::LinesDeleted => continue,
+            };
+            items.push(Item { path, reason, commit: Some(commit.sha.clone()), start_line: None, end_line: None, session: None });
         }
         for range in authorship.added {
             let item = |reason, session| Item {

@@ -82,6 +82,7 @@ Bug Fixes: clippy findings, a race in the git-ai service test, and `.gitignore` 
 - The user guides, the README and the messages of prov no longer show rule IDs, TLA+ models or test evidence.
 - The merge gate reads the session records under the lock.
 - After an integration, post-commit and post-merge print a hint about `prov revise`.
+- The merge gate makes one item for each file that an agent commit deletes, and for each binary file or change of mode that git-ai lists no range for. Before, such changes reached the human branch with no approval. Lines that an agent deletes from a file that stays still need none.
 - `prov session close` is now `prov session archive`. Reason: "close" was easy to confuse with `prov finish`.
 - Every `--dry-run` and `--json` option has a help text.
 

@@ -419,7 +419,15 @@ No doubtful line reaches a human branch without a human approval. `prov` reads e
 - A range gives it a human. Reason: in an agent commit, this label comes from git-ai's fallback, not from a person.
 - Its agent commit has no note.
 - A range gives it a session that no `Prov-Session` trailer names and that has no record. See "Sessions of an integration".
-- git shows added lines for its file in the agent commit (`git diff --numstat`), and the output of git-ai has no added range for that file. The whole file is then one item. Reason: git-ai ignores some paths, for example `**/vendor/**`, lock files and `*.min.js`. It drops the checkpoints for such a file and lists none of its lines, so an agent's lines there would otherwise never be doubtful.
+
+Two kinds of file are doubtful as a whole, with one item for the file:
+
+- The agent commit adds lines to the file, changes it as a binary file, or changes its mode or its type, and the output of git-ai has no added range for that file. Reason: git-ai ignores some paths, for example `**/vendor/**`, lock files and `*.min.js`. It drops the checkpoints for such a file and lists none of its lines. It also lists no range for a binary file or a change of mode. So an agent's change there would otherwise never be doubtful.
+- The agent commit deletes the file. Reason: git-ai records no author for a deletion, and a file that disappears is easy to miss in a review.
+
+Lines that an agent commit deletes from a file that stays are not doubtful. Reason: a deleted line has no author to doubt.
+
+One `git diff-tree --raw --numstat` for each agent commit gives these changes. A symbolic link and a submodule need no rule of their own: git-ai gives a symbolic link a range, and a submodule an untracked range.
 
 A merge commit in the incoming range is not read with `git-ai diff`. Reason: git-ai shows a merge as the difference from its first parent, which repeats the lines of the merged commits. Instead, each path that the merge commit changed relative to every parent is doubtful. This is what the author of the merge wrote, for example an agent that merged the human branch into its branch and resolved a conflict. A clean merge has no such path.
 
@@ -906,6 +914,7 @@ These results are the basis of rules in this specification.
 | `crates/prov/tests/gitai_contract.rs`, 10 tests | All pass. A checkpoint on a new file just before a commit counted for that commit in 20 of 20 commits. | Tested version 1.7.6 |
 | A human line, then one character of it changed through an agent edit, in an agent commit | `git-ai diff --json`: the whole line is one AI addition (and one deletion). `git-ai blame --json` gives the line one session. `git-ai stats --json`: `ai_additions` 1, no other category. | README: attribution is per line, with no "mixed" category |
 | A binary file with an `ai_agent` checkpoint, in an agent commit | `git-ai diff --json` lists no range for the file | README: binary files are not attributed |
+| One agent commit, git-ai 1.7.6: a binary file and a changed binary file with `ai_agent` checkpoints, a mode change only, a symbolic link with an `ai_agent` checkpoint, a submodule gitlink, a deleted file, and a file that only loses a line | `git-ai diff --json`: no added range for the binary files and the mode change; one AI range for the symbolic link; one untracked range for the gitlink; only a deletion hunk for the deleted file. `git diff-tree --raw --numstat -z` gives the raw records, then the numstat records, in one process: `-` for a binary file, `0 0` for the mode change. Test `binary_files_mode_changes_and_deletions_have_no_added_ranges` | The merge gate: files doubtful as a whole |
 | The full test suite in a Podman container (Ubuntu 26.04, local disk), many tests at once | `git-ai checkpoint` returns when the service has received the checkpoint, not when it has applied it. In 2 of 3 runs, the sweep's checkpoint in `pre-commit` was applied about 50 ms after the commit was recorded, and the commit's lines went to a session that git-ai invented. With `git-ai await` at the end of `pre-commit`: 0 of 6 runs. A checkpoint captures the file's content when it is received: two AI stages of one file, with no wait between them, were attributed correctly. | `pre-commit` and `prov approve` wait for git-ai after their checkpoints |
 
 **git 2.53 and git-ai 1.7.6, premises of `prov revise` (proposed), tested 2026-11-13**

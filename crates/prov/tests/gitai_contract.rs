@@ -239,3 +239,34 @@ fn checkpoint_ai_after_write(env: &Env, repo: &Path, file: &str, session: &str) 
     env.plain_write(repo, file, &format!("{file}\n"));
     checkpoint_ai(env, repo, &[file], "claude", "m-1", session);
 }
+
+/// git-ai lists no added range for a binary file or a change of mode, and
+/// only a deletion for a deleted file. A symbolic link gets a range, and a
+/// submodule an untracked one. The gate makes a whole-file item for each
+/// changed path with no range, and for each deleted file.
+#[test]
+fn binary_files_mode_changes_and_deletions_have_no_added_ranges() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.plain_repo("nontext");
+    env.plain_write(&repo, "run.sh", "echo run\n");
+    env.plain_write(&repo, "gone.txt", "gone\n");
+    human_commit(&env, &repo, "Base");
+    let base = env.git(&repo, ["rev-parse", "HEAD"]);
+
+    env.agent_edit(&repo, "image.bin", "\u{89}PNG\0binary", "sess-n");
+    env.agent_edit(&repo, "text.txt", "text\n", "sess-n");
+    std::fs::set_permissions(repo.join("run.sh"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::os::unix::fs::symlink("text.txt", repo.join("link")).unwrap();
+    checkpoint_ai(&env, &repo, &["link"], "claude", "unknown", "sess-n");
+    std::fs::remove_file(repo.join("gone.txt")).unwrap();
+    env.git(&repo, ["add", "-A"]);
+    env.git(&repo, ["update-index", "--add", "--cacheinfo", &format!("160000,{base},sub")]);
+    env.agent_git(&repo, "sess-n", ["commit", "-q", "-m", "Agent"]).success();
+    let c = head(&env, &repo);
+    assert!(authors(&c, "image.bin").is_empty(), "{:?}", c.added);
+    assert!(authors(&c, "run.sh").is_empty(), "{:?}", c.added);
+    assert!(authors(&c, "gone.txt").is_empty(), "{:?}", c.added);
+    assert_eq!(authors(&c, "link"), vec![ai("claude", "sess-n", "unknown")]);
+    assert_eq!(authors(&c, "sub"), vec![Author::Untracked]);
+    assert_eq!(authors(&c, "text.txt"), vec![ai("claude", "sess-n", "unknown")]);
+}

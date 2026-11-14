@@ -91,6 +91,6 @@ Then merge with `git merge` (which makes a merge commit, because of `merge.ff = 
 - **Background processes are not swept.** A process that writes after the session ends, such as a development server, has its changes taken by the next session in the worktree. Stop it before another session starts there and before `prov finish`.
 - **The process scan is partial.** `prov` lists the processes whose current directory is in the worktree. A process that writes there from another directory is not found.
 - **The merge message is not checked after the editor.** If you remove a trailer group there, `prov check` reports the commit, and the session records stay so you can merge again.
-- **git-ai attributes whole lines.** A one-character AI change makes the whole line AI. git-ai records nothing for binary files, lock files, vendored paths and the other paths on its ignore list; the gate makes each such file one item.
+- **git-ai attributes whole lines.** A one-character AI change makes the whole line AI. git-ai records nothing for binary files, changes of mode, lock files, vendored paths and the other paths on its ignore list; the gate makes each such file one item. It also makes each file that an agent deletes one item.
 - **Transcript archives are local files.** `prov` records their hashes in git but does not back them up or publish them.
 - **macOS is not tested yet.**

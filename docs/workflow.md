@@ -86,7 +86,8 @@ An item is **doubtful** when:
 - git-ai gives a line no author (untracked), or gives it a human. In an agent commit, a human label comes from git-ai's fallback, not from a person.
 - An agent commit has no git-ai note.
 - A line belongs to a session that no trailer names and that has no record. git-ai invents such a session, for example after `git commit --no-verify` skipped the sweep.
-- git changed a file that git-ai lists no lines for, because git-ai ignores the path (`vendor/`, lock files, `*.min.js` and others). The whole file is one item.
+- git changed a file that git-ai lists no lines for: a binary file, a change of mode, or a path that git-ai ignores (`vendor/`, lock files, `*.min.js` and others). The whole file is one item.
+- An agent commit deleted a file. The whole file is one item. Lines that an agent deletes from a file that stays need no approval.
 - A merge commit on the agent branch changed a path relative to every parent, for example a conflict that the agent resolved.
 - A protected path changed. The defaults are `.provenance.toml`, `.claude/**`, `.github/workflows/**`, and `CLAUDE.md` and `AGENTS.md` in any directory, because an agent could change them to weaken the controls.
 
