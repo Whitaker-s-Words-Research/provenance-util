@@ -1,0 +1,158 @@
+crates/prov/src/schema.rs
+  s_e4963ee53affae::t_f37860361db7d9 6,18,27,38,41,46,50-51,54,64,67,74,81,89,111,123
+Cargo.toml
+  s_e4963ee53affae::t_f37860361db7d9 3,42
+crates/prov/src/doctor.rs
+  s_e4963ee53affae::t_f37860361db7d9 7,64,73,89,92-93,103,114,118,124,133,135,146,149-150,154,159,163,166,175,180,199,204,207,216,229,235,238,241-247,249,266,269,274,278,281,303,309,372,375,378-379,381-382,388,414,442,445
+crates/prov-core/src/plan.rs
+  s_e4963ee53affae::t_f37860361db7d9 23,50-52,110,119,122,125,130,133,220,226,230,328
+crates/prov-messages/src/state.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-21
+crates/prov-messages/src/cp.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-222
+crates/prov/src/session.rs
+  s_e4963ee53affae::t_f37860361db7d9 4,53-55,58,81,84,120-123,136,141-142,147,155,161,163,165-168,170,173-174,177,179,190,194-195,198-199,201,205,218-222,224,238,240,242,251,264,268
+crates/prov-messages/src/completions.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-40
+crates/prov-messages/src/session.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-168
+crates/prov-messages/src/fs.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-37
+crates/prov/src/procs.rs
+  s_e4963ee53affae::t_f37860361db7d9 14-15,128,130,132
+AGENTS.md
+  s_e4963ee53affae::t_f37860361db7d9 62-67
+crates/prov-core/Cargo.toml
+  s_e4963ee53affae::t_f37860361db7d9 12
+docs/development.md
+  s_e4963ee53affae::t_f37860361db7d9 9,20-29
+  s_e4963ee53affae::t_43b1f78c61f21b 30
+crates/prov-messages/src/cli.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-17
+crates/prov-messages/src/config.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-24
+crates/prov-adapters/Cargo.toml
+  s_e4963ee53affae::t_f37860361db7d9 12
+crates/prov/src/check.rs
+  s_e4963ee53affae::t_f37860361db7d9 11,76,79,111-112,115,118,126,128,130-132,134,138,142-143,147,149,156,172,206,208-209,218,227,244,250,273,312,319,333,337,339,346,383
+crates/prov-messages/src/plan.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-37
+crates/prov-git/src/lib.rs
+  s_e4963ee53affae::t_f37860361db7d9 10,103,107,147,149,151,166,168,178,182,194,212,223,233,255,269,369-370,372
+crates/prov/src/agent_hook.rs
+  s_e4963ee53affae::t_f37860361db7d9 9,16,21,35-36,47,95,105,117,126,132,138
+crates/prov-messages/src/agent_hook.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-52
+crates/prov-messages/src/check.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-126
+crates/prov-messages/src/copy_check.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-68
+crates/prov-messages/src/lib.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-50
+crates/prov-messages/src/gitai.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-57
+crates/prov/tests/snapshots/help.txt
+  s_e4963ee53affae::t_f37860361db7d9 1-243
+crates/prov-adapters/src/claude_code.rs
+  s_e4963ee53affae::t_f37860361db7d9 8,36,38,109,111,113,184,186,220,225,233,242,251,256,266-267,279,287,290
+crates/prov-core/src/pattern.rs
+  s_e4963ee53affae::t_f37860361db7d9 18,42,45,52,56
+crates/prov-messages/src/git.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-35
+crates/prov-core/src/state.rs
+  s_e4963ee53affae::t_f37860361db7d9 11,124,158,360,370,376,392,396,406,415,418,434,444,447,462,469-470,480,483,493,503,507,544,548,556,562,565,569,577,591-592,594,598,605,612,614,618,626,644
+crates/prov/src/trace.rs
+  s_e4963ee53affae::t_f37860361db7d9 16,115,119,158
+crates/prov-gitai/Cargo.toml
+  s_e4963ee53affae::t_f37860361db7d9 12
+crates/prov/tests/help.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-81
+crates/prov-messages/src/gate.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-119
+crates/prov-messages/src/pattern.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-19
+crates/prov-messages/src/procs.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-16
+crates/prov-messages/src/trace.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-10
+crates/prov/src/approve.rs
+  s_e4963ee53affae::t_f37860361db7d9 12,47,49,60,63,66,69,97,99,109,111,115,117,128-132,134,136,151,154,158,168,173,178,180,182,184,189,205,219
+crates/prov/src/cp.rs
+  s_e4963ee53affae::t_f37860361db7d9 18,104,113,139,142,145,160,163,168,183-184,213,230,232,252,254,265,269,296,334,339,348-350,361,366,387,416,426-427,431,453,455,468,471,474,478,481,484,493,495,500,503,508,512,514,516,521,539,547,549,557-559,562,565,573,588,590,593-594,604,609,618,621,624,669,681,692-693,703,705,720,732,736,739,742,782
+crates/prov/src/gate.rs
+  s_e4963ee53affae::t_f37860361db7d9 8,89-90,92-103,171,283,288-291,302-303,305-306,320,335,341,362,369,373,382,396,398,401,403,405,410-412,414
+crates/prov-messages/src/schema.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-64
+crates/prov/Cargo.toml
+  s_e4963ee53affae::t_f37860361db7d9 13
+crates/prov-messages/src/init.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-95
+crates/prov-messages/src/trailer.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-11
+crates/prov/src/finish.rs
+  s_e4963ee53affae::t_f37860361db7d9 7,47,51,55,58,66-67,92,99,116-122,127,129
+crates/prov/src/completions.rs
+  s_e4963ee53affae::t_f37860361db7d9 13,46,60,66,82,112,114,116,118-119,127,134-136
+crates/prov-messages/src/start.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-63
+crates/prov-core/src/config.rs
+  s_e4963ee53affae::t_f37860361db7d9 6,77,85,90,101-102,106,111
+crates/prov-core/src/trailer.rs
+  s_e4963ee53affae::t_f37860361db7d9 6,28,31
+crates/prov-gitai/src/lib.rs
+  s_e4963ee53affae::t_f37860361db7d9 14,154,192,195,205,282-283,286,306-307,310,324,326,328,340,342,349,351,357,362,364,371,384,396,398,410,412,414
+crates/prov-messages/src/archive.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-35
+crates/prov/src/context.rs
+  s_e4963ee53affae::t_f37860361db7d9 10,27-28
+crates/prov-messages/src/claude_code.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-54
+crates/prov/src/copy_check.rs
+  s_e4963ee53affae::t_f37860361db7d9 11,70,130,138,152,165-167,175,186,194,199,214,216,220,285,292,297,306
+crates/prov-messages/src/doctor.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-220
+crates/prov-messages/src/finish.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-65
+crates/prov-messages/src/git_hook.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-94
+crates/prov/src/start.rs
+  s_e4963ee53affae::t_f37860361db7d9 8,54,65-66,80,83,86,100,103,111,115,148,151,159,166,194,198,201,204,221
+crates/prov-git/Cargo.toml
+  s_e4963ee53affae::t_f37860361db7d9 12
+crates/prov-messages/Cargo.toml
+  s_e4963ee53affae::t_f37860361db7d9 1-12
+crates/prov-messages/src/context.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-10
+crates/prov/src/complete.rs
+  s_e4963ee53affae::t_f37860361db7d9 40
+crates/prov/src/main.rs
+  s_e4963ee53affae::t_f37860361db7d9 321,360
+crates/prov-messages/src/run.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-4
+crates/prov/src/git_hook.rs
+  s_e4963ee53affae::t_f37860361db7d9 10,25,41,43,68,85,92,110-111,113,119,129,134,144,148,156,183,206,224,243,314
+crates/prov/src/archive.rs
+  s_e4963ee53affae::t_f37860361db7d9 11,23,37,58,60,78,92,126,136,138,145,152,163,175
+crates/prov/src/init.rs
+  s_e4963ee53affae::t_f37860361db7d9 10,56,66,89,92,95,104,106,114,134-135,145,153,159-160,166,180,186,206,211,215,220,227,232,260,269-270,274,276-277
+crates/prov-messages/src/approve.rs
+  s_e4963ee53affae::t_f37860361db7d9 1-88
+Cargo.lock
+  s_e4963ee53affae::t_41cea5db708754 359,375,387,401,409,414-417
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "973571dd1b39cdb346aed04e549a1bed1b4a5eba",
+  "prompts": {},
+  "sessions": {
+    "s_e4963ee53affae": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a08d079a-0ad6-45bd-9e0f-adf564591a1a",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
