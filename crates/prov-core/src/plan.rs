@@ -20,6 +20,7 @@ use std::collections::BTreeMap;
 use std::fmt::{self, Write as _};
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use serde::{Deserialize, Serialize};
 
 /// The value of `--agent` and `--model` when none is given.
@@ -46,9 +47,9 @@ pub enum Who {
 impl fmt::Display for Who {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Who::Human => write!(f, "human"),
-            Who::Ai { agent, model, session } => write!(f, "ai {agent}/{model} ({session})"),
-            Who::Unresolved => write!(f, "?"),
+            Who::Human => f.write_str(msg::copy_check::AUTHOR_HUMAN),
+            Who::Ai { agent, model, session } => f.write_str(&msg::copy_check::author_ai(agent, model, session)),
+            Who::Unresolved => f.write_str(msg::copy_check::AUTHOR_UNRESOLVED),
         }
     }
 }
@@ -106,7 +107,7 @@ impl PlanFile {
     pub fn check_cover(&self, line_count: u32) -> Result<()> {
         if !self.is_text() {
             if !self.ranges.is_empty() {
-                bail!("{}: a binary file or a symbolic link has no ranges", self.dest);
+                bail!(msg::plan::binary_has_ranges(&self.dest));
             }
             return Ok(());
         }
@@ -115,21 +116,21 @@ impl PlanFile {
         let mut next = 1u32;
         for r in ranges {
             if r.start < 1 || r.end < r.start {
-                bail!("{}: `{}` is not a range of lines", self.dest, r.label());
+                bail!(msg::plan::not_a_range(&self.dest, r.label()));
             }
             if r.start < next {
-                bail!("{}: line {} is in two ranges", self.dest, r.start);
+                bail!(msg::plan::line_in_two_ranges(&self.dest, r.start));
             }
             if r.start > next {
-                bail!("{}: no range has the lines {}-{}", self.dest, next, r.start - 1);
+                bail!(msg::plan::lines_without_range(&self.dest, next, r.start - 1));
             }
             next = r.end + 1;
         }
         if next - 1 < line_count {
-            bail!("{}: no range has the lines {}-{}", self.dest, next, line_count);
+            bail!(msg::plan::lines_without_range(&self.dest, next, line_count));
         }
         if next - 1 > line_count {
-            bail!("{}: the ranges end at line {}, but the file has {} lines", self.dest, next - 1, line_count);
+            bail!(msg::plan::ranges_past_end(&self.dest, next - 1, line_count));
         }
         Ok(())
     }
@@ -216,17 +217,17 @@ impl Plan {
     /// Parses a plan file. An `ai` range with no `agent` or `model` gets
     /// `unknown`; with no `session`, it gets `default_session`.
     pub fn parse(text: &str, default_session: &str) -> Result<Plan> {
-        let raw: RawPlan = toml::from_str(text).context("the plan does not parse")?;
+        let raw: RawPlan = toml::from_str(text).context(msg::plan::DOES_NOT_PARSE)?;
         let mut files = Vec::new();
         for f in raw.file {
             let mut ranges = Vec::new();
             for r in f.ranges {
                 let (start, end) = parse_lines(&r.lines)
-                    .with_context(|| format!("{}: `lines = {:?}` is not a range such as \"5-9\"", f.dest, r.lines))?;
+                    .with_context(|| msg::plan::lines_syntax(&f.dest, &r.lines))?;
                 let who = match r.author.as_str() {
                     "human" | "?" => {
                         if r.agent.is_some() || r.model.is_some() || r.session.is_some() {
-                            bail!("{}: lines {}: `agent`, `model` and `session` go with author = \"ai\"", f.dest, r.lines);
+                            bail!(msg::plan::ai_fields_without_ai(&f.dest, &r.lines));
                         }
                         if r.author == "human" {
                             Who::Human
@@ -324,7 +325,7 @@ impl Plan {
         let mut seen: Vec<&str> = Vec::new();
         for f in &self.files {
             if seen.contains(&f.dest.as_str()) {
-                bail!("two files of the plan have the destination {}", f.dest);
+                bail!(msg::plan::duplicate_destination(&f.dest));
             }
             seen.push(&f.dest);
         }

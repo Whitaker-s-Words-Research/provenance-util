@@ -15,6 +15,7 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use prov_core::plan::{ranges_of, Plan, PlanFile, Range, Source, Who, UNKNOWN};
 use prov_core::{now, CopyFile, CopyRecord};
 use prov_git::Repo;
@@ -100,7 +101,7 @@ fn author_option(name: &str, value: &str, args: &Args, id: &str) -> Result<Who> 
             model: args.model.clone().unwrap_or_else(|| UNKNOWN.into()),
             session: args.session.clone().unwrap_or_else(|| id.to_string()),
         }),
-        other => bail!("{name} {other}: use `human` or `ai`"),
+        other => bail!(msg::cp::author_option(name, other)),
     }
 }
 
@@ -109,7 +110,7 @@ fn author_option(name: &str, value: &str, args: &Args, id: &str) -> Result<Who> 
 fn new_id() -> Result<String> {
     use std::io::Read;
     let mut bytes = [0u8; 3];
-    fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes)).context("cannot read /dev/urandom")?;
+    fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut bytes)).context(msg::start::CANNOT_READ_URANDOM)?;
     Ok(format!("prov-cp-{}-{:02x}{:02x}{:02x}", now(), bytes[0], bytes[1], bytes[2]))
 }
 
@@ -135,13 +136,13 @@ fn tree_entries(src: &Repo, commit: &str, path: &str, recursive: bool) -> Result
     if !path.is_empty() {
         args.extend(["--", path]);
     }
-    let text = String::from_utf8(git_bytes(src, &args)?).context("a path of the source is not UTF-8")?;
+    let text = String::from_utf8(git_bytes(src, &args)?).context(msg::cp::SOURCE_PATH_NOT_UTF8)?;
     let mut out = Vec::new();
     for record in text.split('\0').filter(|r| !r.is_empty()) {
-        let (meta, name) = record.split_once('\t').context("unexpected output of git ls-tree")?;
+        let (meta, name) = record.split_once('\t').context(msg::cp::UNEXPECTED_LS_TREE)?;
         let mut parts = meta.split(' ');
         let (Some(mode), Some(kind), Some(blob)) = (parts.next(), parts.next(), parts.next()) else {
-            bail!("unexpected output of git ls-tree");
+            bail!(msg::cp::UNEXPECTED_LS_TREE);
         };
         out.push(Entry { mode: mode.into(), kind: kind.into(), blob: blob.into(), path: name.into() });
     }
@@ -156,15 +157,15 @@ fn is_binary(bytes: &[u8]) -> bool {
 /// Reads one file from the source commit, never from a working tree.
 fn load(src: &Repo, commit: &str, entry: &Entry) -> Result<Vec<u8>> {
     if entry.kind != "blob" {
-        bail!("{} is a submodule in the source. `prov cp` copies files only.", entry.path);
+        bail!(msg::cp::submodule(&entry.path));
     }
     git_bytes(src, &["cat-file", "blob", &entry.blob])
-        .with_context(|| format!("cannot read {} at {commit} in {}", entry.path, src.toplevel.display()))
+        .with_context(|| msg::cp::cannot_read_source(&entry.path, commit, src.toplevel.display()))
 }
 
 /// The path of `dest` relative to the root of the worktree. Empty for the root.
 fn worktree_relative(repo: &Repo, dest: &str) -> Result<String> {
-    let cwd = std::env::current_dir().context("no current directory")?;
+    let cwd = std::env::current_dir().context(msg::fs::NO_CURRENT_DIR)?;
     let mut abs = PathBuf::new();
     for part in cwd.join(dest).components() {
         match part {
@@ -179,8 +180,8 @@ fn worktree_relative(repo: &Repo, dest: &str) -> Result<String> {
     let rel = abs
         .strip_prefix(&top)
         .or_else(|_| abs.strip_prefix(&repo.toplevel))
-        .with_context(|| format!("{dest} is not in the worktree {}", repo.toplevel.display()))?;
-    Ok(rel.to_str().with_context(|| format!("{dest} is not UTF-8"))?.to_string())
+        .with_context(|| msg::cp::not_in_worktree(dest, repo.toplevel.display()))?;
+    Ok(rel.to_str().with_context(|| msg::cp::not_utf8(dest))?.to_string())
 }
 
 fn join(dir: &str, name: &str) -> String {
@@ -209,7 +210,7 @@ fn source_label(src: &Repo) -> Result<String> {
         return Ok(url);
     }
     let top = fs::canonicalize(&src.toplevel).unwrap_or_else(|_| src.toplevel.clone());
-    Ok(top.to_str().context("the path of the source is not UTF-8")?.to_string())
+    Ok(top.to_str().context(msg::cp::SOURCE_NOT_UTF8)?.to_string())
 }
 
 /// A checkout of the source commit in a temporary directory.
@@ -226,9 +227,9 @@ impl Checkout {
         let dir = std::env::temp_dir().join(id);
         let checkout = Checkout { dir: dir.clone() };
         let run = |cwd: &Path, args: &[&OsStr]| -> Result<()> {
-            let out = Command::new("git").current_dir(cwd).args(args).stdin(Stdio::null()).output().context("cannot run git")?;
+            let out = Command::new("git").current_dir(cwd).args(args).stdin(Stdio::null()).output().context(msg::run::CANNOT_RUN_GIT)?;
             if !out.status.success() {
-                bail!("git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+                bail!(msg::cp::git_failed(args, String::from_utf8_lossy(&out.stderr).trim()));
             }
             Ok(())
         };
@@ -248,9 +249,9 @@ impl Drop for Checkout {
 
 /// Builds the plan from the source paths and the options.
 fn build(ctx: &Ctx, src: &Repo, commit: &str, args: &Args, id: &str, notes: &mut Vec<String>) -> Result<Vec<Item>> {
-    let (dest_arg, sources) = args.paths.split_last().context("give the source paths and the destination")?;
+    let (dest_arg, sources) = args.paths.split_last().context(msg::cp::NO_PATHS)?;
     if sources.is_empty() {
-        bail!("give one source path or more, and then the destination");
+        bail!(msg::cp::NO_SOURCE_PATHS);
     }
     let dest = worktree_relative(&ctx.repo, dest_arg)?;
     let dest_is_dir = dest.is_empty() || dest_arg.ends_with('/') || ctx.repo.toplevel.join(&dest).is_dir();
@@ -261,11 +262,11 @@ fn build(ctx: &Ctx, src: &Repo, commit: &str, args: &Args, id: &str, notes: &mut
         let path = source.trim_end_matches('/');
         let path = if path == "." { "" } else { path };
         if path.starts_with('/') || path.split('/').any(|c| c == "..") {
-            bail!("{source}: a source path is relative to the root of the source repository");
+            bail!(msg::cp::absolute_source(source));
         }
         let entries = tree_entries(src, commit, path, true)?;
         if entries.is_empty() {
-            bail!("the commit {commit} of {} has no file at `{source}`", src.toplevel.display());
+            bail!(msg::cp::no_source_file(commit, src.toplevel.display(), source));
         }
         let one_file = entries.len() == 1 && entries[0].path == path;
         if one_file {
@@ -292,10 +293,7 @@ fn build(ctx: &Ctx, src: &Repo, commit: &str, args: &Args, id: &str, notes: &mut
         if src.git_ok(["rev-parse", "-q", "--verify", "refs/notes/ai"])? {
             checkout = Some(Checkout::new(src, commit, id)?);
         } else {
-            notes.push(format!(
-                "the source {} has no refs/notes/ai: no line has an author from the source",
-                src.toplevel.display()
-            ));
+            notes.push(msg::cp::no_notes(src.toplevel.display()));
         }
     }
 
@@ -333,17 +331,12 @@ fn load_plan(src: &Repo, plan: &Plan) -> Result<Vec<Item>> {
         let entry = tree_entries(src, &plan.source.commit, &file.path, false)?
             .into_iter()
             .find(|e| e.path == file.path && e.kind != "tree")
-            .with_context(|| format!("the commit {} of the source has no file `{}`", plan.source.commit, file.path))?;
+            .with_context(|| msg::cp::plan_file_missing(&plan.source.commit, &file.path))?;
         let bytes = load(src, &plan.source.commit, &entry)?;
         let symlink = entry.mode == MODE_LINK;
         let binary = !symlink && is_binary(&bytes);
         if file.symlink != symlink || file.binary != binary {
-            bail!(
-                "{}: the file is {} in the source, and the plan says {}",
-                file.path,
-                kind(symlink, binary),
-                kind(file.symlink, file.binary)
-            );
+            bail!(msg::cp::kind_mismatch(&file.path, kind(symlink, binary), kind(file.symlink, file.binary)));
         }
         items.push(Item { file: file.clone(), mode: entry.mode, blob: entry.blob, bytes });
     }
@@ -352,9 +345,9 @@ fn load_plan(src: &Repo, plan: &Plan) -> Result<Vec<Item>> {
 
 fn kind(symlink: bool, binary: bool) -> &'static str {
     match (symlink, binary) {
-        (true, _) => "a symbolic link (symlink = true)",
-        (false, true) => "a binary file (binary = true)",
-        (false, false) => "a text file",
+        (true, _) => msg::cp::KIND_SYMLINK,
+        (false, true) => msg::cp::KIND_BINARY,
+        (false, false) => msg::cp::KIND_TEXT,
     }
 }
 
@@ -365,12 +358,12 @@ fn validate(items: &[Item]) -> Result<()> {
     plan.check_dests()?;
     plan.check_models()?;
     for item in items {
-        item.file.check_cover(u32::try_from(item.lines().len()).context("a file has too many lines")?)?;
+        item.file.check_cover(u32::try_from(item.lines().len()).context(msg::cp::TOO_MANY_LINES)?)?;
         let ok = !item.file.dest.is_empty()
             && Path::new(&item.file.dest).components().all(|c| matches!(c, Component::Normal(_)))
             && !item.file.dest.split('/').any(|c| c.eq_ignore_ascii_case(".git"));
         if !ok {
-            bail!("`{}` is not a path in this worktree", item.file.dest);
+            bail!(msg::cp::bad_dest(&item.file.dest));
         }
     }
     Ok(())
@@ -391,11 +384,7 @@ fn identical_line_notes(items: &[Item], notes: &mut Vec<String>) {
         }
         let groups = by_content.values().filter(|a| a.len() > 1).count();
         if groups > 0 {
-            notes.push(format!(
-                "{}: {groups} group(s) of identical lines have different authors. The authors can move between \
-                 identical lines; the content and the counts stay correct.",
-                item.file.dest
-            ));
+            notes.push(msg::cp::identical_lines(&item.file.dest, groups));
         }
     }
 }
@@ -424,7 +413,7 @@ fn report_files(items: &[Item]) -> Vec<ReportFile> {
 fn print_summary(files: &[ReportFile]) {
     for f in files {
         if f.kind != "text" {
-            println!("{}  {}", f.dest, if f.kind == "symlink" { "symbolic link" } else { "binary" });
+            println!("{}", if f.kind == "symlink" { msg::cp::summary_symlink(&f.dest) } else { msg::cp::summary_binary(&f.dest) });
             continue;
         }
         let mut counts: Vec<(&Who, u32)> = Vec::new();
@@ -434,12 +423,12 @@ fn print_summary(files: &[ReportFile]) {
                 None => counts.push((&r.who, r.lines())),
             }
         }
-        let authors: Vec<String> = counts.iter().map(|(who, n)| format!("{who}: {n}")).collect();
-        println!("{}  {} line(s)  {}", f.dest, f.lines, if authors.is_empty() { "empty".into() } else { authors.join(", ") });
+        let authors: Vec<String> = counts.iter().map(|(who, n)| msg::cp::author_count(who, n)).collect();
+        println!("{}", msg::cp::summary_text(&f.dest, f.lines, if authors.is_empty() { msg::cp::EMPTY.into() } else { authors.join(", ") }));
         if counts.len() > 1 {
             for r in &f.ranges {
                 let lines = if r.start == r.end { r.start.to_string() } else { format!("{}-{}", r.start, r.end) };
-                println!("    {lines:9} {}", r.who);
+                println!("{}", msg::cp::summary_range(lines, &r.who));
             }
         }
     }
@@ -461,23 +450,12 @@ fn edit(repo: &Repo, file: &Path) -> Result<bool> {
         .stdout(tty.try_clone()?)
         .stderr(tty)
         .status()
-        .with_context(|| format!("cannot run the editor `{editor}`"))?;
+        .with_context(|| msg::cp::cannot_run_editor(&editor))?;
     if !status.success() {
-        bail!("the editor `{editor}` failed. The plan is in {}", file.display());
+        bail!(msg::cp::editor_failed(&editor, file.display()));
     }
     Ok(true)
 }
-
-const EDIT_HELP: &str = "\
-# Give each range with author = \"?\" an author, then save and close.
-#   { lines = \"1-4\", author = \"human\" }
-#   { lines = \"5-9\", author = \"ai\", agent = \"claude\", model = \"m1\", session = \"s1\" }
-# `agent` and `model` are optional (default: unknown). `session` is optional.
-# You can split a range into more ranges. The ranges of a file cover every line once.
-# A human range gets you as its author, also for a line that another human wrote.
-# To stop, close the editor with a range still at \"?\".
-
-";
 
 fn plan_of(source: &Source, items: &[Item]) -> Plan {
     Plan { source: source.clone(), files: items.iter().map(|i| i.file.clone()).collect() }
@@ -487,23 +465,23 @@ pub fn run(args: &Args) -> Result<bool> {
     let ctx = Ctx::here()?;
     let repo = &ctx.repo;
     if let Some(var) = prov_adapters::agent_env_marker() {
-        bail!("refused: only a human can run `prov cp`. {var} is set: an agent started this command.");
+        bail!(msg::cp::agent_env(var));
     }
     if ctx.on_agent_branch() {
-        bail!("refused: `prov cp` does not run in an agent worktree. Copy where you commit, on a human branch.");
+        bail!(msg::cp::AGENT_WORKTREE);
     }
     if args.all.is_some() && args.missing.is_some() {
-        bail!("--all sets every line, so --missing has no effect. Give one of them.");
+        bail!(msg::cp::ALL_AND_MISSING);
     }
     let ai_option = args.all.as_deref() == Some("ai") || args.missing.as_deref() == Some("ai");
     if (args.agent.is_some() || args.model.is_some()) && !ai_option {
-        bail!("--agent and --model go with `--all ai` or `--missing ai`");
+        bail!(msg::cp::AGENT_MODEL_WITHOUT_AI);
     }
     if args.session.is_some() && args.all.as_deref() != Some("ai") {
-        bail!("--session goes with `--all ai`");
+        bail!(msg::cp::SESSION_WITHOUT_ALL_AI);
     }
     if args.plan.is_some() && args.apply.is_some() {
-        bail!("--plan writes a plan and --apply applies one. Give one of them.");
+        bail!(msg::cp::PLAN_AND_APPLY);
     }
 
     let id = new_id()?;
@@ -512,35 +490,35 @@ pub fn run(args: &Args) -> Result<bool> {
     // The plan: from a file, or from the source and the options.
     let (source, src, mut items) = if let Some(file) = &args.apply {
         if args.from.is_some() || args.rev.is_some() || !args.paths.is_empty() || args.all.is_some() || args.missing.is_some() {
-            bail!("--apply takes the source, the paths and the authors from the plan file. Give only the file.");
+            bail!(msg::cp::APPLY_ONLY_FILE);
         }
-        let text = fs::read_to_string(file).with_context(|| format!("cannot read {}", file.display()))?;
+        let text = fs::read_to_string(file).with_context(|| msg::fs::cannot_read(file.display()))?;
         let plan = Plan::parse(&text, &id)?;
         let src = Repo::discover(Path::new(&plan.source.repo))
             .ok()
             .flatten()
-            .with_context(|| format!("the source `{}` of the plan is not a git repository", plan.source.repo))?;
+            .with_context(|| msg::cp::plan_source_not_repo(&plan.source.repo))?;
         let commit = src
             .rev_parse(&plan.source.commit)?
-            .with_context(|| format!("the source has no commit `{}`", plan.source.commit))?;
+            .with_context(|| msg::cp::no_source_commit(&plan.source.commit))?;
         let source = Source { repo: plan.source.repo.clone(), commit };
         let items = load_plan(&src, &Plan { source: source.clone(), files: plan.files })?;
         (source, src, items)
     } else {
-        let from = args.from.as_ref().context("give the source repository: --from <repo>")?;
+        let from = args.from.as_ref().context(msg::cp::NO_FROM)?;
         let src = Repo::discover(from)
             .ok()
             .flatten()
-            .with_context(|| format!("{} is not a git repository. `--from` takes the path of a local clone.", from.display()))?;
+            .with_context(|| msg::cp::from_not_repo(from.display()))?;
         let rev = args.rev.as_deref().unwrap_or("HEAD");
-        let commit = src.rev_parse(rev)?.with_context(|| format!("the source has no commit `{rev}`"))?;
+        let commit = src.rev_parse(rev)?.with_context(|| msg::cp::no_source_commit(rev))?;
         let top = fs::canonicalize(&src.toplevel).unwrap_or_else(|_| src.toplevel.clone());
-        let source = Source { repo: top.to_str().context("the path of the source is not UTF-8")?.to_string(), commit };
+        let source = Source { repo: top.to_str().context(msg::cp::SOURCE_NOT_UTF8)?.to_string(), commit };
         let items = build(&ctx, &src, &source.commit, args, &id, &mut notes)?;
         (source, src, items)
     };
     if items.is_empty() {
-        bail!("the plan has no file");
+        bail!(msg::cp::EMPTY_PLAN);
     }
     validate(&items)?;
 
@@ -558,7 +536,7 @@ pub fn run(args: &Args) -> Result<bool> {
     // `--plan <file>` writes the plan and stops.
     if let Some(file) = &args.plan {
         if !args.dry_run {
-            fs::write(file, plan_of(&source, &items).to_toml()).with_context(|| format!("cannot write {}", file.display()))?;
+            fs::write(file, plan_of(&source, &items).to_toml()).with_context(|| msg::fs::cannot_write(file.display()))?;
         }
         report.files = report_files(&items);
         report.unresolved = unresolved_names(&items);
@@ -566,9 +544,9 @@ pub fn run(args: &Args) -> Result<bool> {
         report.plan_file = Some(file.clone());
         return finish(args, &report, true, || {
             if args.dry_run {
-                println!("Dry run: nothing changed.");
+                println!("{}", msg::cp::DRY_RUN);
             } else {
-                println!("The plan is in {}. Apply it: prov cp --apply {}", file.display(), file.display());
+                println!("{}", msg::cp::plan_written(file.display()));
             }
         });
     }
@@ -576,15 +554,15 @@ pub fn run(args: &Args) -> Result<bool> {
     // A range with no author: the editor, at a terminal.
     if !unresolved_names(&items).is_empty() && !args.dry_run {
         let file = ctx.store.dir().join("copies").join(format!("{id}.toml"));
-        fs::create_dir_all(file.parent().context("the plan file has no directory")?).with_context(|| format!("cannot create {}", file.display()))?;
-        fs::write(&file, format!("{EDIT_HELP}{}", plan_of(&source, &items).to_toml()))
-            .with_context(|| format!("cannot write {}", file.display()))?;
+        fs::create_dir_all(file.parent().context(msg::cp::PLAN_NO_DIR)?).with_context(|| msg::fs::cannot_create(file.display()))?;
+        fs::write(&file, format!("{}{}", msg::cp::EDIT_HELP, plan_of(&source, &items).to_toml()))
+            .with_context(|| msg::fs::cannot_write(file.display()))?;
         report.plan_file = Some(file.clone());
         if edit(repo, &file)? {
-            let text = fs::read_to_string(&file).with_context(|| format!("cannot read {}", file.display()))?;
+            let text = fs::read_to_string(&file).with_context(|| msg::fs::cannot_read(file.display()))?;
             let checked = Plan::parse(&text, &id).and_then(|plan| {
                 if plan.source.repo != source.repo || plan.source.commit != source.commit {
-                    bail!("the [source] of the plan changed. To copy from another commit, run `prov cp` again.");
+                    bail!(msg::cp::SOURCE_CHANGED);
                 }
                 let items = load_plan(&src, &plan)?;
                 validate(&items)?;
@@ -592,7 +570,7 @@ pub fn run(args: &Args) -> Result<bool> {
             });
             match checked {
                 Ok(edited) => items = edited,
-                Err(e) => bail!("{e:#}\nYour plan is in {}. Correct it, then: prov cp --apply {}", file.display(), file.display()),
+                Err(e) => bail!(msg::cp::plan_invalid(format!("{e:#}"), file.display())),
             }
         }
         if unresolved_names(&items).is_empty() {
@@ -607,17 +585,13 @@ pub fn run(args: &Args) -> Result<bool> {
         report.notes = notes;
         let plan_file = report.plan_file.clone();
         return finish(args, &report, false, || {
-            say(format!("{} range(s) have no author:", report.unresolved.len()));
+            say(msg::cp::unresolved_count(report.unresolved.len()));
             for name in &report.unresolved {
-                say(format!("  {name}"));
+                say(msg::cp::unresolved_item(name));
             }
             match &plan_file {
-                Some(file) => say(format!(
-                    "Nothing is written to the working tree. Set the authors in {}, then: prov cp --apply {}",
-                    file.display(),
-                    file.display()
-                )),
-                None => say("Nothing is written to the working tree. Give --missing or --all, or write a plan with --plan <file>."),
+                Some(file) => say(msg::cp::set_authors(file.display())),
+                None => say(msg::cp::GIVE_AUTHORS),
             }
         });
     }
@@ -627,15 +601,12 @@ pub fn run(args: &Args) -> Result<bool> {
         let dest = &item.file.dest;
         let abs = repo.toplevel.join(dest);
         if abs.symlink_metadata().is_ok() || repo.git_ok(["ls-files", "--error-unmatch", "--", dest])? {
-            bail!(
-                "the destination {dest} exists. `prov cp` does not replace a file. To replace the authorship of a file: \
-                 git rm it and commit, then copy it again."
-            );
+            bail!(msg::cp::dest_exists(dest));
         }
         let mut parent = abs.parent();
         while let Some(dir) = parent.filter(|d| *d != repo.toplevel && d.starts_with(&repo.toplevel)) {
             match dir.symlink_metadata() {
-                Ok(meta) if !meta.is_dir() => bail!("{} is not a directory, so {dest} cannot be written", dir.display()),
+                Ok(meta) if !meta.is_dir() => bail!(msg::cp::parent_not_dir(dir.display(), dest)),
                 _ => {}
             }
             parent = dir.parent();
@@ -644,13 +615,13 @@ pub fn run(args: &Args) -> Result<bool> {
     identical_line_notes(&items, &mut notes);
     report.notes = notes;
     if args.dry_run {
-        return finish(args, &report, true, || println!("Dry run: nothing changed."));
+        return finish(args, &report, true, || println!("{}", msg::cp::DRY_RUN));
     }
     if !ctx.gitai.service_available(&repo.toplevel) {
-        bail!("the git-ai service is not available, so a checkpoint would record nothing. Start it: git-ai bg start");
+        bail!(msg::approve::GITAI_UNAVAILABLE);
     }
     if let Some(problem) = crate::doctor::allowed(&ctx)? {
-        bail!("{problem}");
+        bail!(problem);
     }
 
     // Store the plan, then replay each file.
@@ -695,7 +666,7 @@ pub fn run(args: &Args) -> Result<bool> {
         lock.put_copy(&record)?;
     }
     for item in &items {
-        replay(&ctx, item).with_context(|| format!("the copy of {} stopped", item.file.dest))?;
+        replay(&ctx, item).with_context(|| msg::cp::copy_stopped(&item.file.dest))?;
     }
 
     // Stage the files. The blob that git stores is what the commit must hold.
@@ -707,7 +678,7 @@ pub fn run(args: &Args) -> Result<bool> {
         let staged = repo.git(["rev-parse", &format!(":{}", file.dest)])?;
         if staged != file.blob {
             // A filter of this repository (for example `text=auto`) changed the bytes that git stores.
-            report.notes.push(format!("{}: a filter of this repository changed the bytes that git stores", file.dest));
+            report.notes.push(msg::cp::filter_changed(&file.dest));
             file.blob = staged;
             changed = true;
         }
@@ -718,8 +689,8 @@ pub fn run(args: &Args) -> Result<bool> {
     report.applied = true;
     let count = items.len();
     finish(args, &report, true, || {
-        println!("Copied and staged {count} file(s). Commit them: git commit");
-        println!("The commit gets one Copied-From trailer for each file. A change to a copied file before the commit is refused.");
+        println!("{}", msg::cp::copied(count));
+        println!("{}", msg::cp::TRAILER_NOTE);
     })
 }
 
@@ -729,9 +700,9 @@ fn unresolved_names(items: &[Item]) -> Vec<String> {
         .flat_map(|i| {
             i.file.ranges.iter().filter(|r| r.who == Who::Unresolved).map(move |r| {
                 if r.start == r.end {
-                    format!("{} line {}", i.file.dest, r.start)
+                    msg::cp::unresolved_line(&i.file.dest, r.start)
                 } else {
-                    format!("{} lines {}-{}", i.file.dest, r.start, r.end)
+                    msg::cp::unresolved_lines(&i.file.dest, r.start, r.end)
                 }
             })
         })
@@ -746,7 +717,7 @@ fn finish(args: &Args, report: &Report, ok: bool, last: impl FnOnce()) -> Result
     }
     print_summary(&report.files);
     for note in &report.notes {
-        println!("note: {note}");
+        println!("{}", msg::cp::note(note));
     }
     last();
     Ok(ok)
@@ -758,17 +729,17 @@ fn replay(ctx: &Ctx, item: &Item) -> Result<()> {
     let worktree = &ctx.repo.toplevel;
     let path = worktree.join(&item.file.dest);
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).with_context(|| format!("cannot create {}", parent.display()))?;
+        fs::create_dir_all(parent).with_context(|| msg::fs::cannot_create(parent.display()))?;
     }
     if item.file.symlink {
         return std::os::unix::fs::symlink(OsStr::from_bytes(&item.bytes), &path)
-            .with_context(|| format!("cannot create the symbolic link {}", path.display()));
+            .with_context(|| msg::cp::cannot_create_symlink(path.display()));
     }
     let write = |bytes: &[u8]| -> Result<()> {
-        fs::write(&path, bytes).with_context(|| format!("cannot write {}", path.display()))?;
+        fs::write(&path, bytes).with_context(|| msg::fs::cannot_write(path.display()))?;
         if item.mode == MODE_EXEC {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
-                .with_context(|| format!("cannot make {} executable", path.display()))?;
+                .with_context(|| msg::init::cannot_make_executable(path.display()))?;
         }
         Ok(())
     };
@@ -808,7 +779,7 @@ fn replay(ctx: &Ctx, item: &Item) -> Result<()> {
         ctx.gitai.checkpoint_ai(worktree, &files, agent, model, session)?;
     }
     if fs::read(&path).ok().as_deref() != Some(item.bytes.as_slice()) {
-        bail!("{} is not equal to the source after the last stage", item.file.dest);
+        bail!(msg::cp::not_equal(&item.file.dest));
     }
     Ok(())
 }

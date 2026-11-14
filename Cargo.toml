@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/prov-core", "crates/prov-git", "crates/prov-adapters", "crates/prov-gitai", "crates/prov"]
+members = ["crates/prov-messages", "crates/prov-core", "crates/prov-git", "crates/prov-adapters", "crates/prov-gitai", "crates/prov"]
 
 [workspace.package]
 version = "0.1.0"
@@ -39,6 +39,7 @@ libc = "0.2"
 clap = { version = "4", features = ["derive"] }
 clap_complete = { version = "4", features = ["unstable-dynamic"] }
 tempfile = "3"
+prov-messages = { path = "crates/prov-messages" }
 prov-core = { path = "crates/prov-core" }
 prov-git = { path = "crates/prov-git" }
 prov-adapters = { path = "crates/prov-adapters" }

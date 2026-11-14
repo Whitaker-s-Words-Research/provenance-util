@@ -7,6 +7,7 @@ use prov_core::pattern::is_agent_branch;
 use prov_core::Store;
 use prov_git::Repo;
 use prov_gitai::GitAi;
+use prov_messages as msg;
 
 pub struct Ctx {
     pub repo: Repo,
@@ -23,8 +24,8 @@ impl Ctx {
     }
 
     pub fn here() -> Result<Ctx> {
-        let dir = std::env::current_dir().context("no current directory")?;
-        Ctx::discover(&dir)?.context("not in a git worktree")
+        let dir = std::env::current_dir().context(msg::fs::NO_CURRENT_DIR)?;
+        Ctx::discover(&dir)?.context(msg::context::NOT_IN_WORKTREE)
     }
 
     /// True if the checked-out branch matches `agent/**`.

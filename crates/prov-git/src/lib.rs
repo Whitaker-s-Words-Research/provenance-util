@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use prov_core::config::CONFIG_FILE;
 use prov_core::trailer::{self, Trailer};
 use prov_core::Config;
@@ -99,11 +100,11 @@ impl Repo {
             .args(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"])
             .stderr(Stdio::null())
             .output()
-            .context("cannot run git")?;
+            .context(msg::run::CANNOT_RUN_GIT)?;
         if !out.status.success() {
             return Ok(None);
         }
-        let text = String::from_utf8(out.stdout).context("git printed a path that is not UTF-8")?;
+        let text = String::from_utf8(out.stdout).context(msg::git::PATH_NOT_UTF8)?;
         let mut lines = text.lines();
         let (Some(toplevel), Some(git_dir), Some(common_dir)) = (lines.next(), lines.next(), lines.next()) else {
             return Ok(None);
@@ -143,11 +144,11 @@ impl Repo {
         S: AsRef<OsStr>,
     {
         let mut cmd = self.command(args);
-        let out = cmd.output().context("cannot run git")?;
+        let out = cmd.output().context(msg::run::CANNOT_RUN_GIT)?;
         if !out.status.success() {
-            bail!("{:?} failed: {}", cmd.get_args().collect::<Vec<_>>(), String::from_utf8_lossy(&out.stderr).trim());
+            bail!(msg::git::failed(cmd.get_args().collect::<Vec<_>>(), String::from_utf8_lossy(&out.stderr).trim()));
         }
-        let mut text = String::from_utf8(out.stdout).context("git output is not UTF-8")?;
+        let mut text = String::from_utf8(out.stdout).context(msg::git::OUTPUT_NOT_UTF8)?;
         while text.ends_with('\n') {
             text.pop();
         }
@@ -162,9 +163,9 @@ impl Repo {
         S: AsRef<OsStr>,
     {
         let mut cmd = self.command(args);
-        let out = cmd.output().context("cannot run git")?;
+        let out = cmd.output().context(msg::run::CANNOT_RUN_GIT)?;
         if !out.status.success() {
-            bail!("{:?} failed: {}", cmd.get_args().collect::<Vec<_>>(), String::from_utf8_lossy(&out.stderr).trim());
+            bail!(msg::git::failed(cmd.get_args().collect::<Vec<_>>(), String::from_utf8_lossy(&out.stderr).trim()));
         }
         Ok(out.stdout)
     }
@@ -174,11 +175,11 @@ impl Repo {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        let out = self.command(args).stderr(Stdio::null()).output().context("cannot run git")?;
+        let out = self.command(args).stderr(Stdio::null()).output().context(msg::run::CANNOT_RUN_GIT)?;
         if !out.status.success() {
             return Ok(None);
         }
-        let mut text = String::from_utf8(out.stdout).context("git output is not UTF-8")?;
+        let mut text = String::from_utf8(out.stdout).context(msg::git::OUTPUT_NOT_UTF8)?;
         while text.ends_with('\n') {
             text.pop();
         }
@@ -190,7 +191,7 @@ impl Repo {
         I: IntoIterator<Item = S>,
         S: AsRef<OsStr>,
     {
-        Ok(self.command(args).stdout(Stdio::null()).stderr(Stdio::null()).status().context("cannot run git")?.success())
+        Ok(self.command(args).stdout(Stdio::null()).stderr(Stdio::null()).status().context(msg::run::CANNOT_RUN_GIT)?.success())
     }
 
     /// The full SHA of a commit, or `None` if the revision does not exist.
@@ -208,7 +209,7 @@ impl Repo {
         match std::fs::read_to_string(self.git_path("MERGE_HEAD")?) {
             Ok(text) => Ok(text.lines().map(str::trim).filter(|l| !l.is_empty()).map(String::from).collect()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
-            Err(e) => Err(e).context("cannot read MERGE_HEAD"),
+            Err(e) => Err(e).context(msg::git::CANNOT_READ_MERGE_HEAD),
         }
     }
 
@@ -219,7 +220,7 @@ impl Repo {
     /// The config at a commit. `None` if the commit has no config file.
     pub fn config_at(&self, rev: &str) -> Result<Option<Config>> {
         match self.show_file(rev, CONFIG_FILE)? {
-            Some(text) => Ok(Some(Config::parse(&text).with_context(|| format!("at {rev}"))?)),
+            Some(text) => Ok(Some(Config::parse(&text).with_context(|| msg::git::at_rev(rev))?)),
             None => Ok(None),
         }
     }
@@ -229,7 +230,7 @@ impl Repo {
         match std::fs::read_to_string(self.toplevel.join(CONFIG_FILE)) {
             Ok(text) => Config::parse(&text),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Config::default()),
-            Err(e) => Err(e).with_context(|| format!("cannot read {CONFIG_FILE}")),
+            Err(e) => Err(e).with_context(|| msg::fs::cannot_read(CONFIG_FILE)),
         }
     }
 
@@ -251,7 +252,7 @@ impl Repo {
             }
             let fields: Vec<&str> = record.splitn(5, '\x1f').collect();
             if fields.len() != 5 {
-                bail!("unexpected output of git log");
+                bail!(msg::git::UNEXPECTED_LOG);
             }
             out.push(CommitInfo {
                 sha: fields[0].to_string(),
@@ -265,7 +266,7 @@ impl Repo {
     }
 
     pub fn commit(&self, rev: &str) -> Result<CommitInfo> {
-        self.commits(["--no-walk", rev])?.into_iter().next().with_context(|| format!("no commit {rev}"))
+        self.commits(["--no-walk", rev])?.into_iter().next().with_context(|| msg::git::no_commit(rev))
     }
 
     pub fn is_ancestor(&self, ancestor: &str, descendant: &str) -> Result<bool> {
@@ -365,10 +366,10 @@ impl Repo {
         let rel = resolved
             .strip_prefix(&top)
             .or_else(|_| abs.strip_prefix(&self.toplevel))
-            .with_context(|| format!("{} is not in the worktree {}", path.display(), self.toplevel.display()))?;
-        let text = rel.to_str().with_context(|| format!("{} is not UTF-8", path.display()))?;
+            .with_context(|| msg::git::not_in_worktree(path.display(), self.toplevel.display()))?;
+        let text = rel.to_str().with_context(|| msg::git::not_utf8(path.display()))?;
         if text.is_empty() {
-            bail!("{} is the root of the worktree, not a file", path.display());
+            bail!(msg::git::worktree_root(path.display()));
         }
         Ok(text.to_string())
     }

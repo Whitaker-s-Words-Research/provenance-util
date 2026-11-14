@@ -6,18 +6,19 @@
 use anyhow::{bail, Context, Result};
 use prov_adapters::EventKind;
 use prov_core::{now, SessionRecord, State};
+use prov_messages as msg;
 
 use crate::context::Ctx;
 use crate::{archive, sweep};
 
 pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
     let Some(adapter) = prov_adapters::by_adapter_name(adapter_name) else {
-        bail!("unknown adapter `{adapter_name}`");
+        bail!(msg::agent_hook::unknown_adapter(adapter_name));
     };
     let event = adapter.parse_event(event, payload)?;
     let dir = match &event.cwd {
         Some(dir) => dir.clone(),
-        None => std::env::current_dir().context("no current directory")?,
+        None => std::env::current_dir().context(msg::fs::NO_CURRENT_DIR)?,
     };
     // A session outside a git repository is not a session for prov.
     let Some(ctx) = Ctx::discover(&dir)? else { return Ok(()) };
@@ -31,12 +32,8 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
     if !ctx.on_agent_branch() {
         // No record, no transcript archive and no sweep outside an agent worktree.
         if event.kind == EventKind::Start {
-            out.push(format!(
-                "prov: this session is not in an agent worktree (branch: {}). prov records no session here, \
-                 and it refuses a commit by an agent on this branch. Agent work reaches this branch only \
-                 through a merge of an agent branch. Stop, and ask the human to start the session with \
-                 `prov start {}` or in a worktree on a branch that matches `agent/**`.",
-                ctx.repo.branch.as_deref().unwrap_or("detached HEAD"),
+            out.push(msg::agent_hook::not_agent_worktree(
+                ctx.repo.branch.as_deref().unwrap_or(msg::agent_hook::DETACHED_HEAD),
                 adapter.agent_name(),
             ));
         }
@@ -47,7 +44,7 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
 
     if event.kind == EventKind::Start {
         if let Err(e) = config.check_version(prov_core::VERSION) {
-            out.push(format!("prov: warning: {e}."));
+            out.push(msg::agent_hook::version_warning(e));
         }
     }
 
@@ -95,7 +92,7 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
                     Ok(())
                 });
                 if let Err(e) = swept {
-                    out.push(format!("prov: warning: the sweep failed: {e:#}"));
+                    out.push(msg::agent_hook::sweep_failed(format!("{e:#}")));
                 }
             }
             if matches!(session.state, State::Open | State::Failed) {
@@ -105,7 +102,7 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
                 // The agent gives this hook little time: a detached process does the archive step.
                 match archive::spawn_detached(&ctx, &session.id, session.generation) {
                     Ok(pid) => session.archive_pid = Some(pid),
-                    Err(e) => session.failed(format!("cannot start the archive step: {e:#}")),
+                    Err(e) => session.failed(msg::agent_hook::cannot_start_archive(format!("{e:#}"))),
                 }
                 lock.put(&session)?;
             }
@@ -117,7 +114,7 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
         let open_here = lock.open_in(&ctx.repo.toplevel)?;
         // Every hook looks at the worktree first: a change of the occupant taints what is changed now.
         if let Err(e) = sweep::observe(&ctx, &lock, &open_here) {
-            out.push(format!("prov: warning: {e:#}"));
+            out.push(msg::agent_hook::warning(format!("{e:#}")));
         }
         (session, open_here)
     };
@@ -126,29 +123,19 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
         // prov cannot stop the second session. The worktree is contended.
         if event.kind == EventKind::Start {
             let others: Vec<&str> = open_here.iter().filter(|s| s.id != session.id).map(|s| s.id.as_str()).collect();
-            out.push(format!(
-                "prov: STOP. This agent worktree already has an open session ({}). An agent worktree holds one \
-                 open session at a time. While more than one is open, prov runs no sweep here and refuses every \
-                 commit. Change no files. Tell the human to end the other session or to run \
-                 `prov session close <id>`, or to start this session in its own worktree with `prov start {}`.",
-                others.join(", "),
-                adapter.agent_name(),
-            ));
+            out.push(msg::agent_hook::contended(others.join(", "), adapter.agent_name()));
         }
     }
 
     if event.kind == EventKind::Start && !ctx.gitai.service_available(&ctx.repo.toplevel) {
         // Without the service, a checkpoint exits 0 and records nothing.
-        out.push(
-            "prov: warning: the git-ai service is not available. prov started it. While it is not available, \
-             prov refuses commits in this worktree. Check with `git-ai bg status`.",
-        );
+        out.push(msg::agent_hook::GITAI_UNAVAILABLE);
         ctx.gitai.start_service(&ctx.repo.toplevel);
     }
 
     if adapter.sweeps_at(event.kind) && open_here.len() == 1 {
         if let Err(e) = sweep::sweep(&ctx, &session) {
-            out.push(format!("prov: warning: the sweep failed: {e:#}"));
+            out.push(msg::agent_hook::sweep_failed(format!("{e:#}")));
         }
     }
 

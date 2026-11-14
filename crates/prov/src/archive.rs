@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use flate2::{Compression, GzBuilder};
 use prov_adapters::ArchiveEntry;
 use prov_core::state::pid_alive;
@@ -19,7 +20,7 @@ use crate::context::Ctx;
 /// Starts `prov archive-session <id>` in its own process session, so that it
 /// continues when the agent and its hook process exit.
 pub fn spawn_detached(ctx: &Ctx, session_id: &str, generation: u64) -> Result<u32> {
-    let exe = std::env::current_exe().context("cannot find the prov binary")?;
+    let exe = std::env::current_exe().context(msg::archive::NO_BINARY)?;
     let mut cmd = Command::new(exe);
     cmd.args(["archive-session", session_id, "--generation", &generation.to_string()])
         .current_dir(&ctx.repo.toplevel)
@@ -33,7 +34,7 @@ pub fn spawn_detached(ctx: &Ctx, session_id: &str, generation: u64) -> Result<u3
             Ok(())
         });
     }
-    let child = cmd.spawn().context("cannot start the archive process")?;
+    let child = cmd.spawn().context(msg::archive::CANNOT_SPAWN)?;
     Ok(child.id())
 }
 
@@ -54,9 +55,9 @@ pub fn run(session_id: &str, generation: Option<u64>) -> Result<()> {
 pub fn run_in(ctx: &Ctx, session_id: &str, generation: Option<u64>, announce: bool) -> Result<()> {
     let session = {
         let lock = ctx.store.lock()?;
-        let Some(mut session) = lock.get(session_id)? else { bail!("no record of session {session_id}") };
+        let Some(mut session) = lock.get(session_id)? else { bail!(msg::archive::no_record(session_id)) };
         if session.state != State::Closing {
-            bail!("session {session_id} is {}, not closing", session.state.as_str());
+            bail!(msg::archive::not_closing(session_id, session.state.as_str()));
         }
         if generation.is_some_and(|g| g != session.generation) {
             // The session moved on. Its newer archive process does the work.
@@ -74,10 +75,7 @@ pub fn run_in(ctx: &Ctx, session_id: &str, generation: Option<u64>, announce: bo
     // can grow. If prov does not know the process, it cannot wait.
     if let Some(pid) = session.agent_pid.filter(|pid| pid_alive(*pid)) {
         if announce {
-            crate::context::say(format!(
-                "session {session_id}: waiting for the agent process {pid} to exit. The transcript is archived after that. \
-                 End the agent, or stop this command with Ctrl-C; the session then stays closing."
-            ));
+            crate::context::say(msg::archive::waiting(session_id, pid));
         }
         while pid_alive(pid) {
             std::thread::sleep(std::time::Duration::from_millis(200));
@@ -91,7 +89,7 @@ pub fn run_in(ctx: &Ctx, session_id: &str, generation: Option<u64>, announce: bo
     // The work happens without the lock: a transcript can be large.
     let result = (|| -> Result<(PathBuf, String)> {
         let adapter = prov_adapters::by_agent_name(&session.agent)
-            .with_context(|| format!("no adapter for the agent `{}`", session.agent))?;
+            .with_context(|| msg::archive::no_adapter(&session.agent))?;
         let entries = adapter.archive_entries(&session.id, session.transcript_path.as_deref())?;
         let tar = build_tar(entries)?;
         let hash = hex(&Sha256::digest(&tar));
@@ -125,7 +123,7 @@ pub fn build_tar(mut entries: Vec<ArchiveEntry>) -> Result<Vec<u8>> {
     for entry in &entries {
         // Read the whole file first: the size in the header must match, and a
         // transcript can still grow.
-        let data = fs::read(&entry.source).with_context(|| format!("cannot read {}", entry.source.display()))?;
+        let data = fs::read(&entry.source).with_context(|| msg::fs::cannot_read(entry.source.display()))?;
         let mut header = tar::Header::new_gnu();
         header.set_entry_type(tar::EntryType::Regular);
         header.set_size(data.len() as u64);
@@ -135,23 +133,23 @@ pub fn build_tar(mut entries: Vec<ArchiveEntry>) -> Result<Vec<u8>> {
         header.set_gid(0);
         builder
             .append_data(&mut header, &entry.name, data.as_slice())
-            .with_context(|| format!("cannot add {} to the archive", entry.name))?;
+            .with_context(|| msg::archive::cannot_add(&entry.name))?;
     }
-    builder.into_inner().context("cannot finish the archive")
+    builder.into_inner().context(msg::archive::CANNOT_FINISH)
 }
 
 /// Writes the gzip file. An archive file is never overwritten. Its name
 /// holds the hash of its content: a file that exists must be that archive,
 /// and the step fails if it is not.
 fn write_gzip(dir: &Path, file: &Path, tar: &[u8], hash: &str) -> Result<()> {
-    fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+    fs::create_dir_all(dir).with_context(|| msg::fs::cannot_create(dir.display()))?;
     if file.exists() {
         return verify_gzip(file, hash);
     }
     // A temporary file first: a process that stops during the write leaves
     // no file with the final name.
     let tmp = file.with_extension(format!("tmp{}", std::process::id()));
-    let out = File::create(&tmp).with_context(|| format!("cannot write {}", tmp.display()))?;
+    let out = File::create(&tmp).with_context(|| msg::fs::cannot_write(tmp.display()))?;
     let mut gz = GzBuilder::new().mtime(0).write(out, Compression::default());
     gz.write_all(tar)?;
     gz.finish()?.sync_all()?;
@@ -162,7 +160,7 @@ fn write_gzip(dir: &Path, file: &Path, tar: &[u8], hash: &str) -> Result<()> {
     match linked {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => verify_gzip(file, hash),
-        Err(e) => Err(e).with_context(|| format!("cannot write {}", file.display())),
+        Err(e) => Err(e).with_context(|| msg::fs::cannot_write(file.display())),
     }
 }
 
@@ -174,10 +172,7 @@ fn verify_gzip(file: &Path, hash: &str) -> Result<()> {
     if read.is_ok() && hex(&Sha256::digest(&tar)) == hash {
         return Ok(());
     }
-    bail!(
-        "{} exists and is not the archive with the hash {hash}. prov never overwrites an archive file: move it away.",
-        file.display()
-    )
+    bail!(msg::archive::other_file(file.display(), hash))
 }
 
 fn hex(bytes: &[u8]) -> String {

@@ -3,6 +3,7 @@
 use std::fmt;
 
 use anyhow::{bail, Result};
+use prov_messages as msg;
 
 pub const PROV_SESSION: &str = "Prov-Session";
 pub const PROV_TRANSCRIPT_SHA256: &str = "Prov-Transcript-SHA256";
@@ -24,10 +25,10 @@ impl Trailer {
     pub fn new(key: &str, value: impl Into<String>) -> Result<Self> {
         let value = value.into();
         if value.contains(['\n', '\r']) {
-            bail!("the value of a {key} trailer must be one line");
+            bail!(msg::trailer::not_one_line(key));
         }
         if value.trim().is_empty() {
-            bail!("the value of a {key} trailer is empty");
+            bail!(msg::trailer::empty(key));
         }
         Ok(Self { key: key.to_string(), value: value.trim().to_string() })
     }

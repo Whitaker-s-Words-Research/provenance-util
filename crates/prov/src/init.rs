@@ -7,6 +7,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use prov_core::config::CONFIG_FILE;
 use prov_core::Config;
 use prov_git::{shim, Repo, HOOK_NAMES};
@@ -52,10 +53,7 @@ pub fn hooks_dir_problem(repo: &Repo) -> Result<Option<String>> {
     if let Some(value) = repo.config_value("core.hooksPath")? {
         let absolute = Path::new(&value).is_absolute() || value.starts_with("~/");
         if !absolute {
-            return Ok(Some(format!(
-                "core.hooksPath is the relative path `{value}`, which is inside each worktree. Use an absolute path \
-                 outside every worktree, or unset it: git config --unset core.hooksPath"
-            )));
+            return Ok(Some(msg::init::relative_hooks_path(&value)));
         }
     }
     let dir = repo.hooks_dir()?;
@@ -65,11 +63,7 @@ pub fn hooks_dir_problem(repo: &Repo) -> Result<Option<String>> {
     }
     for worktree in repo.worktrees()? {
         if dir.starts_with(&worktree.path) {
-            return Ok(Some(format!(
-                "the hooks directory {} is inside the worktree {}. Use a directory outside every worktree.",
-                dir.display(),
-                worktree.path.display()
-            )));
+            return Ok(Some(msg::init::hooks_dir_in_worktree(dir.display(), worktree.path.display())));
         }
     }
     Ok(None)
@@ -92,13 +86,13 @@ pub fn run(args: &Args) -> Result<bool> {
     let ctx = Ctx::here()?;
     let repo = &ctx.repo;
     if let Some(var) = prov_adapters::agent_env_marker() {
-        bail!("`prov init` is for a human. {var} is set: an agent started this command.");
+        bail!(msg::init::agent_env(var));
     }
     if ctx.on_agent_branch() {
-        bail!("`prov init` runs on a human branch, not on the agent branch `{}`", repo.branch.as_deref().unwrap_or(""));
+        bail!(msg::init::on_agent_branch(repo.branch.as_deref().unwrap_or("")));
     }
     if let Some(problem) = hooks_dir_problem(repo)? {
-        bail!("{problem}");
+        bail!(problem);
     }
 
     let mut report = Report { dry_run: args.dry_run, actions: Vec::new(), to_commit: Vec::new() };
@@ -107,9 +101,9 @@ pub fn run(args: &Args) -> Result<bool> {
             return Ok(());
         }
         if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).with_context(|| format!("cannot create {}", parent.display()))?;
+            fs::create_dir_all(parent).with_context(|| msg::fs::cannot_create(parent.display()))?;
         }
-        fs::write(path, text).with_context(|| format!("cannot write {}", path.display()))
+        fs::write(path, text).with_context(|| msg::fs::cannot_write(path.display()))
     };
 
     // 1. The config file.
@@ -117,7 +111,7 @@ pub fn run(args: &Args) -> Result<bool> {
     let existing = match fs::read_to_string(&config_path) {
         Ok(text) => Some(text),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-        Err(e) => return Err(e).with_context(|| format!("cannot read {}", config_path.display())),
+        Err(e) => return Err(e).with_context(|| msg::fs::cannot_read(config_path.display())),
     };
     let config = match &existing {
         None => {
@@ -137,11 +131,8 @@ pub fn run(args: &Args) -> Result<bool> {
             parsed => {
                 if !args.force {
                     match parsed {
-                        Ok(config) => bail!(
-                            "{CONFIG_FILE} exists with agents = {:?}. Edit the file, or replace it with --force.",
-                            config.agents
-                        ),
-                        Err(e) => bail!("{e:#}. Correct the file, or replace it with --force."),
+                        Ok(config) => bail!(msg::init::config_exists(CONFIG_FILE, &config.agents)),
+                        Err(e) => bail!(msg::init::config_invalid(format!("{e:#}"))),
                     }
                 }
                 let agents = if args.agents.is_empty() { Config::default().agents } else { args.agents.clone() };
@@ -151,7 +142,7 @@ pub fn run(args: &Args) -> Result<bool> {
                 report.actions.push(Action {
                     target: CONFIG_FILE.into(),
                     result: "written",
-                    detail: Some("replaced the existing file".into()),
+                    detail: Some(msg::init::REPLACED_FILE.into()),
                 });
                 report.to_commit.push(CONFIG_FILE.into());
                 config
@@ -159,20 +150,20 @@ pub fn run(args: &Args) -> Result<bool> {
         },
     };
     if let Err(e) = config.check_version(prov_core::VERSION) {
-        crate::context::say(format!("warning: {e}. The merge gate and `prov check` will refuse."));
+        crate::context::say(msg::init::version_warning(e));
     }
 
     // 2. The settings of each agent: the hooks, the identity, no signature.
     for agent in &config.agents {
         let adapter = prov_adapters::by_agent_name(agent)
-            .with_context(|| format!("no adapter for the agent `{agent}` in {CONFIG_FILE}"))?;
-        let identity = prov_adapters::identity(&config, agent).with_context(|| format!("no identity for `{agent}`"))?;
+            .with_context(|| msg::init::no_adapter(agent, CONFIG_FILE))?;
+        let identity = prov_adapters::identity(&config, agent).with_context(|| msg::init::no_identity(agent))?;
         let file = adapter.settings_file();
         let path = repo.toplevel.join(file);
         let existing = match fs::read_to_string(&path) {
             Ok(text) => Some(text),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+            Err(e) => return Err(e).with_context(|| msg::fs::cannot_read(path.display())),
         };
         let merged = adapter.merge_settings(existing.as_deref(), &identity)?;
         if existing.as_deref() == Some(merged.as_str()) {
@@ -186,13 +177,13 @@ pub fn run(args: &Args) -> Result<bool> {
             .filter(|p| existing.is_some() && p.starts_with("`env.") && !p.contains("is not set"))
             .collect();
         if !conflicts.is_empty() && !args.force {
-            bail!("{file} sets other values: {}. Replace them with --force.", conflicts.join("; "));
+            bail!(msg::init::settings_conflict(file, conflicts.join("; ")));
         }
         write(&path, &merged)?;
         report.actions.push(Action {
             target: file.into(),
             result: "written",
-            detail: existing.is_some().then(|| "merged into the existing file; all other keys stay".to_string()),
+            detail: existing.is_some().then(|| msg::init::MERGED_SETTINGS.to_string()),
         });
         report.to_commit.push(file.into());
     }
@@ -212,37 +203,33 @@ pub fn run(args: &Args) -> Result<bool> {
                 let local = hooks.join(format!("{name}.local"));
                 if local.exists() {
                     if !args.force {
-                        bail!(
-                            "{} is not the shim of prov, and {} exists too. Remove one, or replace the hook with --force.",
-                            path.display(),
-                            local.display()
-                        );
+                        bail!(msg::init::hook_and_local_exist(path.display(), local.display()));
                     }
                     report.actions.push(Action {
                         target: target.clone(),
                         result: "written",
-                        detail: Some(format!("replaced the existing hook; {name}.local stays")),
+                        detail: Some(msg::init::replaced_hook(name)),
                     });
                 } else {
                     if !args.dry_run {
-                        fs::rename(&path, &local).with_context(|| format!("cannot move {}", path.display()))?;
+                        fs::rename(&path, &local).with_context(|| msg::init::cannot_move(path.display()))?;
                     }
                     report.actions.push(Action {
                         target: target.clone(),
                         result: "moved",
-                        detail: Some(format!("the existing hook is now {name}.local; prov runs it after its own work")),
+                        detail: Some(msg::init::moved_hook(name)),
                     });
                 }
             }
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 report.actions.push(Action { target, result: "written", detail: None });
             }
-            Err(e) => return Err(e).with_context(|| format!("cannot read {}", path.display())),
+            Err(e) => return Err(e).with_context(|| msg::fs::cannot_read(path.display())),
         }
         write(&path, &wanted)?;
         if !args.dry_run {
             fs::set_permissions(&path, fs::Permissions::from_mode(0o755))
-                .with_context(|| format!("cannot make {} executable", path.display()))?;
+                .with_context(|| msg::init::cannot_make_executable(path.display()))?;
         }
     }
 
@@ -270,7 +257,7 @@ pub fn run(args: &Args) -> Result<bool> {
         text.push_str(&line);
         text.push('\n');
         write(&path, &text)?;
-        report.actions.push(Action { target: ".gitignore".into(), result: "written", detail: Some(format!("added {line}")) });
+        report.actions.push(Action { target: ".gitignore".into(), result: "written", detail: Some(msg::init::added_line(&line)) });
         report.to_commit.push(".gitignore".into());
     }
 
@@ -279,15 +266,15 @@ pub fn run(args: &Args) -> Result<bool> {
     } else {
         for a in &report.actions {
             match &a.detail {
-                Some(detail) => println!("{:8} {} ({detail})", a.result, a.target),
-                None => println!("{:8} {}", a.result, a.target),
+                Some(detail) => println!("{}", msg::init::action_detail(a.result, &a.target, detail)),
+                None => println!("{}", msg::init::action(a.result, &a.target)),
             }
         }
         if args.dry_run {
-            println!("Dry run: nothing changed.");
+            println!("{}", msg::init::DRY_RUN);
         } else if !report.to_commit.is_empty() {
-            println!("Commit these files on this branch: {}", report.to_commit.join(" "));
-            println!("Then check the setup: prov doctor");
+            println!("{}", msg::init::commit_these(report.to_commit.join(" ")));
+            println!("{}", msg::init::THEN_DOCTOR);
         }
         // The startup file belongs to the user, not to this clone: a hint only.
         if let Some(hint) = crate::completions::missing_hint() {

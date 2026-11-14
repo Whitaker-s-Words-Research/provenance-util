@@ -3,6 +3,7 @@
 use std::collections::BTreeMap;
 
 use anyhow::{Context, Result};
+use prov_messages as msg;
 use serde::Deserialize;
 
 use crate::pattern::PathSet;
@@ -73,7 +74,7 @@ impl Default for Config {
 
 impl Config {
     pub fn parse(text: &str) -> Result<Self> {
-        let config: Config = toml::from_str(text).with_context(|| format!("{CONFIG_FILE} does not parse"))?;
+        let config: Config = toml::from_str(text).with_context(|| msg::fs::does_not_parse(CONFIG_FILE))?;
         config.validate()?;
         Ok(config)
     }
@@ -81,12 +82,12 @@ impl Config {
     fn validate(&self) -> Result<()> {
         if let Some(req) = &self.required_version {
             semver::VersionReq::parse(req)
-                .with_context(|| format!("{CONFIG_FILE}: invalid required_version `{req}`"))?;
+                .with_context(|| msg::config::invalid_required_version(CONFIG_FILE, req))?;
         }
         self.protected_set()?;
         for gap in &self.known_gaps {
             if gap.len() < 7 || !gap.bytes().all(|b| b.is_ascii_hexdigit()) {
-                anyhow::bail!("{CONFIG_FILE}: known_gaps: `{gap}` is not a commit ID of 7 or more hex characters");
+                anyhow::bail!(msg::config::invalid_known_gap(CONFIG_FILE, gap));
             }
         }
         Ok(())
@@ -97,17 +98,17 @@ impl Config {
     pub fn check_version(&self, version: &str) -> Result<()> {
         let Some(req) = &self.required_version else { return Ok(()) };
         let parsed_req = semver::VersionReq::parse(req)
-            .with_context(|| format!("{CONFIG_FILE}: invalid required_version `{req}`"))?;
-        let parsed = semver::Version::parse(version).with_context(|| format!("invalid version `{version}`"))?;
+            .with_context(|| msg::config::invalid_required_version(CONFIG_FILE, req))?;
+        let parsed = semver::Version::parse(version).with_context(|| msg::config::invalid_version(version))?;
         if parsed_req.matches(&parsed) {
             Ok(())
         } else {
-            anyhow::bail!("prov {version} does not satisfy required_version = \"{req}\"")
+            anyhow::bail!(msg::config::version_not_satisfied(version, req))
         }
     }
 
     pub fn protected_set(&self) -> Result<PathSet> {
-        PathSet::new(&self.protected).with_context(|| format!("{CONFIG_FILE}: protected"))
+        PathSet::new(&self.protected).with_context(|| msg::config::in_protected(CONFIG_FILE))
     }
 
     pub fn agent_section(&self, agent: &str) -> Option<&AgentSection> {

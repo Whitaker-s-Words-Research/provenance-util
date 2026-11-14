@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use serde::Deserialize;
 
 /// The compatibility baseline: the oldest git-ai that `prov` supports.
@@ -150,7 +151,7 @@ struct RawAgentId {
 /// range with a `human_id` is human. Every other added range is untracked;
 /// this includes the ranges of a commit with no note.
 pub fn parse_diff(json: &str) -> Result<CommitAuthorship> {
-    let raw: RawDiff = serde_json::from_str(json).context("unexpected output of git-ai diff --json")?;
+    let raw: RawDiff = serde_json::from_str(json).context(msg::gitai::UNEXPECTED_DIFF)?;
     let sessions: BTreeMap<String, AiSession> = raw
         .sessions
         .into_iter()
@@ -188,10 +189,10 @@ pub fn parse_blame(json: &str) -> Result<Vec<(u32, u32, AiSession)>> {
         #[serde(default)]
         prompts: BTreeMap<String, RawSession>,
     }
-    let raw: Raw = serde_json::from_str(json).context("unexpected output of git-ai blame --json")?;
+    let raw: Raw = serde_json::from_str(json).context(msg::gitai::UNEXPECTED_BLAME)?;
     let mut out = Vec::new();
     for (ranges, key) in &raw.lines {
-        let prompt = raw.prompts.get(key).with_context(|| format!("git-ai blame names the prompt {key} and does not define it"))?;
+        let prompt = raw.prompts.get(key).with_context(|| msg::gitai::undefined_prompt(key))?;
         let a = &prompt.agent_id;
         let session =
             AiSession { tool: a.tool.clone(), id: a.id.clone(), model: a.model.clone().unwrap_or_else(|| "unknown".into()) };
@@ -201,7 +202,7 @@ pub fn parse_blame(json: &str) -> Result<Vec<(u32, u32, AiSession)>> {
                 Some((a, b)) => (a.parse::<u32>(), b.parse::<u32>()),
                 None => (part.parse::<u32>(), part.parse::<u32>()),
             };
-            let (Ok(start), Ok(end)) = (start, end) else { bail!("git-ai blame has the line range `{part}`") };
+            let (Ok(start), Ok(end)) = (start, end) else { bail!(msg::gitai::blame_range(part)) };
             out.push((start, end, session.clone()));
         }
     }
@@ -278,11 +279,11 @@ impl GitAi {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .context("cannot run git-ai")?;
-        child.stdin.take().context("no stdin")?.write_all(payload.to_string().as_bytes())?;
+            .context(msg::run::CANNOT_RUN_GITAI)?;
+        child.stdin.take().context(msg::gitai::NO_STDIN)?.write_all(payload.to_string().as_bytes())?;
         let out = child.wait_with_output()?;
         if !out.status.success() {
-            bail!("git-ai checkpoint failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+            bail!(msg::gitai::checkpoint_failed(String::from_utf8_lossy(&out.stderr).trim()));
         }
         Ok(())
     }
@@ -302,11 +303,11 @@ impl GitAi {
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .context("cannot run git-ai")?;
-        child.stdin.take().context("no stdin")?.write_all(payload.to_string().as_bytes())?;
+            .context(msg::run::CANNOT_RUN_GITAI)?;
+        child.stdin.take().context(msg::gitai::NO_STDIN)?.write_all(payload.to_string().as_bytes())?;
         let out = child.wait_with_output()?;
         if !out.status.success() {
-            bail!("git-ai checkpoint failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+            bail!(msg::gitai::checkpoint_failed(String::from_utf8_lossy(&out.stderr).trim()));
         }
         Ok(())
     }
@@ -320,11 +321,11 @@ impl GitAi {
             .args(["blame", file, "--json"])
             .stdin(Stdio::null())
             .output()
-            .context("cannot run git-ai")?;
+            .context(msg::run::CANNOT_RUN_GITAI)?;
         if !out.status.success() {
-            bail!("git-ai blame {file} failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+            bail!(msg::gitai::blame_failed(file, String::from_utf8_lossy(&out.stderr).trim()));
         }
-        parse_blame(&String::from_utf8_lossy(&out.stdout)).with_context(|| format!("file {file}"))
+        parse_blame(&String::from_utf8_lossy(&out.stdout)).with_context(|| msg::gitai::in_file(file))
     }
 
     /// The checkpoint of `prov approve --human`: every change to `files`
@@ -336,38 +337,38 @@ impl GitAi {
             .args(files)
             .stdin(Stdio::null())
             .output()
-            .context("cannot run git-ai")?;
+            .context(msg::run::CANNOT_RUN_GITAI)?;
         if !out.status.success() {
-            bail!("git-ai checkpoint failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+            bail!(msg::gitai::checkpoint_failed(String::from_utf8_lossy(&out.stderr).trim()));
         }
         Ok(())
     }
 
     /// The version that `git-ai --version` prints, for example `1.7.6`.
     pub fn version(&self, dir: &Path) -> Result<String> {
-        let out = self.command(dir).arg("--version").stdin(Stdio::null()).output().context("cannot run git-ai")?;
+        let out = self.command(dir).arg("--version").stdin(Stdio::null()).output().context(msg::run::CANNOT_RUN_GITAI)?;
         if !out.status.success() {
-            bail!("git-ai --version failed");
+            bail!(msg::gitai::VERSION_FAILED);
         }
         let text = String::from_utf8_lossy(&out.stdout);
         text.split_whitespace()
             .find(|word| word.chars().next().is_some_and(|c| c.is_ascii_digit()))
             .map(String::from)
-            .context("git-ai --version printed no version")
+            .context(msg::gitai::NO_VERSION)
     }
 
     /// A list from `git-ai config <key>`, for example `allow_repositories`.
     pub fn config_list(&self, dir: &Path, key: &str) -> Result<Vec<String>> {
-        let out = self.command(dir).args(["config", key]).stdin(Stdio::null()).output().context("cannot run git-ai")?;
+        let out = self.command(dir).args(["config", key]).stdin(Stdio::null()).output().context(msg::run::CANNOT_RUN_GITAI)?;
         if !out.status.success() {
-            bail!("git-ai config {key} failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+            bail!(msg::gitai::config_failed(key, String::from_utf8_lossy(&out.stderr).trim()));
         }
         let text = String::from_utf8_lossy(&out.stdout);
         let text = text.trim();
         if text.is_empty() || text == "null" {
             return Ok(Vec::new());
         }
-        serde_json::from_str(text).with_context(|| format!("unexpected output of git-ai config {key}"))
+        serde_json::from_str(text).with_context(|| msg::gitai::unexpected_config(key))
     }
 
     /// `git-ai debug`: the diagnostics of git-ai itself. Returns its output
@@ -380,7 +381,7 @@ impl GitAi {
                 String::from_utf8_lossy(&out.stdout).trim(),
                 String::from_utf8_lossy(&out.stderr).trim()
             )),
-            Err(e) => Err(format!("cannot run git-ai: {e}")),
+            Err(e) => Err(msg::gitai::cannot_run(e)),
         }
     }
 
@@ -392,12 +393,9 @@ impl GitAi {
             .args(["await", "--timeout", &AWAIT_TIMEOUT_SECS.to_string()])
             .stdin(Stdio::null())
             .output()
-            .context("cannot run git-ai")?;
+            .context(msg::run::CANNOT_RUN_GITAI)?;
         if !out.status.success() {
-            bail!(
-                "git-ai await did not finish in {AWAIT_TIMEOUT_SECS} seconds: {}",
-                String::from_utf8_lossy(&out.stderr).trim()
-            );
+            bail!(msg::gitai::await_timed_out(AWAIT_TIMEOUT_SECS, String::from_utf8_lossy(&out.stderr).trim()));
         }
         Ok(())
     }
@@ -409,11 +407,11 @@ impl GitAi {
             .args(["diff", commit, "--json"])
             .stdin(Stdio::null())
             .output()
-            .context("cannot run git-ai")?;
+            .context(msg::run::CANNOT_RUN_GITAI)?;
         if !out.status.success() {
-            bail!("git-ai diff {commit} failed: {}", String::from_utf8_lossy(&out.stderr).trim());
+            bail!(msg::gitai::diff_failed(commit, String::from_utf8_lossy(&out.stderr).trim()));
         }
-        parse_diff(&String::from_utf8_lossy(&out.stdout)).with_context(|| format!("commit {commit}"))
+        parse_diff(&String::from_utf8_lossy(&out.stdout)).with_context(|| msg::gitai::in_commit(commit))
     }
 }
 

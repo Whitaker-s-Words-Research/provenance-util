@@ -37,7 +37,7 @@ fn session_candidates(ctx: &Ctx) -> Vec<CompletionCandidate> {
         .sessions()
         .unwrap_or_default()
         .into_iter()
-        .map(|s| CompletionCandidate::new(s.id).help(Some(format!("{} ({})", s.branch, s.state.as_str()).into())))
+        .map(|s| CompletionCandidate::new(s.id).help(Some(prov_messages::cli::session_candidate(&s.branch, s.state.as_str()).into())))
         .collect()
 }
 

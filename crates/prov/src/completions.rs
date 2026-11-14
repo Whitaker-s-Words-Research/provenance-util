@@ -10,6 +10,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use serde::Serialize;
 
 pub struct Args {
@@ -42,7 +43,7 @@ impl Setup {
     /// For `bash`, `zsh` or `fish`, or a path to one of them, as in `$SHELL`.
     fn new(shell: &str) -> Result<Setup> {
         let name = shell.rsplit('/').next().unwrap_or(shell);
-        let home = || std::env::var_os("HOME").map(PathBuf::from).context("HOME is not set");
+        let home = || std::env::var_os("HOME").map(PathBuf::from).context(msg::completions::HOME_NOT_SET);
         let env_dir = |var: &str| std::env::var_os(var).filter(|v| !v.is_empty()).map(PathBuf::from);
         Ok(match name {
             "bash" => Setup { shell: "bash", file: home()?.join(".bashrc"), line: "source <(COMPLETE=bash prov)" },
@@ -56,13 +57,13 @@ impl Setup {
                 file: env_dir("XDG_CONFIG_HOME").map_or_else(|| home().map(|h| h.join(".config")), Ok)?.join("fish/config.fish"),
                 line: "COMPLETE=fish prov | source",
             },
-            _ => bail!("no tab completion for the shell `{shell}`. Give --shell bash, zsh or fish."),
+            _ => bail!(msg::completions::unknown_shell(shell)),
         })
     }
 
     /// From `$SHELL`.
     fn from_env() -> Result<Setup> {
-        let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).context("SHELL is not set. Give --shell.")?;
+        let shell = std::env::var("SHELL").ok().filter(|s| !s.is_empty()).context(msg::completions::SHELL_NOT_SET)?;
         Setup::new(&shell)
     }
 
@@ -78,7 +79,7 @@ impl Setup {
 /// the line. `None` if it has it, or if the shell is unknown.
 pub fn missing_hint() -> Option<String> {
     let setup = Setup::from_env().ok()?;
-    (!setup.present()).then(|| "tab completion is not set up. Run: prov completions --install".to_string())
+    (!setup.present()).then(|| msg::completions::NOT_SET_UP.to_string())
 }
 
 pub fn run(args: &Args) -> Result<bool> {
@@ -108,18 +109,14 @@ pub fn run(args: &Args) -> Result<bool> {
     if !args.install {
         // The line alone on standard output, for a person who edits the file.
         println!("{}", setup.line);
-        crate::context::say(if present {
-            format!("{file} has it already.")
-        } else {
-            format!("add this line to {file}, or run: prov completions --install")
-        });
+        crate::context::say(if present { msg::completions::has_it(&file) } else { msg::completions::add_line(&file) });
     } else if present {
-        println!("already in {file}");
+        println!("{}", msg::completions::already_in(&file));
     } else if args.dry_run {
-        println!("Dry run: will add to {file}: {}", setup.line);
+        println!("{}", msg::completions::will_add(&file, setup.line));
     } else {
-        println!("added to {file}: {}", setup.line);
-        println!("Open a new shell, or run: source {file}");
+        println!("{}", msg::completions::added(&file, setup.line));
+        println!("{}", msg::completions::open_new_shell(&file));
     }
     Ok(true)
 }
@@ -127,16 +124,16 @@ pub fn run(args: &Args) -> Result<bool> {
 /// Adds the line at the end of the file, on a line of its own.
 fn append(setup: &Setup) -> Result<()> {
     if let Some(dir) = setup.file.parent() {
-        fs::create_dir_all(dir).with_context(|| format!("cannot create {}", dir.display()))?;
+        fs::create_dir_all(dir).with_context(|| msg::fs::cannot_create(dir.display()))?;
     }
     let ends_open = fs::read(&setup.file).is_ok_and(|text| !text.is_empty() && !text.ends_with(b"\n"));
     let mut file = fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&setup.file)
-        .with_context(|| format!("cannot open {}", setup.file.display()))?;
-    let text = format!("{}\n# Tab completion for prov\n{}\n", if ends_open { "\n" } else { "" }, setup.line);
-    file.write_all(text.as_bytes()).with_context(|| format!("cannot write {}", setup.file.display()))
+        .with_context(|| msg::fs::cannot_open(setup.file.display()))?;
+    let text = format!("{}\n{}\n{}\n", if ends_open { "\n" } else { "" }, msg::completions::STARTUP_COMMENT, setup.line);
+    file.write_all(text.as_bytes()).with_context(|| msg::fs::cannot_write(setup.file.display()))
 }
 
 #[cfg(test)]

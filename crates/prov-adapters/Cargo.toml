@@ -9,6 +9,7 @@ publish.workspace = true
 description = "Agent adapters (Claude Code) for prov"
 
 [dependencies]
+prov-messages.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true

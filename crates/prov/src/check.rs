@@ -8,6 +8,7 @@
 use std::collections::BTreeSet;
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use prov_core::pattern::is_agent_branch;
 use prov_core::trailer::{self, Choice};
 use prov_core::Config;
@@ -72,10 +73,10 @@ pub fn run(target: Option<&str>, into: Option<&str>, json: bool) -> Result<bool>
     let ctx = Ctx::here()?;
     let mut report = Report::default();
     match target {
-        Some(t) if t.contains("...") => bail!("give a range as <base>..<tip>"),
+        Some(t) if t.contains("...") => bail!(msg::check::RANGE_SYNTAX),
         Some(t) if t.contains("..") => {
             if into.is_some() {
-                bail!("--into has no meaning with a range");
+                bail!(msg::check::INTO_WITH_RANGE);
             }
             let (base, tip) = t.split_once("..").unwrap_or_default();
             check_range(&ctx, base, tip, &mut report)?;
@@ -107,17 +108,14 @@ fn merge_target(ctx: &Ctx, into: Option<&str>) -> Result<String> {
     let target = match (into, &ctx.repo.branch) {
         (Some(branch), _) => branch.to_string(),
         (None, Some(branch)) if !is_agent_branch(branch) => branch.clone(),
-        (None, Some(branch)) => bail!(
-            "the branch `{branch}` is an agent branch, and an agent branch is not a merge target. \
-             Name the human branch: prov check --into <branch>"
-        ),
-        (None, None) => bail!("HEAD is detached. Name the human branch: prov check --into <branch>"),
+        (None, Some(branch)) => bail!(msg::check::on_agent_branch(branch)),
+        (None, None) => bail!(msg::check::DETACHED),
     };
     if is_agent_branch(&target) {
-        bail!("`{target}` is an agent branch. --into takes a human branch: a branch that does not match `agent/**`");
+        bail!(msg::check::into_agent_branch(&target));
     }
     if ctx.repo.rev_parse(&target)?.is_none() {
-        bail!("no branch or commit `{target}`");
+        bail!(msg::check::no_branch(&target));
     }
     Ok(target)
 }
@@ -125,37 +123,37 @@ fn merge_target(ctx: &Ctx, into: Option<&str>) -> Result<String> {
 fn print(report: &Report, target: Option<&str>) {
     for b in &report.branches {
         println!("{}", b.branch);
-        println!("  commits: {}", b.commits.len());
+        println!("{}", msg::check::commits(b.commits.len()));
         for c in &b.commits {
-            println!("    {c}");
+            println!("{}", msg::check::commit_line(c));
         }
-        let sessions: Vec<String> = b.sessions.iter().map(|s| format!("{} ({})", s.session, s.state)).collect();
-        println!("  sessions: {}", if sessions.is_empty() { "none".into() } else { sessions.join(", ") });
-        println!("  doubtful lines: {}", b.doubtful_lines);
+        let sessions: Vec<String> = b.sessions.iter().map(|s| msg::check::session_state(&s.session, &s.state)).collect();
+        println!("{}", msg::check::sessions(if sessions.is_empty() { msg::check::NO_SESSIONS.into() } else { sessions.join(", ") }));
+        println!("{}", msg::check::doubtful_lines(b.doubtful_lines));
         if !b.protected_paths.is_empty() {
-            println!("  protected paths changed: {}", b.protected_paths.join(", "));
+            println!("{}", msg::check::protected_paths(b.protected_paths.join(", ")));
         }
     }
     if target.is_none() && report.branches.is_empty() && report.failures.is_empty() {
-        println!("No agent branch waits for integration into {}.", report.into.as_deref().unwrap_or("HEAD"));
+        println!("{}", msg::check::nothing_waits(report.into.as_deref().unwrap_or("HEAD")));
     }
     for f in &report.failures {
         match &f.commit {
-            Some(c) => println!("FAIL {} {}", &c[..c.len().min(10)], f.message),
-            None => println!("FAIL {}", f.message),
+            Some(c) => println!("{}", msg::check::fail_commit(&c[..c.len().min(10)], &f.message)),
+            None => println!("{}", msg::check::fail(&f.message)),
         }
     }
     if let Some(n) = report.commits_checked {
-        println!("{n} commit(s) checked, {} failure(s).", report.failures.len());
+        println!("{}", msg::check::summary(n, report.failures.len()));
     } else if target.is_some() && report.ok {
-        println!("OK: the merge gate has nothing to refuse for a merge into {}.", report.into.as_deref().unwrap_or("HEAD"));
+        println!("{}", msg::check::ok(report.into.as_deref().unwrap_or("HEAD")));
     }
 }
 
 fn session_state(ctx: &Ctx, session: &trailer::SessionRef) -> String {
     match ctx.store.get(&session.id).ok().flatten().filter(|r| r.agent == session.agent) {
         Some(r) => r.state.as_str().to_string(),
-        None => "no record".to_string(),
+        None => msg::check::NO_RECORD.to_string(),
     }
 }
 
@@ -171,7 +169,7 @@ fn list_branches(ctx: &Ctx, human: &str, report: &mut Report) -> Result<()> {
     // As in the gate: a failed await is not fatal. A commit with no note
     // gives items that need an approval.
     if let Err(e) = ctx.gitai.await_notes(&repo.toplevel) {
-        crate::context::say(format!("warning: {e:#}. prov checks the note of each commit instead."));
+        crate::context::say(msg::gate::await_failed(format!("{e:#}")));
     }
     let refs = repo.git(["for-each-ref", "--format=%(refname:short)", "refs/heads/"])?;
     for branch in refs.lines().filter(|b| is_agent_branch(b)) {
@@ -205,10 +203,10 @@ fn list_branches(ctx: &Ctx, human: &str, report: &mut Report) -> Result<()> {
 fn check_branch(ctx: &Ctx, branch: &str, human: &str, report: &mut Report) -> Result<()> {
     let repo = &ctx.repo;
     if repo.rev_parse(branch)?.is_none() {
-        bail!("no branch or commit `{branch}`");
+        bail!(msg::check::no_branch(branch));
     }
-    let Some(config) = repo.config_at(human).with_context(|| format!("the config of `{human}`"))? else {
-        report.fail(None, format!("the branch `{human}` has no .provenance.toml"));
+    let Some(config) = repo.config_at(human).with_context(|| msg::check::config_of(human))? else {
+        report.fail(None, msg::check::branch_no_config(human));
         return Ok(());
     };
     if let Err(e) = config.check_version(prov_core::VERSION) {
@@ -217,7 +215,7 @@ fn check_branch(ctx: &Ctx, branch: &str, human: &str, report: &mut Report) -> Re
     // As in the gate: a failed await is not fatal. A commit with no note
     // gives items that need an approval.
     if let Err(e) = ctx.gitai.await_notes(&repo.toplevel) {
-        crate::context::say(format!("warning: {e:#}. prov checks the note of each commit instead."));
+        crate::context::say(msg::gate::await_failed(format!("{e:#}")));
     }
     let mut analysis = gate::analyze(repo, &ctx.gitai, &config, human, branch)?;
     analysis.drop_unknown_sessions(|s| gate::has_record(ctx, s));
@@ -226,7 +224,7 @@ fn check_branch(ctx: &Ctx, branch: &str, human: &str, report: &mut Report) -> Re
         report.fail(None, p);
     }
     for item in &analysis.items {
-        report.fail(None, format!("needs approval at the merge: {}", item.describe()));
+        report.fail(None, msg::check::needs_approval(item.describe()));
     }
     report.items = analysis.items;
     Ok(())
@@ -243,13 +241,13 @@ fn check_range(ctx: &Ctx, base: &str, tip: &str, report: &mut Report) -> Result<
     let repo = &ctx.repo;
     for rev in [base, tip] {
         if repo.rev_parse(rev)?.is_none() {
-            bail!("no commit `{rev}`");
+            bail!(msg::check::no_commit(rev));
         }
     }
     let tip_config = match repo.config_at(tip) {
         Ok(Some(config)) => config,
         Ok(None) => {
-            report.fail(None, format!("{tip} has no .provenance.toml"));
+            report.fail(None, msg::check::rev_no_config(tip));
             return Ok(());
         }
         Err(e) => {
@@ -272,11 +270,7 @@ fn check_range(ctx: &Ctx, base: &str, tip: &str, report: &mut Report) -> Result<
                 continue;
             }
             if !gate::is_human_commit(commit, &emails) {
-                report.fail(
-                    Some(commit),
-                    "is not a human commit, on the first-parent line of a human branch (a fast-forward, rebase or \
-                     cherry-pick of agent commits?)",
-                );
+                report.fail(Some(commit), msg::check::NOT_HUMAN_COMMIT);
                 continue;
             }
             if commit.parents.len() >= 2 {
@@ -315,14 +309,14 @@ fn check_merge(
     }
     let Some(incoming) = integrated.first() else { return Ok(human) };
     if commit.parents.len() > 2 {
-        report.fail(Some(commit), "is an octopus merge that contains agent commits");
+        report.fail(Some(commit), msg::check::OCTOPUS);
         return Ok(human);
     }
     // The config for these checks is the file at the first parent.
     let config: Config = match repo.config_at(first) {
         Ok(Some(config)) => config,
         Ok(None) => {
-            report.fail(Some(commit), "brings in agent commits, but its first parent has no .provenance.toml");
+            report.fail(Some(commit), msg::check::PARENT_NO_CONFIG);
             return Ok(human);
         }
         Err(e) => {
@@ -336,23 +330,20 @@ fn check_merge(
     // trailer group. Without one, its lines need a Prov-Approved trailer.
     analysis.drop_unknown_sessions(|s| groups.iter().any(|(g, _)| g == s));
     if !trailer::has(&commit.trailers, trailer::PROV_VERSION) {
-        report.fail(
-            Some(commit),
-            "brings in agent commits and has no Prov-Version trailer: it did not pass the merge gate (a merge on a forge?)",
-        );
+        report.fail(Some(commit), msg::check::NO_VERSION_TRAILER);
     }
     for session in &analysis.sessions {
         match groups.iter().find(|(s, _)| s == session) {
-            None => report.fail(Some(commit), format!("has no trailer group for the session {session}")),
+            None => report.fail(Some(commit), msg::check::no_trailer_group(session)),
             Some((_, hash)) if !hash.as_deref().is_some_and(trailer::is_sha256) => {
-                report.fail(Some(commit), format!("has no valid Prov-Transcript-SHA256 for the session {session}"));
+                report.fail(Some(commit), msg::check::no_transcript_hash(session));
             }
             Some(_) => {}
         }
     }
     let approvals = trailer::approvals(&commit.trailers);
     for item in gate::unapproved(&analysis.items, &approvals) {
-        report.fail(Some(commit), format!("has no Prov-Approved trailer for {}", item.describe()));
+        report.fail(Some(commit), msg::check::no_approval(item.describe()));
     }
     Ok(human)
 }
@@ -389,11 +380,7 @@ fn check_ordinary(ctx: &Ctx, commit: &CommitInfo, report: &mut Report) -> Result
         if !reported.contains(&key) {
             report.fail(
                 Some(commit),
-                format!(
-                    "is a human commit, but its note gives lines of {} to the AI session {} (a squash or cherry-pick \
-                     of agent commits, or a session in a human worktree?)",
-                    key.0, key.1
-                ),
+                msg::check::ai_lines_in_human_commit(&key.0, &key.1),
             );
             reported.push(key);
         }

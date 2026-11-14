@@ -6,6 +6,7 @@ The current status and open work are in [PLAN.md](../PLAN.md). The specification
 
 | Path | Contents |
 |---|---|
+| `crates/prov-messages` | every text that prov shows to a person or an agent; see [User-facing text](#user-facing-text) |
 | `crates/prov-core` | config, live state, session state machine, lock, trailer format |
 | `crates/prov-git` | repository and worktree discovery, git commands, hook handling |
 | `crates/prov-adapters` | the adapter interface and the Claude Code adapter |
@@ -15,6 +16,17 @@ The current status and open work are in [PLAN.md](../PLAN.md). The specification
 | `vendor/agent-trace` | the pinned Agent Trace 0.1.0 schema |
 | `tla/` | the TLA+ models; see [`tla/README.md`](../tla/README.md) |
 | `ci/` | the container image and scripts for the local checks |
+
+## User-facing text
+
+All text that prov shows is in two places. Review a change of wording there.
+
+- `crates/prov-messages/src/`: output, warnings, errors, and the messages that hooks give an agent. One module for each area, named after the source module that uses it. A fixed text is a `const`, and a text with values is a function.
+- `crates/prov/tests/snapshots/help.txt`: the help texts of all commands. They come from the doc comments in `crates/prov/src/main.rs`. The test `help` fails when they change. To write the file again: `PROV_UPDATE_SNAPSHOTS=1 cargo test -p prov --test help`.
+
+The code adds no words to a text. Reason: a reviewer reads each sentence in one place.
+
+Not in `prov-messages`: the JSON output, trailer names, and the content of the files that `prov init` writes. Programs read them, and a change to them is a change of format.
 
 ## Running the checks
 

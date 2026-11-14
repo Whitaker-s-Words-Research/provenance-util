@@ -7,6 +7,7 @@
 use std::path::PathBuf;
 
 use anyhow::{bail, Context, Result};
+use prov_messages as msg;
 use prov_core::trailer::{self, SessionRef, Trailer};
 use prov_core::{Config, State};
 
@@ -21,7 +22,7 @@ pub fn run(name: &str, args: &[String]) -> Result<bool> {
         "prepare-commit-msg" => prepare_commit_msg(&ctx, args)?,
         "post-commit" => post(&ctx, false)?,
         "post-merge" => post(&ctx, true)?,
-        other => bail!("unknown git hook `{other}`"),
+        other => bail!(msg::git_hook::unknown_hook(other)),
     };
     Ok(ok && run_local(&ctx, name, args)?)
 }
@@ -37,9 +38,9 @@ fn run_local(ctx: &Ctx, name: &str, args: &[String]) -> Result<bool> {
         .args(args)
         .current_dir(&ctx.repo.toplevel)
         .status()
-        .with_context(|| format!("cannot run {}", local.display()))?;
+        .with_context(|| msg::git_hook::cannot_run(local.display()))?;
     if !status.success() {
-        say(format!("the hook {} failed", local.display()));
+        say(msg::git_hook::local_failed(local.display()));
     }
     Ok(status.success())
 }
@@ -64,10 +65,7 @@ fn add_own_approvals(ctx: &Ctx, message_file: &std::path::Path) -> Result<()> {
         }
         let blob = repo.git_opt(["rev-parse", "-q", "--verify", &format!(":{}", approval.path)])?;
         if blob.as_deref() != Some(approval.content_hash.as_str()) {
-            say(format!(
-                "warning: {} changed after `prov approve --{}`. The approval is cancelled; approve the file again.",
-                approval.path, approval.choice
-            ));
+            say(msg::git_hook::approval_cancelled(&approval.path, &approval.choice));
             ctx.store.lock()?.delete_approval(&approval)?;
             continue;
         }
@@ -84,14 +82,14 @@ fn config_for_hook(ctx: &Ctx) -> Config {
     let config = match ctx.repo.config_here() {
         Ok(config) => config,
         Err(e) => {
-            say(format!("warning: {e:#}. Using the config of HEAD."));
+            say(msg::git_hook::config_fallback(format!("{e:#}")));
             ctx.repo.config_at("HEAD").ok().flatten().unwrap_or_default()
         }
     };
     // A mismatch stops only the merge gate and prov check: an agent branch
     // that started before a version change still has the old value.
     if let Err(e) = config.check_version(prov_core::VERSION) {
-        say(format!("warning: {e}."));
+        say(msg::git_hook::version_warning(e));
     }
     config
 }
@@ -109,22 +107,16 @@ fn pre_commit(ctx: &Ctx) -> Result<bool> {
         let agent_email = email.as_ref().is_some_and(|e| emails.contains(e));
         if marker.is_some() || agent_email {
             let why = match marker {
-                Some(var) => format!("{var} is set"),
-                None => format!("the author email is {}", email.unwrap_or_default()),
+                Some(var) => msg::git_hook::agent_env(var),
+                None => msg::git_hook::agent_email(email.unwrap_or_default()),
             };
-            say(format!(
-                "refused: a commit by an agent ({why}) on the branch `{}`. An agent commits only on a branch \
-                 that matches `agent/**`. Agent work reaches this branch only through a merge of an agent branch.",
-                repo.branch.as_deref().unwrap_or("detached HEAD"),
-            ));
+            say(msg::git_hook::agent_commit_on_human_branch(why, repo.branch.as_deref().unwrap_or(msg::git_hook::DETACHED_HEAD)));
             return Ok(false);
         }
         if !ctx.gitai.service_available(&repo.toplevel) {
             // Without the service, the commit gets no note, and an amend
             // leaves the note on the old commit. Nothing reports it later.
-            say("refused: the git-ai service is not available, so this commit would get no git-ai note \
-                 (and an amend would leave the note on the old commit). Start it with `git-ai bg start`, \
-                 check it with `git-ai bg status`, then commit again.");
+            say(msg::git_hook::GITAI_UNAVAILABLE_HUMAN);
             return Ok(false);
         }
         // The copy guard: a file of `prov cp` is committed as it was copied.
@@ -134,18 +126,12 @@ fn pre_commit(ctx: &Ctx) -> Result<bool> {
     // An agent worktree.
     let open = ctx.store.open_in(&repo.toplevel)?;
     if open.len() > 1 {
-        say(format!(
-            "refused: this worktree is contended. {} sessions are open here: {}. End all but one, or run \
-             `prov session close <id>`.",
-            open.len(),
-            open.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join(", "),
-        ));
+        say(msg::git_hook::contended(open.len(), open.iter().map(|s| s.id.as_str()).collect::<Vec<_>>().join(", ")));
         return Ok(false);
     }
     if !ctx.gitai.service_available(&repo.toplevel) {
         // A checkpoint would exit 0 and record nothing.
-        say("refused: the git-ai service is not available, so this commit would lose its attribution. \
-             Start it with `git-ai bg start`, and commit where the service is reachable (not in a sandbox that blocks it).");
+        say(msg::git_hook::GITAI_UNAVAILABLE_AGENT);
         return Ok(false);
     }
     // Every hook looks at the worktree first: if the occupant is not the
@@ -155,11 +141,11 @@ fn pre_commit(ctx: &Ctx) -> Result<bool> {
     {
         let lock = ctx.store.lock()?;
         let open = lock.open_in(&repo.toplevel)?;
-        sweep::observe(ctx, &lock, &open).context("the taint checkpoint failed")?;
+        sweep::observe(ctx, &lock, &open).context(msg::git_hook::TAINT_FAILED)?;
     }
     if let [session] = open.as_slice() {
         let session = refresh_model(ctx, session)?;
-        sweep::sweep(ctx, &session).context("the sweep failed")?;
+        sweep::sweep(ctx, &session).context(msg::git_hook::SWEEP_FAILED)?;
     }
     // `git-ai checkpoint` returns when the service has received the
     // checkpoint, not when it has applied it. A commit right after can be
@@ -167,7 +153,7 @@ fn pre_commit(ctx: &Ctx) -> Result<bool> {
     // Seen in a container: the sweep's checkpoint was applied 50 ms after the
     // commit. Wait until the service has done its work.
     if let Err(e) = ctx.gitai.await_notes(&repo.toplevel) {
-        say(format!("warning: {e:#}. The checkpoints of this commit may not be applied yet."));
+        say(msg::git_hook::await_failed(format!("{e:#}")));
     }
     Ok(true)
 }
@@ -194,7 +180,7 @@ fn refresh_model(ctx: &Ctx, session: &prov_core::SessionRecord) -> Result<prov_c
 }
 
 fn prepare_commit_msg(ctx: &Ctx, args: &[String]) -> Result<bool> {
-    let message_file = PathBuf::from(args.first().context("prepare-commit-msg needs the message file")?);
+    let message_file = PathBuf::from(args.first().context(msg::git_hook::NO_MESSAGE_FILE)?);
     let repo = &ctx.repo;
 
     if !ctx.on_agent_branch() {
@@ -217,11 +203,7 @@ fn prepare_commit_msg(ctx: &Ctx, args: &[String]) -> Result<bool> {
             // The record comes from the worktree. The agent's own variable is a cross-check.
             let env_id = adapter.session_id_env().and_then(|var| std::env::var(var).ok()).filter(|v| !v.is_empty());
             if env_id.as_ref().is_some_and(|id| *id != session.id) {
-                say(format!(
-                    "warning: the open session of this worktree is {}, but the environment names the session {}.",
-                    session.id,
-                    env_id.unwrap_or_default()
-                ));
+                say(msg::git_hook::session_mismatch(&session.id, env_id.unwrap_or_default()));
             }
         }
         let existing = trailer::sessions(&repo.message_trailers(&message_file)?);
@@ -239,7 +221,7 @@ fn squash_allowed(ctx: &Ctx) -> Result<bool> {
     let text = match std::fs::read_to_string(repo.git_path("SQUASH_MSG")?) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(true),
-        Err(e) => return Err(e).context("cannot read SQUASH_MSG"),
+        Err(e) => return Err(e).context(msg::git_hook::CANNOT_READ_SQUASH_MSG),
     };
     let shas: Vec<&str> = text
         .lines()
@@ -258,14 +240,7 @@ fn squash_allowed(ctx: &Ctx) -> Result<bool> {
     if agent.is_empty() {
         return Ok(true);
     }
-    say(format!(
-        "refused: a squash of agent commits ({} of {} squashed commits, for example {} \"{}\"). \
-         A squash is not permitted: integrate with `git merge <agent branch>`.\nTo stop the squash: git reset --hard",
-        agent.len(),
-        commits.len(),
-        agent[0].short(),
-        agent[0].subject,
-    ));
+    say(msg::git_hook::squash_refused(agent.len(), commits.len(), agent[0].short(), &agent[0].subject));
     Ok(false)
 }
 
@@ -336,12 +311,7 @@ fn warn_fast_forward(ctx: &Ctx) -> Result<()> {
     let line = repo.commits(["--first-parent", &format!("{orig}..{head}")])?;
     let agent = line.iter().filter(|c| !gate::is_human_commit(c, &emails)).count();
     if agent > 0 {
-        say(format!(
-            "WARNING: this fast-forward put {agent} agent commit(s) on the branch `{}` with no merge commit, \
-             so the merge gate did not run. A fast-forward of agent commits is not permitted.\n\
-             Undo it: git reset --keep ORIG_HEAD\nThen integrate with: git merge --no-ff <agent branch>",
-            repo.branch.as_deref().unwrap_or("HEAD"),
-        ));
+        say(msg::git_hook::fast_forward(agent, repo.branch.as_deref().unwrap_or("HEAD")));
     }
     Ok(())
 }
