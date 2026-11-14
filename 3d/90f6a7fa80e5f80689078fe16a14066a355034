@@ -1,0 +1,30 @@
+SPEC.md
+  s_4ffffd06031ed5::t_f2abbe01650c35 465-466,919
+  s_4ffffd06031ed5::t_78a5682c194d08 436
+docs/workflow.md
+  s_4ffffd06031ed5::t_fbf4282e3f92de 132
+crates/prov/src/gate.rs
+  s_4ffffd06031ed5::t_f2abbe01650c35 383-388
+crates/prov-messages/src/gate.rs
+  s_4ffffd06031ed5::t_f2abbe01650c35 124-130
+CHANGELOG.md
+  s_4ffffd06031ed5::t_fbf4282e3f92de 86
+crates/prov/tests/gate.rs
+  s_4ffffd06031ed5::t_78a5682c194d08 537-552
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.6",
+  "base_commit_sha": "3d90f6a7fa80e5f80689078fe16a14066a355034",
+  "prompts": {},
+  "sessions": {
+    "s_4ffffd06031ed5": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "4be1110b-3f50-4183-a0ca-5d5b9a111d80",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "Walter Bolles <mail@wjbolles.com>"
+    }
+  }
+}
