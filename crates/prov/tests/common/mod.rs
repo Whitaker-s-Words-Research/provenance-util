@@ -442,7 +442,11 @@ impl Env {
         let payload = fill(template, session, cwd, &self.transcript_path(session));
         let pid = agent_pid.to_string();
         let envs = [("CLAUDE_PID", pid.as_str()), ("CLAUDECODE", "1"), ("CLAUDE_CODE_SESSION_ID", session)];
-        self.run(cwd, "prov", ["hook", "claude-code", event], &envs, Some(&payload))
+        // As an agent's hook does, it also runs when the worktree is gone:
+        // the agent's own directory was removed. prov reads `cwd` from the payload.
+        let script = "cd \"$1\" 2>/dev/null; exec prov hook claude-code \"$2\"";
+        let args = [OsStr::new("-c"), OsStr::new(script), OsStr::new("sh"), cwd.as_os_str(), OsStr::new(event)];
+        self.run(self.home(), "sh", args, &envs, Some(&payload))
     }
 
     /// Starts a session: the transcript and the `SessionStart` event.

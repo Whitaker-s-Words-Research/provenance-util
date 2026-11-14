@@ -95,6 +95,7 @@ Bug Fixes: clippy findings, a race in the git-ai service test, and `.gitignore` 
 - `prov cp` copies the content of a Git LFS file, not its pointer, from the source's local LFS store. Without git-lfs or the object, it refuses and copies nothing.
 - The archive step deletes the temporary files that a killed archive step of the same session left, and `prov discard` deletes them with the archives.
 - The deferred copy check looks for the note itself instead of running `git-ai await`, and checks each commit with a few processes. A copy of 2,000 files is checked in seconds, not after a minute.
+- `prov discard` removes the worktree under the lock, before it deletes the records, and an agent hook checks under the lock that its worktree exists. A resume that races a discard no longer leaves an Open record for a removed worktree.
 - `prov session close` is now `prov session archive`. Reason: "close" was easy to confuse with `prov finish`.
 - Every `--dry-run` and `--json` option has a help text.
 

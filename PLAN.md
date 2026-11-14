@@ -24,6 +24,7 @@ Tested on 2026-11-14 (see "Appendix: test evidence" in SPEC.md): `prov discard` 
 Each goes to the owner as a question with a recommendation.
 
 - `prov revisions`, a report of the revisions of each integration, is out of scope for now (owner, 2026-11-13).
+- Revisit if it causes UX issues (owner, 2026-11-14): `prov discard` removes the worktree while it holds the lock (R-DISC-1). An agent hook in the same repository waits for the lock while `git worktree remove` runs, which can take a while for a large worktree. The alternative is to remove the worktree after the lock and accept a stray Open record when a resume races the discard.
 - The release process. Left open (owner, 2026-11-13): there is one user, and the `Prov-Version: <version>+<build SHA>` trailer of each integration already names the exact source.
 
 ## How a design decision is made

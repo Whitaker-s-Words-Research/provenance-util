@@ -85,6 +85,11 @@ pub fn run(args: &Args) -> Result<bool> {
         if !args.json {
             print(&plan.report, args);
         }
+        if attempt == 1 {
+            if let Some(worktree) = &plan.report.worktree {
+                crate::procs::warn_if_busy(worktree, msg::discard::STOP_PROCESSES);
+            }
+        }
         if !delete_under_lock(&ctx, &plan)? {
             if attempt == ATTEMPTS {
                 bail!(msg::discard::refs_kept_changing(ATTEMPTS));
@@ -92,15 +97,7 @@ pub fn run(args: &Args) -> Result<bool> {
             say(msg::discard::REF_CHANGED);
             continue;
         }
-        // Step 3: the worktree.
-        if let Some(worktree) = &plan.report.worktree {
-            crate::procs::warn_if_busy(worktree, msg::discard::STOP_PROCESSES);
-            let mut git: Vec<&std::ffi::OsStr> = vec!["worktree".as_ref(), "remove".as_ref(), "--force".as_ref()];
-            git.push(worktree.as_os_str());
-            ctx.repo.git(git)?;
-            ctx.store.lock()?.delete_worktree(worktree)?;
-        }
-        // Step 4: the branch.
+        // Step 3: the branch.
         if plan.report.branch_exists {
             ctx.repo.git(["branch", "-D", &branch])?;
         }
@@ -351,6 +348,17 @@ fn delete_under_lock(ctx: &Ctx, plan: &Plan) -> Result<bool> {
         }
     }
     merge_check(ctx, &plan.report.branch, &plan.own)?;
+    // The worktree first, still under the lock: an agent event that waits
+    // for the lock then finds no worktree and makes no record. Removed after
+    // the records, a resume could make a new Open record for it.
+    if let Some(worktree) = &plan.report.worktree {
+        if worktree.exists() {
+            let mut git: Vec<&std::ffi::OsStr> = vec!["worktree".as_ref(), "remove".as_ref(), "--force".as_ref()];
+            git.push(worktree.as_os_str());
+            ctx.repo.git(git)?;
+        }
+        lock.delete_worktree(worktree)?;
+    }
     for file in &plan.report.archives {
         match std::fs::remove_file(file) {
             Ok(()) => {}

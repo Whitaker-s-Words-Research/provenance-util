@@ -242,9 +242,9 @@ fn discard_racing_a_resume() {
         });
         let record = env.record(&repo, &session);
         if discard.ok {
-            assert!(!branch_exists(&env, &repo, &name), "round {round}");
-            // Accepted limit (R-DISC-1): an event after step 2 makes a new
-            // Open record for the worktree that step 3 removes.
+            assert!(!branch_exists(&env, &repo, &name) && !wt.exists(), "round {round}");
+            // The worktree goes under the lock before the records: an event
+            // after the discard finds no worktree and makes no record.
             if record.as_ref().is_some_and(|r| r["state"] == "open") {
                 orphans += 1;
             }
@@ -257,4 +257,5 @@ fn discard_racing_a_resume() {
         assert!(event.ok, "round {round}: the hook failed: {}", event.stderr);
     }
     eprintln!("discard racing a resume: {refused} refused, {deleted} deleted, {orphans} new Open record(s) after the discard");
+    assert_eq!(orphans, 0, "an Open record for a removed worktree");
 }

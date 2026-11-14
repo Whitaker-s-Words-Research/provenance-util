@@ -51,6 +51,12 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
     let now = now();
     let (session, open_here) = {
         let lock = ctx.store.lock()?;
+        // `prov discard` removes a worktree under the lock. A hook that found
+        // the worktree before it got the lock must not record a session for
+        // it now (R-DISC-1).
+        if !ctx.repo.toplevel.is_dir() {
+            return Ok(());
+        }
         let mut session = match lock.get(&event.session_id)?.map(|s| s.at(now)) {
             Some(mut session) => {
                 if event.kind != EventKind::End {

@@ -95,6 +95,11 @@ impl CommitInfo {
 impl Repo {
     /// Finds the worktree that contains `dir`. `None` if `dir` is not in a worktree.
     pub fn discover(dir: &Path) -> Result<Option<Repo>> {
+        // A directory that is gone, for example a removed worktree in which
+        // an agent still runs, is in no repository.
+        if !dir.is_dir() {
+            return Ok(None);
+        }
         let out = Command::new("git")
             .current_dir(dir)
             .args(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"])
