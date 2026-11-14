@@ -559,6 +559,15 @@ fn start_path_is_the_parent_and_completion_offers_branches() {
             .stdout,
     );
     assert_eq!(PathBuf::from(custom["worktree"].as_str().unwrap()), parent.join("claude-fix-x"));
+    // A leading `~` is the home directory. The shell does not expand it in
+    // `--path=~/dir`, so prov does.
+    let tilde = json(
+        &env.prov(&repo, ["start", "claude", "--no-launch", "--branch", "agent/claude/tilde", "--path=~/wts", "--json"])
+            .success()
+            .stdout,
+    );
+    assert_eq!(PathBuf::from(tilde["worktree"].as_str().unwrap()), env.home().join("wts/claude-tilde"));
+    assert!(!repo.join("~").exists());
 
     // Tab completion: the candidates come from the repository.
     let complete = |words: &[&str]| {

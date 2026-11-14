@@ -101,7 +101,7 @@ prov start <agent> [options] [-- <agent arguments>]
 | `--name <slug>` | 4 random hex characters | The `<name>` part of the branch name. Letters, digits and `-` only. |
 | `--branch <name>` | `agent/<agent>/<YYYYMMDD>-<name>` | Full branch name. It must match `agent/**`. |
 | `--from <ref>` | the branch that is checked out | Start point of the new branch. |
-| `--path <dir>` | `../<repo>.worktrees/`, from the base directory | The directory that holds the worktree. `<repo>` is the name of the base directory. The worktree is the directory `<dir>/<branch>`, with the leading `agent/` removed and each `/` replaced by `-`: `agent/claude/20261112-71fe` gives `claude-20261112-71fe`. With `--resume`, this applies when `--path` is given or the session has no record. |
+| `--path <dir>` | `../<repo>.worktrees/`, from the base directory | The directory that holds the worktree. `<repo>` is the name of the base directory. The worktree is the directory `<dir>/<branch>`, with the leading `agent/` removed and each `/` replaced by `-`: `agent/claude/20261112-71fe` gives `claude-20261112-71fe`. A leading `~` is the home directory. Reason: the shell does not expand `~` in `--path=~/dir`. With `--resume`, this applies when `--path` is given or the session has no record. |
 | `--no-launch` | off | Create the worktree, print its path, and do not start the agent. Use this for agents in an IDE. |
 | `--resume <session>` | none | Open the worktree of that session and start the agent with its resume option. If the worktree was removed, `prov` creates it again on the session's branch. If the session has no record, also give `--branch`. |
 

@@ -167,10 +167,17 @@ pub fn run(args: &Args) -> Result<bool> {
 }
 
 /// The absolute path, with `.` and `..` removed by text, not by following
-/// links: `--path ../x` from `/r/project` gives `/r/x`.
+/// links: `--path ../x` from `/r/project` gives `/r/x`. A leading `~` is the
+/// home directory.
 fn absolute(path: &Path) -> Result<PathBuf> {
     use std::path::Component;
-    let joined = if path.is_absolute() { path.to_path_buf() } else { std::env::current_dir()?.join(path) };
+    // The shell does not expand `~` in `--path=~/dir`, or in a quoted value.
+    let home = || std::env::var_os("HOME").map(PathBuf::from).context(msg::completions::HOME_NOT_SET);
+    let joined = match path.strip_prefix("~") {
+        Ok(rest) => home()?.join(rest),
+        Err(_) if path.is_absolute() => path.to_path_buf(),
+        Err(_) => std::env::current_dir()?.join(path),
+    };
     let mut out = PathBuf::new();
     for c in joined.components() {
         match c {
