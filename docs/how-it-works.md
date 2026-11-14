@@ -89,7 +89,7 @@ All files are in `.git/provenance/` in the common git directory, so every worktr
 
 | File | Content | Deleted when |
 |---|---|---|
-| `sessions/<id>.json` | the session record: state, generation, worktree, branch, model, archive and hash, agent process ID, times | a merge names the session with its hash, or `prov session drop` |
-| `worktrees/<key>.json` | the owner of one agent worktree | `prov finish`, or `prov doctor` finds the worktree gone |
+| `sessions/<id>.json` | the session record: state, generation, worktree, branch, model, archive and hash, agent process ID, times | a merge names the session with its hash, `prov session drop`, or `prov discard` |
+| `worktrees/<key>.json` | the owner of one agent worktree | `prov finish` or `prov discard`, or `prov doctor` finds the worktree gone |
 | `copies/<id>.json` | a copy plan and its check results | the copy check agrees |
 | `approvals/<key>.json` | a `--human` or `--ai` approval with the file hash | the approval becomes a trailer |

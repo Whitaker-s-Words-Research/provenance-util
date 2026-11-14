@@ -11,6 +11,7 @@ Every command that changes something accepts `--dry-run`. Every command that sho
 | [`prov approve`](#prov-approve) | A person | Records a decision about the authorship of files. |
 | [`prov session`](#prov-session) | A person | Lists, shows, closes or drops sessions. |
 | [`prov finish`](#prov-finish) | A person | Removes an agent worktree and keeps the branch. |
+| [`prov discard`](#prov-discard) | A person | Deletes an agent branch that will not be merged, with its worktree, records and archives. |
 | [`prov cp`](#prov-cp) | A person | Copies files from another repository with an author for every line. |
 | [`prov completions`](#prov-completions) | A person | Turns on tab completion. |
 | [`prov trace export`](#prov-trace-export) | A person | Writes Agent Trace records. |
@@ -98,7 +99,7 @@ prov session drop <id>
 - `list` shows the start of each session ID, as much as tells the sessions apart. Every command that takes `<id>` accepts it.
 - `list` and `show` also show the title that Claude Code gave the session. They read it from the `ai-title` records in the transcript. Claude Code does not document these records, so a new version can drop them; the title is then missing. No rule depends on the title.
 - `close` moves an Open session to Closing and archives it, after the agent process exits. For a Failed session, it runs the archive step again.
-- `drop` deletes the record of a session. The transcript archive stays. Use it for a record that `prov doctor` says is left over after a merge.
+- `drop` deletes the record of a session. The transcript archive stays. Use it for a record that `prov doctor` says is left over after a merge. To throw away a branch and everything of its sessions, use [`prov discard`](#prov-discard).
 
 ## `prov finish`
 
@@ -107,6 +108,14 @@ prov finish <session or branch> [--override] [--force]
 ```
 
 Removes the worktree and keeps the branch and the session records. Refuses while a session there is Open or Closing; `--override` closes those sessions first. `--force` goes to `git worktree remove`. Prints the command that deletes the branch. See [Workflow](workflow.md#finishing).
+
+## `prov discard`
+
+```text
+prov discard <session or branch> [--yes]
+```
+
+Deletes the work of an agent branch that will not be merged: the worktree with its uncommitted changes, the branch, the session records and the transcript archives. Without `--yes` it only prints what it would delete. It keeps the agent's own transcripts, the git-ai notes and a remote branch of the same name. It refuses while a session of the branch is Open or Closing, while a merge of the branch is in progress, and when another ref names one of its sessions or copied a file from it. Refuses in an agent worktree and when an agent environment variable is set. See [Workflow](workflow.md#discarding).
 
 ## `prov cp`
 
