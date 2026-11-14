@@ -33,28 +33,28 @@ An agent must not commit inside a sandbox that blocks the service.
 
 ### Checkpoints do nothing: the repository is not allowed
 
-git-ai ignores every checkpoint in a repository that is not in its `allow_repositories` setting, and matches that setting against remote URLs only. Add a remote, and add its URL to `allow_repositories`. `prov doctor` reports this.
+git-ai ignores every checkpoint in a repository that it does not allow. When `allow_repositories` has entries, git-ai matches them against remote URLs only, so a repository with no remote is not allowed, not even by `*`. Add a remote whose URL matches, or add a pattern for the remote's URL to `allow_repositories`. `prov doctor` reports this.
 
 ### A commit is refused in a contended worktree
 
-Two sessions are Open in one worktree. End one of them, or close it:
+Two sessions are Open in one worktree. End one of them, or archive it:
 
 ```sh
 prov session list
-prov session close <id>
+prov session archive <id>
 ```
 
-Changes from the contended time become doubtful lines at the gate.
+Changes that `prov` cannot give to one session, because they were made while the worktree was contended, become doubtful lines at the gate. A change that a session's own git-ai hook recorded keeps that session.
 
 ### The merge fails: a session is not Archived
 
 Every session that made a commit must be Archived before its branch merges.
 
-- **Open or stale:** `prov session close <id>`. It waits for the agent process to exit.
-- **Failed:** `prov session show <id>` shows the error. `prov session close <id>` runs the archive step again.
+- **Open or stale:** `prov session archive <id>`. It waits for the agent process to exit.
+- **Failed:** `prov session show <id>` shows the error. `prov session archive <id>` runs the archive step again.
 - **No record:** the session's records are local to the clone that ran it. Merge from that clone.
 
-### `prov session close` warns that it does not know the process ID
+### `prov session archive` warns that it does not know the process ID
 
 It archives at once, and the archive can miss the agent's last work. If the agent is still running, let it finish first. Its next event returns the session to Open, and its next end archives the full transcript.
 
@@ -91,6 +91,6 @@ Then merge with `git merge` (which makes a merge commit, because of `merge.ff = 
 - **Background processes are not swept.** A process that writes after the session ends, such as a development server, has its changes taken by the next session in the worktree. Stop it before another session starts there and before `prov finish`.
 - **The process scan is partial.** `prov` lists the processes whose current directory is in the worktree. A process that writes there from another directory is not found.
 - **The merge message is not checked after the editor.** If you remove a trailer group there, `prov check` reports the commit, and the session records stay so you can merge again.
-- **git-ai attributes whole lines.** A one-character AI change makes the whole line AI. git-ai records nothing for binary files, lock files, vendored paths and the other paths on its ignore list; the gate makes each such file one item.
+- **git-ai attributes whole lines.** A one-character AI change makes the whole line AI. git-ai records nothing for binary files, changes of mode, lock files, vendored paths and the other paths on its ignore list; the gate makes each such file one item. It also makes each file that an agent deletes one item.
 - **Transcript archives are local files.** `prov` records their hashes in git but does not back them up or publish them.
 - **macOS is not tested yet.**

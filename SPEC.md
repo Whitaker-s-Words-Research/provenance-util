@@ -61,9 +61,9 @@ Not in any version:
 
 ## Rules for all commands
 
-- `prov` changes git state only through the `git` command. It writes inside `.git` only in `.git/provenance/` and the hook shims in the hooks directory.
+- `prov` changes git state only through the `git` command. It writes inside `.git` only in `.git/provenance/`, the hook shims in the hooks directory, and a commit message that git is preparing: the file that git gives to `prepare-commit-msg`, or `.git/MERGE_MSG` during a merge. It changes a message only through `git interpret-trailers`. Reason: the gate and `prov approve --merge` record their results as trailers of the merge message (owner decision, 2026-11-13).
 - `prov` never writes git-ai data. It sets authorship only through public git-ai checkpoints, and git-ai writes the note.
-- `prov` reads authorship only through the JSON output of git-ai: `git-ai diff <commit> --json`, `git-ai blame <file> --json` and `git-ai stats <commit> --json`. It has no parser for the note format. Before it reads the note of a new commit, it runs `git-ai await --timeout 60`.
+- `prov` reads authorship only through the JSON output of git-ai: `git-ai diff <commit> --json`, `git-ai blame <file> --json` and `git-ai stats <commit> --json`. It has no parser for the note format. Before it reads the note of a new commit, it runs `git-ai await --timeout 60`. Exception: the deferred copy check looks for the note with `git notes --ref=ai list <commit>` every 250 ms, for at most 60 seconds (owner decision, 2026-11-14). Reason: `git-ai await` returns only when the service has done all its work. After a copy of 2,000 files, the note came after 9 seconds, and the await took the full 60.
     - **Reason**: git-ai writes a note 1 to 6 seconds after the commit, after the commit hooks finish.
 - Every command that changes state accepts `--dry-run`, except `prov hook`. Every command that reads state accepts `--json`.
 - A fact is stored in one place only. git-ai notes hold line authorship. Commit trailers hold session records. Live state holds only work in progress.
@@ -77,7 +77,7 @@ Not in any version:
 - Hook shims and generated scripts are POSIX `sh`. `prov` does hashing, compression and process detaching itself. It does not call `sha256sum`, `gzip`, `setsid` or `nohup`.
 - An agent hook returns in less than 100 ms at the 95th percentile, when the worktree is on a local file system.
 - On a slow file system, for example a 9p or network mount, the limit cannot hold: git needs about 2 ms for each file that it examines, and `git status` alone then takes longer than 100 ms. There, a hook adds no more than 100 ms to three times the cost of the git commands that it must run (`git rev-parse` and, for a sweep, `git status`). `prov` sets no timeout of its own in a hook. If the agent stops a hook at its own time limit, the sweep does not happen, and the changes become doubtful lines.
-- The repository must be allowed by git-ai's `allow_repositories` setting. git-ai matches that setting against remote URLs only. A repository with no remote is not allowed. In a repository that is not allowed, git-ai ignores checkpoints and prints only a message.
+- git-ai must allow the repository. An empty `allow_repositories` (the default) allows every repository, also one with no remote. Once the list has an entry, git-ai matches it against remote URLs only: a repository with no remote is then not allowed, even by `*`, and a path entry needs a remote. A repository that matches `exclude_repositories` is not allowed either. In a repository that is not allowed, git-ai ignores checkpoints and prints only a message. A remote URL that matches is enough; the remote need not exist.
 - A session is integrated from the clone that ran it. Reason: live state and transcripts are local to a clone.
 - Minimum git version: 2.31. Reason: `GIT_CONFIG_COUNT`.
 - Compatibility baseline: git-ai 1.7.6. `git-ai await` is marked beta in that version, and `prov` depends on it.
@@ -90,7 +90,7 @@ Each agent session works in its own worktree, never in a human worktree. Reason:
 
 ### Starting a session
 
-`prov start <agent>` creates a worktree on a new agent branch and starts the agent in that worktree. This command is optional. A person can also run `git worktree add` and start the agent. The agent's SessionStart hook binds the session to the worktree in both cases.
+`prov start <agent>` creates a worktree on a new agent branch and starts the agent in that worktree. This command is optional. Only a human runs it: it refuses when an agent environment variable is set (owner decision, 2026-11-13). Reason: an agent must not open sessions and worktrees by itself. A person can also run `git worktree add` and start the agent. The agent's SessionStart hook binds the session to the worktree in both cases.
 
 ```text
 prov start <agent> [options] [-- <agent arguments>]
@@ -101,11 +101,11 @@ prov start <agent> [options] [-- <agent arguments>]
 | `--name <slug>` | 4 random hex characters | The `<name>` part of the branch name. Letters, digits and `-` only. |
 | `--branch <name>` | `agent/<agent>/<YYYYMMDD>-<name>` | Full branch name. It must match `agent/**`. |
 | `--from <ref>` | the branch that is checked out | Start point of the new branch. |
-| `--path <dir>` | `../<repo>.worktrees/`, from the base directory | The directory that holds the worktree. `<repo>` is the name of the base directory. The worktree is the directory `<dir>/<branch>`, with the leading `agent/` removed and each `/` replaced by `-`: `agent/claude/20261112-71fe` gives `claude-20261112-71fe`. A leading `~` is the home directory. Reason: the shell does not expand `~` in `--path=~/dir`. With `--resume`, this applies when `--path` is given or the session has no record. |
+| `--path <dir>` | `prov.worktreesDir` from the git config of the clone, or `../<repo>.worktrees/`, from the base directory | The directory that holds the worktree. `<repo>` is the name of the base directory. The worktree is the directory `<dir>/<branch>`, with the leading `agent/` removed and each `/` replaced by `-`: `agent/claude/20261112-71fe` gives `claude-20261112-71fe`. A leading `~` is the home directory. Reason: the shell does not expand `~` in `--path=~/dir`. With `--resume`, this applies when `--path` is given or the session has no record. |
 | `--no-launch` | off | Create the worktree, print its path, and do not start the agent. Use this for agents in an IDE. |
 | `--resume <session>` | none | Open the worktree of that session and start the agent with its resume option. If the worktree was removed, `prov` creates it again on the session's branch. If the session has no record, also give `--branch`. |
 
-`prov` names the branch, not the session. Reason: the agent assigns the session ID at SessionStart, after the branch exists. The branch and worktree names are fixed conventions, not config keys. The date is the local date. It makes `git branch --list 'agent/*'` sort by time. If the branch exists, `prov start` stops with an error.
+`prov` names the branch, not the session. Reason: the agent assigns the session ID at SessionStart, after the branch exists. The branch and worktree names are fixed conventions, not config keys. The directory that holds the worktrees can be set for one clone with `git config prov.worktreesDir <dir>`. A relative value resolves against the base directory. It is a git config key, not a key of `.provenance.toml`. Reason: the right place depends on the machine, for example a local disk when the repository is on a slow mount, and `.provenance.toml` is shared by every clone (owner decision, 2026-11-13). The date is the local date. It makes `git branch --list 'agent/*'` sort by time. If the branch exists, `prov start` stops with an error.
 
 ### Binding rules
 
@@ -115,7 +115,7 @@ prov start <agent> [options] [-- <agent arguments>]
     - `prov` records the second session as Open.
     - For Claude Code, the SessionStart hook prints an instruction to stop. Claude Code adds that text to the session context.
     - **[R-SWEEP-3]** `prov` runs no sweep in a contended worktree, and `pre-commit` refuses every commit there.
-    - The worktree stays contended until only one session occupies it. A session ends by itself, or the human runs `prov session close`.
+    - The worktree stays contended until only one session occupies it. A session ends by itself, or the human runs `prov session archive`.
     - Changes from that time are tainted (R-SWEEP-2), so they become doubtful lines. `prov` does not attribute them to one of the sessions.
 - A session finds its record by its worktree. The agent's own environment variable is a cross-check. Claude Code sets `CLAUDE_CODE_SESSION_ID`.
 
@@ -133,15 +133,15 @@ Agent work reaches a human branch only through an integration.
 
 | State | Entered when |
 |---|---|
-| Open | The first event records the session. **[R-SESS-1]** Any later agent event of a session that is Closing, Archived or Failed also returns it to Open, whether or not it is a resume. SessionEnd is the exception: it never reopens a session. Reason: an event shows that the agent still works, for example after `prov session close`; a session that stayed Closing would be archived without that work. |
-| Closing | SessionEnd occurs, or the human runs `prov session close`. A detached process starts the archive step. |
+| Open | The first event records the session. **[R-SESS-1]** Any later agent event of a session that is Closing, Archived or Failed also returns it to Open, whether or not it is a resume. SessionEnd is the exception: it never reopens a session. Reason: an event shows that the agent still works, for example after `prov session archive`; a session that stayed Closing would be archived without that work. |
+| Closing | SessionEnd occurs, or the human runs `prov session archive`. A detached process starts the archive step. |
 | Archived | The archive step stores the transcript. |
 | Failed | The archive step cannot finish. The record holds the error text. A session that is Closing for 5 minutes with no live archive process is also Failed. That case is calculated when the state is read, like stale; it is not stored, so no process writes it. |
 
 - An Open session is stale when no agent event arrives for 24 hours, or when the agent process does not exist. Stale is calculated when the state is read. It is not stored.
 - To find the agent process, `prov` uses `CLAUDE_PID` for Claude Code and the parent process for other agents.
 - Each record has a generation. It increases by 1 each time the session enters Open or Closing.
-- `prov session close <id>` moves an Open session to Closing. For a Failed session, it runs the archive step again. If the agent process still runs and `prov` knows its process ID, the session stays Closing until the process exits (R-SESS-3). `prov session close` then prints the process ID that it waits for. If `prov` does not know the process ID, `prov session close` and `prov finish` print a warning that names the accepted limit of R-SESS-3.
+- `prov session archive <id>` moves an Open session to Closing. It runs the archive step in the foreground, as `prov finish --override` does: the command waits and shows the result. Reason: a person who runs it wants to see whether the archive succeeded (owner decision, 2026-11-13). SessionEnd starts a detached process instead, because the agent gives the hook little time. For a Failed session, it runs the archive step again. If the agent process still runs and `prov` knows its process ID, the session stays Closing until the process exits (R-SESS-3). `prov session archive` then prints the process ID that it waits for. If `prov` does not know the process ID, `prov session archive` and `prov finish` print a warning that names the accepted limit of R-SESS-3.
 - `prov session drop <id>` deletes the record of a session. It keeps the transcript archive.
 - `prov doctor` reports stale and Failed sessions.
 - An integration deletes the records of the sessions on its branch. See "Sessions of an integration".
@@ -165,12 +165,12 @@ git-ai takes a model only from a checkpoint that records a change. When every ed
 
 **[R-SESS-2]** An archive process belongs to one generation of its session. It changes the state, to Archived or to Failed, only under the lock and only if the session is still Closing with that generation. Otherwise it stores its file and changes nothing in the record. The 5-minute rule in "Session states" needs no such condition: it is calculated when read and never written. Reason: without the generation, this fails: a session ends, is resumed, does more work and ends again, and the first archive process then sets Archived with a transcript that does not cover the new work.
 
-0. **[R-SESS-3]** Wait until the agent process has exited, if `prov` knows its process ID. While the process runs, the session stays Closing, and the archive process counts as live for the 5-minute rule. If the agent sends an event meanwhile, the session returns to Open (R-SESS-1), and this process ends without a change (R-SESS-2). If `prov` does not know the process ID, the step does not wait. This is an accepted limit: a session that the human closes while its agent works can then be Archived with a transcript that does not cover the last work, until the next event of the agent returns it to Open. The model `ProvSessions.limit-no-pid` records it. Reason for the wait: `prov session close` and `prov finish --override` can close a session while its agent still works, and an archive made then misses the agent's last work (`ProvSessions.bug-no-wait`).
+0. **[R-SESS-3]** Wait until the agent process has exited, if `prov` knows its process ID. While the process runs, the session stays Closing, and the archive process counts as live for the 5-minute rule. If the agent sends an event meanwhile, the session returns to Open (R-SESS-1), and this process ends without a change (R-SESS-2). If `prov` does not know the process ID, the step does not wait. This is an accepted limit: a session that the human closes while its agent works can then be Archived with a transcript that does not cover the last work, until the next event of the agent returns it to Open. The model `ProvSessions.limit-no-pid` records it. Reason for the wait: `prov session archive` and `prov finish --override` can close a session while its agent still works, and an archive made then misses the agent's last work (`ProvSessions.bug-no-wait`).
 1. Build the archive through the adapter. The adapter decides how it gets the transcript. The archive is a tar file that `prov` builds:
     - Claude Code: the file at the transcript path from the hook payload, as `transcript.jsonl`, and every file of the directory `<session ID>/` next to the transcript, with its relative path. Reason: Claude Code stores large tool results in `<session ID>/tool-results/` and the messages of subagents in `<session ID>/subagents/`, not in the transcript.
     - The entries are sorted by name, and each entry has modification time 0, owner 0 and mode 0644, so the same files always give the same bytes. `tar -tv` therefore shows each entry with the date 1970-01-01 (owner decision, 2026-11-12: kept). A real time would make two archives of the same transcript differ, and R-ARCH-1 would then fail a retry.
 2. Calculate SHA-256 of the tar bytes, before compression. The hash therefore covers the transcript, the tool results and the subagent sessions. To check an archive: decompress it and hash the result.
-3. **[R-ARCH-1]** Write the archive, gzip-compressed, to a temporary file in the same directory, flush it, and give it the name `<logs_dir>/<agent>/<session>-<first 12 hex characters of the hash>.tar.gz` with an operation that fails if the name exists. If the name exists and its decompressed content has the same hash, the step succeeds. If it exists with another hash, the step fails. `prov` never overwrites an archive file. Reason: a process that stops during the write would otherwise leave part of a file under the final name, and every later attempt would fail.
+3. **[R-ARCH-1]** Write the archive, gzip-compressed, to a temporary file in the same directory, flush it, and give it the name `<logs_dir>/<agent>/<session>-<first 12 hex characters of the hash>.tar.gz` with an operation that fails if the name exists. If the name exists and its decompressed content has the same hash, the step succeeds. If it exists with another hash, the step fails. `prov` never overwrites an archive file. Reason: a process that stops during the write would otherwise leave part of a file under the final name, and every later attempt would fail. The temporary file is `<session>-<12 hex>.tar.tmp<pid>`. Before it writes, the step deletes the temporary files of its session whose process no longer runs (owner decision, 2026-11-14). Reason: a killed step leaves one, with part of the transcript, and nothing else deleted it.
 4. Set the state to Archived. If a step fails, set the state to Failed and store the error text.
 
 Every session that ends is archived, also a session that made no commit.
@@ -203,7 +203,7 @@ What it deletes:
 - The worktree of the branch, with `git worktree remove --force`, and the worktree record. Changes that are not committed are lost.
 - The branch, with `git branch -D`.
 - The record of each session of the discard.
-- Each archive `<logs_dir>/<agent>/<session>-*.tar.gz` of each session of the discard.
+- Each archive `<logs_dir>/<agent>/<session>-*.tar.gz` of each session of the discard, and each temporary file `<session>-*.tar.tmp<pid>` that a killed archive step left (owner decision, 2026-11-14).
 
 What it keeps:
 
@@ -215,7 +215,7 @@ It refuses in each of these cases:
 
 - It runs in an agent worktree, or an agent environment variable is set. Only a human runs it.
 - The branch is checked out in the worktree where it runs.
-- A session of the discard is Open, also when it is stale, or Closing. Close it with `prov session close` first. A Failed session does not stop it.
+- A session of the discard is Open, also when it is stale, or Closing. Archive it with `prov session archive` first. A Failed session does not stop it.
 - A `Prov-Session` trailer in a commit on another ref names a session of the discard. Reason: an integration group, or an agent commit that is already merged or is on another agent branch, needs the record or the archive of that session. To delete only the worktree, use `prov finish`.
 - A session that a trailer of the branch's own commits names has a record for another branch. Discard that branch first, or drop the record.
 - A `Copied-From` trailer in a commit on another ref, or a copy record, names one of the branch's own commits as its source. Reason: "Copying files" says that the transcript of an inherited session is found through `Copied-From`.
@@ -229,14 +229,13 @@ Output and options:
 **[R-DISC-1]** Order of the steps:
 
 1. Without the lock: find the branch, its own commits and the sessions of the discard, and run the checks on the trailers and the copy records. Save the value of every ref. Reason: this reads the history, and a hook must not wait for that.
-2. Under the lock: check the states of the sessions again. Refuse if a merge is in progress in any worktree of the repository whose `MERGE_HEAD` reaches one of the branch's own commits. If a ref changed since step 1, release the lock and start again from step 1, at most three times; then refuse. Refs under `refs/notes/` are not compared, because git-ai changes them at every commit. Then delete the archives and the session records, and release the lock.
-3. Remove the worktree and delete the worktree record.
-4. Delete the branch.
+2. Under the lock: check the states of the sessions again. Refuse if a merge is in progress in any worktree of the repository whose `MERGE_HEAD` reaches one of the branch's own commits. If a ref changed since step 1, release the lock and start again from step 1, at most three times; then refuse. Refs under `refs/notes/` are not compared, because git-ai changes them at every commit. Then remove the worktree and delete the worktree record, delete the archives and the session records, and release the lock.
+3. Delete the branch.
 
 - The merge gate reads the session records under the lock, and holds it until it has written the trailers (owner decision, 2026-11-13). Reason: git writes `MERGE_HEAD` before the gate runs. A gate that runs before step 2 therefore makes step 2 refuse, and a gate that runs after step 2 finds no record and refuses. The model `ProvDiscard.bug-gate-unlocked` shows the failure without the lock: discard deletes the archive between the gate and the commit, and the commit names an archive that no longer exists.
 - Reason for the ref check: a merge commit can land between step 1 and step 2, and its trailers then name a session of the discard (`ProvDiscard.bug-no-ref-recheck`). Reason for the merge check: a merge whose gate has passed is not on a ref yet (`ProvDiscard.bug-no-merge-check`).
-- If `prov discard` stops after step 2, running it again by branch name finishes steps 3 and 4. The records are gone then, so it finds no sessions, and every archive was deleted in step 2.
-- Accepted limit: if `prov` does not know the process ID of an agent (R-SESS-3), its next event after the discard makes a new record for a branch that no longer exists. `prov doctor` reports that record as stale, and `prov session drop` removes it.
+- Reason for removing the worktree under the lock, before the records: an agent event (for example a resume, which is a new agent process) that waits for the lock then finds no worktree and makes no record. Removed after the records, such an event made a new Open record for the removed worktree (test `discard_racing_a_resume`). An agent hook checks under the lock that its worktree still exists (owner decision, 2026-11-14). Cost: an agent hook can wait for the lock while `git worktree remove` runs.
+- If `prov discard` stops after step 2, running it again by branch name finishes step 3. The records are gone then, so it finds no sessions, and every archive was deleted in step 2.
 
 `prov discard` is the only command that deletes a transcript archive or a branch (owner decision, 2026-11-13, with the name and the refusal when another ref names a session of the discard).
 
@@ -319,13 +318,15 @@ So in an agent commit, git-ai gives every line with no checkpoint to an AI sessi
     - `git rebase` and `git cherry-pick` do not run `pre-commit` for the commits that they make, and `git merge` does not run it for the merge commit. The check does not cover them. This is an accepted limit.
 - The human does not edit files in an agent worktree.
 - **[R-SWEEP-4]** Processes that continue after SessionEnd, for example a development server, are not swept, and the sweep of a later session would take their changes. Stop them before another session starts in the worktree, and before `prov finish`. This is an accepted limit. The model `ProvSweep.limit-background` records it.
-    - `prov session close`, `prov finish` and `prov start --resume` (in a worktree that exists) list the processes whose current directory is in the worktree, as a warning (owner decision, 2026-11-12). Left out: `prov` itself, its ancestors, shells (a person's terminal writes no files by itself), and processes that are not there in two scans 300 ms apart (git and git-ai start short processes in a worktree). On Linux the scan reads `/proc`; on macOS it runs `lsof`. A process that writes into the worktree from another current directory is not found.
+    - `prov session archive`, `prov finish` and `prov start --resume` (in a worktree that exists) list the processes whose current directory is in the worktree, as a warning (owner decision, 2026-11-12). Left out: `prov` itself, its ancestors, shells (a person's terminal writes no files by itself), and processes that are not there in two scans 300 ms apart (git and git-ai start short processes in a worktree). On Linux the scan reads `/proc`; on macOS it runs `lsof`. A process that writes into the worktree from another current directory is not found.
 
 **[R-SWEEP-2] Taint.** Live state keeps, for each agent worktree, the *owner*: the session that `prov` last saw as the only occupant.
 
 - Every `prov` hook that runs in an agent worktree (agent events and `pre-commit`) first calculates the occupants, under the lock. If the occupants are not exactly the owner, the changes that `git status` shows at that moment are tainted, and the owner becomes the single occupant, or none.
+- SessionEnd calculates the occupants twice: before the session leaves, for its own sweep, and again after it is Closing if another session is still open. If one session is left, it becomes the owner at that moment (owner decision, 2026-11-14). Reason: otherwise the owner stays none after a contention ends, and the next event of the remaining session taints its own later work. A live run showed this (see "Appendix: test evidence").
 - To taint the changes, `prov` runs an `agent-v1` checkpoint of type `ai_agent` on the changed files, with the tool `prov-unattributed`, the model `unknown` and a new conversation ID for each taint. No record and no `Prov-Session` trailer names such a session, so its lines are doubtful lines ("Sessions of an integration"), and the human decides at the gate. After the approval, the note still says that an AI wrote the lines, in a session that nobody knows. Reason: in an agent worktree, the changes almost always come from an agent or a process that it started. A `known_human` checkpoint would make the lines doubtful too, but after the approval the note would say that a human wrote them.
 - A checkpoint covers only the changes since the checkpoint before it. Lines that git-ai recorded through the agent's own hooks, or through an earlier sweep, keep their attribution. Changes that the new occupant makes later are swept as usual.
+- git-ai applies a checkpoint after the command returns. Before a taint, `prov` therefore runs `git-ai await` with a limit of 5 seconds, so that a checkpoint of the agent's own hooks for an edit just before is applied first (owner decision, 2026-11-14). If the wait fails, the taint still runs. Reason: in a live run, a taint at Stop took the lines of a file that the agent had written just before, through its own git-ai hook. The wait runs only when a taint runs, which is rare.
 - If the checkpoint fails, the owner stays, and the next hook tries again. `pre-commit` then refuses the commit.
 
 Reason: `prov` cannot see who made a change, only that a file changed. When the occupant changes, the changes before that can belong to the previous session, to a session that crashed, or to one of two sessions in a contended worktree. The safe result is a doubtful line, not a guess. Without this rule, the sweep gives the changes of a session that crashed to the next session.
@@ -358,7 +359,7 @@ The sessions of an integration are those named in a `Prov-Session` trailer or in
 
 One exception: a session that only a note names, and that has no record. git-ai invents such a session for lines with no checkpoint in a commit with an agent identity, for example after `git commit --no-verify`, which skips the sweep. No transcript exists for it. It is not a session of the integration, and its lines are doubtful lines. `prov check <base>..<tip>` has no records: there, a session that only a note names is a session of the integration if the merge has a trailer group for it.
 
-- The integration fails if one of these sessions is not Archived, or has no record. Close an Open session with `prov session close` first.
+- The integration fails if one of these sessions is not Archived, or has no record. Archive an Open session with `prov session archive` first.
 - The gate reads the records under the lock, and holds it until it has written the trailers (R-DISC-1).
 - The integration fails while a session is Open in a worktree whose branch tip is in the incoming range.
 - **[R-INT-1]** After the integration, `post-commit` reads the trailers of the commit that was made (`HEAD`), not the trailers that the gate added. Reason: git opens the editor after the gate, so the commit's trailers can differ from the gate's.
@@ -408,7 +409,7 @@ Each trailer value is one line. `prov` refuses a value with a line break.
 | `Prov-Approved` | the commit that the approval is for | `<path> <choice>`. The choice is the last word: `ack`, `human` or `ai`. The path can contain spaces. | one for each approval |
 | `Prov-Model` | a group of an integration, after `Prov-Transcript-SHA256` | the model of the session from its record, the latest one if it changed. Reason: the git-ai note has the model `unknown` when every edit went through the agent's own git-ai hooks ("Agent model"). | if the record has a model |
 | `Prov-Version` | each integration | `<version>+<build SHA>` | yes |
-| `Prov-Revises` | a commit made by `prov revise` | the full commit ID of the integration that it revises | yes, on such a commit |
+| `Prov-Revises` | a commit made by `prov revise` | the full commit ID of an integration that it revises | one for each revised integration |
 | `Copied-From` | a commit with copied files | `<source>@<commit>:<path>`, followed by ` => <dest>` if the path in this repository is not `<path>`. `<source>` is the remote URL of the source repository, without a user name or password, or its absolute path if it has no remote. | one for each copied file |
 
 ## The merge gate
@@ -419,16 +420,24 @@ No doubtful line reaches a human branch without a human approval. `prov` reads e
 - A range gives it a human. Reason: in an agent commit, this label comes from git-ai's fallback, not from a person.
 - Its agent commit has no note.
 - A range gives it a session that no `Prov-Session` trailer names and that has no record. See "Sessions of an integration".
-- git shows added lines for its file in the agent commit (`git diff --numstat`), and the output of git-ai has no added range for that file. The whole file is then one item. Reason: git-ai ignores some paths, for example `**/vendor/**`, lock files and `*.min.js`. It drops the checkpoints for such a file and lists none of its lines, so an agent's lines there would otherwise never be doubtful.
+
+Two kinds of file are doubtful as a whole, with one item for the file:
+
+- The agent commit adds lines to the file, changes it as a binary file, or changes its mode or its type, and the output of git-ai has no added range for that file. Reason: git-ai ignores some paths, for example `**/vendor/**`, lock files and `*.min.js`. It drops the checkpoints for such a file and lists none of its lines. It also lists no range for a binary file or a change of mode. So an agent's change there would otherwise never be doubtful.
+- The agent commit deletes the file. Reason: git-ai records no author for a deletion, and a file that disappears is easy to miss in a review.
+
+Lines that an agent commit deletes from a file that stays are not doubtful. Reason: a deleted line has no author to doubt.
+
+One `git diff-tree --raw --numstat` for each agent commit gives these changes. A symbolic link and a submodule need no rule of their own: git-ai gives a symbolic link a range, and a submodule an untracked range.
 
 A merge commit in the incoming range is not read with `git-ai diff`. Reason: git-ai shows a merge as the difference from its first parent, which repeats the lines of the merged commits. Instead, each path that the merge commit changed relative to every parent is doubtful. This is what the author of the merge wrote, for example an agent that merged the human branch into its branch and resolved a conflict. A clean merge has no such path.
 
 A change to a protected path is also doubtful. The default protected paths are `.provenance.toml`, `.claude/**`, `.github/workflows/**`, `CLAUDE.md` and `AGENTS.md`. Reason: an agent could change these files on its own branch to weaken the controls. The instruction files `CLAUDE.md` and `AGENTS.md` have no `/`, so they match at every level: Claude Code also reads them in subdirectories (owner decision, 2026-11-13).
 
-The gate runs in `prepare-commit-msg` for each integration:
+The gate runs in `prepare-commit-msg` for each integration. It refuses at once when an agent environment variable is set (see "Only a human can integrate" under `prov approve`). Then:
 
 1. It reads the config with `git show HEAD:.provenance.toml`. If the binary version does not satisfy `required_version`, the integration fails.
-2. It runs `git-ai await --timeout 60`. If the await fails, the gate shows a warning and continues. For each agent commit of the last two minutes that has no note yet, it waits for the note, up to 60 seconds. A commit that still has no note gives items that need an approval. Reason: in a test under load on a slow file system, `git-ai await` gave up after 6 seconds although every note was written.
+2. It runs `git-ai await --timeout 60`. If the await fails, the gate shows a warning and continues. For each agent commit of the last two minutes that has no note yet, it waits for the note. All these waits together last up to 60 seconds. A commit that still has no note gives items that need an approval. Reason: in a test under load on a slow file system, `git-ai await` gave up after 6 seconds although every note was written.
 3. It checks the sessions of the integration. See "Sessions of an integration".
 4. It lists each doubtful range, each path that a merge commit in the incoming range changed, and each changed protected path. If the merge message has no `Prov-Approved` trailer for the path of an item, the commit fails.
 
@@ -454,9 +463,11 @@ To stop instead, run `git merge --abort`.
 | `--ai [--agent <tool>] [--model <model>]` | Before your own commit | Runs `git-ai checkpoint agent-v1` with type `ai_agent`. Recorded as `ai`. The default for `--agent` and `--model` is `unknown`. |
 
 - Only a human can approve. `prov approve` refuses in every agent worktree, and when an agent environment variable is set.
-- `prov approve` asks for a typed `yes` at a terminal. For a protected path, it first shows the diff of that path between the human branch (`HEAD` of the merge) and the incoming tip.
+- Only a human can integrate. The gate refuses an integration when an agent environment variable is set. Reason: `git merge` runs no `pre-commit`, so the refusal of an agent commit on a human branch does not cover a merge commit. An agent session in a human worktree could otherwise merge an agent branch and write `Prov-Approved` trailers into the merge message itself.
+- A `Prov-Approved` trailer records the decision of the human who made the integration. It does not show that `prov approve` was used: a human can also write the trailer by hand.
+- `prov approve` asks for a typed `yes` at a terminal. It reads the answer from `/dev/tty`. With no terminal, it refuses; `--dry-run` shows the items without a question. Reason: an approval is a person's decision, so a script or an agent cannot pipe in the answer (owner decision, 2026-11-13). For a protected path, it first shows the diff of that path between the human branch (`HEAD` of the merge) and the incoming tip.
 - A merge approval exists only in the merge message of the merge in progress. `git merge --abort` discards it. `prov` keeps no other record of it, and you cannot approve before you start the merge.
-- `--human` and `--ai` are for lines whose author git-ai cannot know. Examples: code that you paste from an AI tool in a browser (`--ai`), and the output of a generator that you ran (`--human`). The approval stays in live state with the hash of the file content. A change to the file cancels it.
+- `--human` and `--ai` are for lines whose author git-ai cannot know. Examples: code that you paste from an AI tool in a browser (`--ai`), and the output of a generator that you ran (`--human`). The approval stays in live state with the git blob ID of the file content. Reason: git computes it already, and it is the ID that git uses for the content (owner decision, 2026-11-13). A change to the file cancels it.
 - `--human` and `--ai` apply to a complete file: to every change in it since the last checkpoint. They cannot mark a part of the changes.
 - At the commit, `prepare-commit-msg` adds `Prov-Approved: <path> human` or `Prov-Approved: <path> ai`. Then `prov` deletes the live state.
 - A checkpoint affects only the next commit. To change the authorship of committed lines, see "Replacing the authorship of a file".
@@ -499,32 +510,44 @@ The CI job must provide these:
 
 **Limit**: `prov check` cannot find a squash that has no note, for example a squash that a forge made. Such a commit looks like a human commit. The branch protection in "Non-goals" prevents it.
 
+`prov check <base>..<tip>` warns about each commit on a checked first-parent line that is not a merge, adds lines and has no note. The warning does not fail the check. It skips commits older than the first commit of `refs/notes/ai` and the commits in `known_gaps`, as `prov doctor` does. If the clone has no `refs/notes/ai`, it warns once. Reason: a squash made on a forge has no note, and nothing else reports it. A commit by a person who does not use git-ai has no note either, so a failure would stop such a team (owner decision, 2026-11-13). The check reads the notes with one `git notes list` and the commit times with one `git log`.
+
+**Rule**: a human branch goes into another human branch only through a merge commit, also on a forge, for example the pull request of a feature branch into `main`. Turn off squash merges and rebase merges for the protected branches on the forge. Reason: a merge commit keeps every commit with its note and the integrations with their trailers. A squash on the forge makes one commit with no note, so the AI lines in it look human, and `prov check` cannot find it (the limit above). A rebase on the forge drops the integrations and puts the agent commits on the first-parent line; `prov check` reports it, but the record is lost from that branch.
+
+git-ai pushes `refs/notes/ai` with a plain `git push` while its service runs, and a clone fetches it. A CI job without the service must fetch the notes itself.
+
 ## Revising an integration: `prov revise`
 
 ```text
-prov revise [--of <merge>] [--dry-run]
+prov revise [--of <merge>]... [--dry-run]
 ```
 
 A human cannot edit an agent branch. The place to correct agent work is a human branch, after the integration. `prov revise` commits the human's staged changes to the lines of an integration and records which integration they revise. It is optional. Reason: the merge is the human's approval, and `prov` does not copy a pull request (owner decision, 2026-11-13). `prov revise` adds a record that a human changed agent work. It adds no gate.
 
 - `prov` has no rule about the branch for a revision. A team can revise on `main` or on a branch of its own.
 - After an integration, `post-commit` prints one line. It names the merge and suggests `prov revise`. The hook runs no extra git process for it.
-- A merge can have several revisions.
+- A merge can have several revisions, and a revision can name several merges.
 
 ### What `prov revise` does
 
 1. It refuses in every agent worktree, and when an agent environment variable is set. Reason: a revision is a human's change, like an approval.
-2. It finds the target. With `--of <merge>`, the target is that commit. It refuses if the commit is not an integration or is not an ancestor of `HEAD`. Without `--of`, the target is the first commit on the first-parent line from `HEAD` that is a merge with a `Prov-Session` trailer. It refuses if there is none. It prints the number of commits between the target and `HEAD`, as information.
+2. It finds the targets. Each `--of <merge>` names one target. It refuses if the commit is not an integration or is not an ancestor of `HEAD`. Without `--of`, the one target is the first commit on the first-parent line from `HEAD` that is a merge with a `Prov-Session` trailer. It refuses if there is none. Reason for several targets: a fix can cross the work of two integrations, for example an interface between two modules that two sessions ported (owner decision, 2026-11-13). `prov` does not find several targets by itself. Reason: it would have to find the merge that brought in each blamed commit. For each target, it prints the number of commits between the target and `HEAD`, as information.
 3. It refuses if nothing is staged, and if a file with staged changes also has changes that are not staged. Reason: git-ai records the file in the working tree, not the staged content.
-4. **[R-REV-1]** It reads the staged diff against `HEAD`. A line counts when the diff changes or deletes it. A line that the diff only adds does not count. For each file with counted lines, one `git blame HEAD -L <range> ... -- <path>` call gives the commit of each counted line. A counted line is a merged line when its commit is the target or a commit in `<target>^1..<target>^2`. The commit refuses if no counted line is a merged line. Reason: a revision must change the work that it names (owner decision, 2026-11-13). This also refuses an empty revision, and a revision that only adds lines, for example a new test.
-5. It prints the number of merged lines that the revision changes or deletes, and the number of other changed lines. Other changes in the same commit are permitted. With `--dry-run`, it stops here.
-6. It starts `git commit --template <file>`, and git opens the editor. The template has an empty subject line, the trailer `Prov-Revises: <target>`, and comment lines with the target's short ID and subject and the counts of step 5. The human writes the message. git refuses the commit if the message is not changed. With `core.commentChar = auto`, the template has no comment lines. Reason: git would then choose a comment character that no template line starts with, and keep those lines. Reason: the human describes the revision; `prov` adds no words to it. The git hooks run as for every commit. `prov revise` makes no git-ai checkpoint. Reason: git-ai gives the lines of a human commit with no checkpoint to the committer as `known_human`. A `known_human` checkpoint gives the same note.
+4. **[R-REV-1]** It reads the staged diff against `HEAD` with `-U0`.
+   - A line of `HEAD` counts when the diff changes or deletes it.
+   - Lines that the diff only inserts (a hunk `@@ -N,0 +M,k @@`) count when line `N` or line `N+1` of `HEAD` is a merged line of a target. `N` is the line after which they go, and 0 at the start of the file. Reason: in a port, a common correction is an insertion, for example a missing branch or error check (owner decision, 2026-11-13). The lines of a new file never count.
+   - A line of `HEAD` is a merged line of a target when its commit is the target, a commit in `<target>^1..<target>^2`, or an earlier revision of the target: a commit with a `Prov-Revises: <target>` trailer. Reason: correction is iterative, and a second pass over revised lines revises the same work (owner decision, 2026-11-13). Each revision names the target, not the revision before it, so this holds for any number of passes.
+   - For each file with counted lines, one `git blame HEAD -L <range> ... -- <path>` call gives the commit of each changed line and of each neighbour of the inserted lines. One `git log --no-walk` call reads the `Prov-Revises` trailers of the blamed commits that are not merged commits of a target.
+   - The commit refuses if a target has no counted line that is a merged line of it, changed, deleted or inserted next to. Reason: a revision must change the work that it names (owner decision, 2026-11-13). This also refuses an empty revision, and a revision that only adds a new file, for example a new test.
+5. For each target, it prints the number of its merged lines that the revision changes or deletes, and the number of lines that it inserts next to them. Then it prints the number of other changed lines. Other changes in the same commit are permitted. With `--dry-run`, it stops here.
+6. It starts `git commit --template <file>`, and git opens the editor. The template has an empty subject line, one trailer `Prov-Revises: <target>` for each target, and comment lines with each target's short ID and subject and the counts of step 5. The human writes the message. git refuses the commit if the message is not changed. With `core.commentChar = auto`, the template has no comment lines. Reason: git would then choose a comment character that no template line starts with, and keep those lines. Reason: the human describes the revision; `prov` adds no words to it. The git hooks run as for every commit. `prov revise` makes no git-ai checkpoint. Reason: git-ai gives the lines of a human commit with no checkpoint to the committer as `known_human`. A `known_human` checkpoint gives the same note.
 
 Accepted limit: the human can delete the trailer in the editor. The commit is then an ordinary human commit.
 
 Consequences of R-REV-1:
 
-- A second revision of the same merge counts only lines that still come from the merge. A line that an earlier revision changed has that human commit in blame. It is not a merged line.
+- A second revision of the same merge counts the lines that an earlier revision of it changed. A line that a plain human commit changed is not a merged line.
+- An insertion between two lines that are not merged lines does not count, also inside a file of the merge.
 - A line that a conflict resolution wrote is blamed to the merge. It is a merged line. A line that the resolution kept from the human branch is not.
 - A binary file has no lines in the diff. A change to it is never a merged line.
 - Accepted limit: an agent branch can merge a human branch that is not in the target branch, for example a feature branch. The commits of that branch are then in `<target>^1..<target>^2`, and their lines count as merged lines. This agrees with "What counts as an integration": every commit in the incoming range of an integration is an agent commit.
@@ -545,6 +568,7 @@ prov cp --from <repo> [--rev <rev>] <path>... <dest> [options]
 - It refuses if a destination file exists. To replace a file, see "Replacing the authorship of a file".
 - It preserves the executable bit.
 - It copies a binary file or a symbolic link unchanged, with no line authorship, and shows it in the plan (`binary = true` or `symlink = true`).
+- A blob that is a Git LFS pointer (it starts with `version https://git-lfs.github.com/spec/v1`) is replaced by its content, read with `git lfs smudge` in the source. The content must be in the source's local LFS store; `prov cp` never downloads. The file is copied like a binary file, with no line authorship (`binary = true`). Reason: git-ai's lines of such a file are the lines of the pointer, not of the content. If git-lfs is not installed, or the object is not in the store, `prov cp` refuses and copies nothing (owner decision, 2026-11-14). git-lfs is an optional requirement: only such a copy needs it.
 - One source path that is a file: `<dest>` is the new path of the file, or a directory if it ends with `/` or exists as a directory. One source path that is a directory: `<dest>` is the new path of that directory. More than one source path: `<dest>` is a directory, and each source goes into it under its own name.
 
 ### The plan
@@ -612,7 +636,7 @@ Rules for a plan:
 
    The last stage makes the file equal to the source, byte for byte.
 5. Stage the files. The human commits them. The commit can hold several copies and other changes. `pre-commit` refuses the commit if a copied file is different from the copied bytes. `prepare-commit-msg` adds one `Copied-From` trailer for each copied file. This copy guard applies to a file from the copy until a commit holds the file. A new copy to the same destination replaces an earlier copy that no commit holds.
-6. Deferred check. `post-commit` starts a detached process. The process waits for the note for a maximum of 60 seconds. Then it compares the authors of each copied file with the plan, by content. In each group of identical lines, the set of authors must agree with the plan.
+6. Deferred check. `post-commit` starts a detached process. The process looks for the note every 250 ms, for a maximum of 60 seconds. Then it compares the authors of each copied file with the plan, by content. In each group of identical lines, the set of authors must agree with the plan.
    - Agreement for every file: `prov` deletes the plan.
    - Authors moved between identical lines: `prov doctor` shows a note.
    - git-ai lists no line of the file, because it ignores the path (see "The merge gate"): the file has the result `ignored`, with no line authorship. `prov doctor` shows a note. The `Copied-From` trailer still records the origin.
@@ -633,10 +657,10 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 
 ## Trace export (optional)
 
-`prov trace export [<range>]` writes Agent Trace records as JSON Lines, one record per commit with a note. The default range is the branch that is checked out. It reads each commit with `git-ai diff <commit> --json`.
+`prov trace export [<range>]` writes Agent Trace records as JSON Lines, one record per commit with a note. The default range is the branch that is checked out. It finds the commits with a note with one `git notes --ref=ai list`, and reads each commit with `git-ai diff <commit> --json`. Reason: listing which commits have a note reads git, not the note format; asking git-ai for every commit would cost one process per commit (owner decision, 2026-11-13).
 
 - The schema is Agent Trace 0.1.0, pinned in `vendor/agent-trace/0.1.0/` with its CC BY 4.0 notice. `prov` supports only this version.
-- `prov` validates each record against the pinned schema before it writes the record.
+- `prov` validates each record against the pinned schema before it writes the record. The validator is written in-house (`crates/prov/src/schema.rs`) and knows only the keywords that the pinned schema uses. A keyword that it does not know is an error, so a new schema cannot pass without notice. Reason: a full JSON Schema crate brings many dependencies for one small, fixed schema (owner decision, 2026-11-13).
 - `version` is `"0.1"`. Reason: the schema requires the pattern `^[0-9]+\.[0-9]+$`.
 - `id` is a version 5 UUID of the commit SHA, in a fixed namespace that the `prov` source defines.
 - `timestamp` is the committer date of the commit.
@@ -650,7 +674,7 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 
 | Command | Run by | Effect |
 |---|---|---|
-| `prov init [--agent <name>]... [--force]` | Human, once in each clone | Writes `.provenance.toml`, the shims in the hooks directory and the Claude Code settings. Sets `merge.ff` and `pull.ff`. Adds `logs_dir` to `.gitignore` if it is inside a worktree. Refuses to overwrite a changed file without `--force`. |
+| `prov init [--agent <name>]... [--force]` | Human, once in each clone | Writes `.provenance.toml`, the shims in the hooks directory and the Claude Code settings. Sets `merge.ff` and `pull.ff`. Adds `logs_dir` to `.gitignore` if it is inside a worktree. Keeps an existing `.provenance.toml` that parses, and refuses to overwrite another changed file or hook without `--force`. `--force` always writes `.provenance.toml` again from the defaults, with the agents of `--agent` (owner decision, 2026-11-13). Reason: `--force` then has one meaning, a reset to the defaults. Commit your own settings first; git shows what the reset changed. |
 | `prov doctor [--deep]` | Human | Checks the items in "Doctor checks". Exit code 1 if one check fails. |
 | `prov check [<agent branch> \| <base>..<tip>]` | Human, CI | See "Checking". |
 | `prov start <agent>` | Human | See "Starting a session". |
@@ -673,7 +697,7 @@ No public git-ai command changes an existing note, and git-ai attributes only th
 - `merge.ff` is `false`, and `pull.ff` is `only`.
 - The agent environment sets `commit.gpgsign=false` and the agent identity, in `.claude/settings.json`.
 - `.provenance.toml` and the agent settings files are committed.
-- git-ai is installed, its version is the compatibility baseline or later (a version newer than the tested version is a warning, not a failure), its service is available, and it allows the repository. With `--deep`, `git-ai debug` passes.
+- git-ai is installed, its version is the compatibility baseline or later (a version newer than the tested version is a warning, not a failure), its service is available, and it allows the repository. With `--deep`, `git-ai debug` passes. git-ai has no command that answers whether it allows a repository, so `prov doctor` reads `allow_repositories` and `exclude_repositories` with `git-ai config` and repeats git-ai's rule (see "Requirements"). A contract test checks the rule against git-ai (owner decision, 2026-11-13).
 - The git-ai integration of each configured agent is installed.
 - No session is stale or Failed. No worktree is contended. No copy check failed.
 - A note for each record of a session that is not Open whose branch is merged into the branch that is checked out, with the `prov session drop` command (R-INT-2).
@@ -721,7 +745,7 @@ All files are in `.git/provenance/` in the common git directory, so every worktr
 |---|---|---|
 | `sessions/<id>.json` | state, generation, agent, worktree, branch, model, transcript path, archive file and hash, error text (Failed), agent PID, start time, last event time, `prov` version | an integration permits it (R-INT-2), `prov session drop`, or `prov discard` |
 | `worktrees/<key>.json` | for one agent worktree: the owner session (R-SWEEP-2) | `prov finish` or `prov discard` removes the worktree, or `prov doctor` finds that git no longer lists it |
-| `copies/<id>.json` | the plan, the blob ID of each copied file, the check result of each file | the copy check agrees for every file. A failed file is cleared when a later copy of the same path agrees. A record with a `moved` or `ignored` result stays until the human deletes the file. |
+| `copies/<id>.json` | the plan, the blob ID of each copied file, the check result of each file | the copy check agrees for every file. A failed file is cleared when a later copy of the same path agrees. A record with a `moved` or `ignored` result stays until the human deletes the file: it is the only place that holds the planned authors of those lines. The note of `prov doctor` ends with the command that deletes it (owner decision, 2026-11-13). |
 | `approvals/<key>.json` | path, choice (`human` or `ai`), content hash | the approval becomes a trailer. Merge approvals are not stored here. |
 
 ## Build and release
@@ -750,7 +774,7 @@ All files are in `.git/provenance/` in the common git directory, so every worktr
 - A latency test fails if an agent hook (`prov hook <adapter> <event>`) takes more than 100 ms at the 95th percentile. On a slow file system, it uses the relative limit in "Agent hooks".
 - `PROV_TEST_REPOS=<dir>` puts the test repositories on another file system. The suite must pass there too. The home directory of each test stays in `/tmp`, because git-ai needs a short local path for its sockets.
 - A trace test exports one range twice and compares the bytes.
-- Contract tests (`crates/prov/tests/gitai_contract.rs`) check, with git-ai alone, each premise about git-ai that a rule rests on: the JSON of `git-ai diff` and `git-ai blame`, the attribution of a file with no checkpoint in an agent commit and in a human commit, the taint checkpoint, the model rule, the sweep joining the agent's session, a checkpoint just before a commit, ignored paths and blame of an empty file. They run before the tested version is raised.
+- Contract tests (`crates/prov/tests/gitai_contract.rs`) check, with git-ai alone, each premise about git-ai that a rule rests on: the JSON of `git-ai diff` and `git-ai blame`, the attribution of a file with no checkpoint in an agent commit and in a human commit, the taint checkpoint, the model rule, the sweep joining the agent's session, a checkpoint just before a commit, ignored paths, binary files, mode changes and deletions, `allow_repositories`, and blame of an empty file. They run before the tested version is raised.
 - Local checks: `ci/run.sh [<commit> | --worktree]` runs the build, clippy with `-D warnings`, every test and the model tests in a clean Podman container. The image (`ci/Containerfile`) pins Ubuntu 26.04 with git 2.53, the Rust toolchain of `rust-toolchain.toml`, git-ai 1.7.6 and tla2tools 1.7.4, each download with its SHA-256. The tests run with `PROV_TEST_REQUIRE_GITAI=1`, so an integration test that cannot find git-ai fails instead of skipping. The pre-push hook `ci/pre-push` runs the checks for each commit that a push sends. Install it in each clone: `cp ci/pre-push "$(git rev-parse --git-path hooks)/pre-push"`.
 - Model tests: the local checks run `tla/check-models.sh`. SANY parses every module. TLC must pass each `<Module>.cfg` and each config with another name. Each `*.bug-*`, `*.limit-*` and `*.reach-*` config must fail with an invariant violation (TLC exit code 12). Any other result fails the job.
 - An archive test kills the archive process during the write, then runs the step again.
@@ -795,9 +819,9 @@ OpenCode has no session-start event and no reliable session-end event. Reason: o
 
 - `prov` starts a session at the first forwarded event of that session. It ignores a session whose directory is outside the repository.
 - A child session (a subagent) is not a session of its own for `prov`. The plugin adds the parent ID from `ctx.session.get`, and `prov` handles an event of a child session as an event of its top-level parent. Reason: a child session would otherwise make the worktree contended.
-- OpenCode sends no event when the user changes to a new session. The old session stays Open, so a second session in the same worktree makes the worktree contended. Close the old session first with `prov session close`.
+- OpenCode sends no event when the user changes to a new session. The old session stays Open, so a second session in the same worktree makes the worktree contended. Archive the old session first with `prov session archive`.
 - `prov start opencode` does not replace itself with OpenCode. It waits until OpenCode exits, then moves each Open session in that worktree to Closing.
-- A session that was started without `prov start` becomes stale. Close it with `prov session close`.
+- A session that was started without `prov start` becomes stale. Archive it with `prov session archive`.
 
 `prov` does these actions for the forwarded events:
 
@@ -906,6 +930,22 @@ These results are the basis of rules in this specification.
 | `crates/prov/tests/gitai_contract.rs`, 10 tests | All pass. A checkpoint on a new file just before a commit counted for that commit in 20 of 20 commits. | Tested version 1.7.6 |
 | A human line, then one character of it changed through an agent edit, in an agent commit | `git-ai diff --json`: the whole line is one AI addition (and one deletion). `git-ai blame --json` gives the line one session. `git-ai stats --json`: `ai_additions` 1, no other category. | README: attribution is per line, with no "mixed" category |
 | A binary file with an `ai_agent` checkpoint, in an agent commit | `git-ai diff --json` lists no range for the file | README: binary files are not attributed |
+| `git merge` of a branch, run from the Bash tool of Claude Code 2.1.325, with a `prepare-commit-msg` hook that writes its environment | The hook sees `CLAUDECODE` and `CLAUDE_CODE_SESSION_ID` (and other `CLAUDE_*` variables) | The merge gate refuses an agent |
+| A human branch with an integration, brought into `main` as a forge does it: no hooks and no git-ai service; a merge commit, a squash, and a rebase. Test `forge_merge_methods_of_a_human_branch` | Merge commit: every note stays, `prov check` passes. Squash: one commit with no note, `prov check` passes although the commit has AI lines. Rebase: the agent commit is on the first-parent line, `prov check` fails | Checking: merge commits only for human branches |
+| `git push` of a branch with notes to a bare repository, git-ai 1.7.6 with its service running; then `git clone` of that repository | The remote has `refs/notes/ai` after the push. The clone has `refs/notes/ai` and `refs/notes/ai-remote/origin` | Checking: notes reach the remote |
+| git 2.53: `git diff -U0` of a pure insertion; `git blame --porcelain -L` past the end of the file, at line 0, and with two overlapping ranges; `git log --no-walk --format='%H %(trailers:key=Prov-Revises,valueonly)'` on several commits | The hunk header is `@@ -N,0 +M,k @@`, with `N` the line after which the lines go and `N = 0` at the start. A range past the end is clamped to the last line. `-L 0,1` fails ("invalid line number"), so the code asks for line 1. On an empty file, `-L 1,1` fails, so an empty old file is skipped by its blob ID. Overlapping ranges are merged; each line has one header with its line number. One `git log` call gives each commit with its trailer values. Tests `revise_an_integration` and `revise_two_integrations` | R-REV-1: insertions, earlier revisions and several targets |
+| git-ai 1.7.6, own home, a repository with no remote: a checkpoint with an empty `allow_repositories`, with `*`, with a path entry; then with a remote and a matching and a non-matching URL pattern. Test `allow_repositories_matches_remote_urls_only` | Empty list: recorded, the commit gets a note. `*`: skipped with the message. A path entry: `git-ai config --add` refuses ("has no remotes configured. Add a remote first or use a glob pattern"). A matching pattern (`https://` form against an `scp`-form remote): recorded. A pattern that matches no remote: skipped | Requirements; Doctor checks |
+| `prov discard` and `git merge` of the same branch, started together, one of them late by 0 to 250 ms, 60 rounds. Test `discard_racing_a_merge_keeps_the_evidence` | 35 rounds merged first, 25 discarded first. Every transcript hash in a merge commit had its archive. After a merge, the discard found no own commits and no records, and removed only the worktree and the branch | R-DISC-1; `ProvDiscard`: `EvidenceKept` |
+| `prov discard` and an agent event of the same session (a resume), started together, 8 rounds, five runs. Test `discard_racing_a_resume` | The hook never failed. Most rounds the discard refused (the session was Open). When the discard won, the event made a new Open record with a known process ID for the worktree that step 3 then removed. After the change of 2026-11-14 (worktree removed under the lock, the hook checks the worktree under the lock): no such record in 48 rounds, 4 of them won by the discard | R-DISC-1 |
+| `prov session archive` of an 8 MB transcript, killed with SIGKILL at 2/10 to 9/10 of the time of one uncut step. Test `an_archive_process_killed_during_its_write` | No file with the final name was ever cut off. Running the step again archived the session. A kill during the write left `<session>-<hash>.tar.tmp<pid>`. Since 2026-11-14 the next run of the step deletes it, and `prov discard` deletes it with the archives (test `discard_deletes_the_temporary_file_of_a_killed_archive_step`) | R-ARCH-1 |
+| `git commit` of a file on an LFS-tracked path after `prov cp`, with LFS's hooks chained through `prov init`, git-lfs 3.7.1 | Before the fix, the commit took 60 seconds: the detached copy check inherited a pipe of `git-lfs filter-process`, and git waited for the filter. The check then found no note. With the detached process keeping no inherited descriptors: 66 ms, and the check agrees. Test `copies_from_a_source_with_git_lfs` | Detached processes |
+| `prov cp` from a source with Git LFS, and from one with a clean filter; a destination filter that changes the bytes. Tests `copies_from_a_source_with_git_lfs`, `copies_the_blob_of_a_filtered_file` | Before the change of 2026-11-14, `prov cp` copied the blob: the LFS pointer, or the cleaned content. Now an LFS pointer is replaced by its content from the source's store, and the copy is refused without git-lfs or the object. In a destination with LFS, the object is missing and a clone shows the pointer. `git lfs install` refuses to replace prov's shims; `git lfs install --force` and `prov init` again chain LFS's hooks as `.local`. A destination filter gives a note, and the check agrees when the line count stays; a filter that changes the line count makes the check fail | Copying files |
+| `prov cp` of 2,000 files of two lines (`copies_two_thousand_files`, run with `--ignored`) | `prov cp` 43 to 51 s. `git commit` 0.2 s. The note arrived after 9 s; the check ended after 66 s, because its `git-ai await` waited its full 60 s while the service worked on the checkpoints of the copy. After the changes of 2026-11-14 (one pass per commit, no await): the check ends after 34 to 37 s, of which one `git-ai diff` of the commit takes 22 s | Copying files; the exception to `git-ai await` |
+| Two `claude -p` processes in one worktree, Claude Code 2.1.325, Haiku: one runs `sleep`, the other writes a file and commits | The second session's SessionStart hook warned, and the agent changed nothing. Told to commit anyway, `pre-commit` refused: "this worktree is contended. 2 sessions are open here". A later commit of the leftovers: the file that the contended session wrote kept its own session (its own git-ai hook recorded it); two files that sessions wrote after the contention ended, alone, were tainted | R-SWEEP-2, R-SWEEP-3 |
+| After the fix of 2026-11-14, live: session A runs `sleep`, session B starts and ends meanwhile, then A writes `a.txt` and commits it, Claude Code 2.1.325, Haiku | `a.txt` belongs to session A. Test `the_end_of_a_contention_restores_the_owner` checks the owner in the harness | R-SWEEP-2 |
+| `prov` hooks in the harness: session A, then B starts and ends, then A edits and stops | After B's SessionEnd the owner stays `null`; A's next event taints and makes A the owner. With the harness's `agent-v1` checkpoint, A's file keeps A. In the live run, git-ai's own `claude` checkpoint of the file was overridden by the taint at A's Stop | R-SWEEP-2 |
+| A merge with an editor that stays open; the session of the branch resumed with `claude -p --resume` meanwhile, Claude Code 2.1.325 | The gate wrote the trailers before the editor opened. The resume returned the session to Open, and its end archived it again under a new hash. The merge commit names the first hash; that archive stayed. `post-commit` kept the record (R-INT-2). `prov check` passed | `ProvIntegration` P4, R-INT-2 |
+| One agent commit, git-ai 1.7.6: a binary file and a changed binary file with `ai_agent` checkpoints, a mode change only, a symbolic link with an `ai_agent` checkpoint, a submodule gitlink, a deleted file, and a file that only loses a line | `git-ai diff --json`: no added range for the binary files and the mode change; one AI range for the symbolic link; one untracked range for the gitlink; only a deletion hunk for the deleted file. `git diff-tree --raw --numstat -z` gives the raw records, then the numstat records, in one process: `-` for a binary file, `0 0` for the mode change. Test `binary_files_mode_changes_and_deletions_have_no_added_ranges` | The merge gate: files doubtful as a whole |
 | The full test suite in a Podman container (Ubuntu 26.04, local disk), many tests at once | `git-ai checkpoint` returns when the service has received the checkpoint, not when it has applied it. In 2 of 3 runs, the sweep's checkpoint in `pre-commit` was applied about 50 ms after the commit was recorded, and the commit's lines went to a session that git-ai invented. With `git-ai await` at the end of `pre-commit`: 0 of 6 runs. A checkpoint captures the file's content when it is received: two AI stages of one file, with no wait between them, were attributed correctly. | `pre-commit` and `prov approve` wait for git-ai after their checkpoints |
 
 **git 2.53 and git-ai 1.7.6, premises of `prov revise` (proposed), tested 2026-11-13**
@@ -954,7 +994,7 @@ The setup: a human branch and an agent branch with `ai_agent` checkpoints. The a
 | A session with one subagent | The subagent's messages are in `<session ID>/subagents/agent-<id>.jsonl`. The transcript holds only the prompt and the result. | Archive step stores the directory |
 | `CLAUDE_PID` in the environment of a hook: `prov start claude -- -p ...`, 2026-11-12 | The `agent_pid` that the hook recorded was the process ID of `claude` itself (`prov start` replaces itself with `claude`). The same after `prov start --resume`, with the new process ID. | R-SESS-3 |
 | A live run: `prov start claude -- -p <task> --model haiku`, the agent writes one file and commits; then `prov start --resume <id> -- -p <task>`; then `git merge` on `main` | Commit identity and `Prov-Session` correct. Each run archived after the process exited (generations 2 and 4, two archive files). The gate passed with no doubtful line; the merge got the hash of the second archive; the record was deleted. `prov check <base>..<tip>` and `prov doctor --deep` passed. | "Starting a session", "Resuming", "Archive step", the merge gate |
-| `prov session close` during a live run: `prov start claude -- -p <task>`, the task starts with `sleep 15`, the close 4 s after the start | The session went to Closing (generation 2), and the command waited for the agent process. 16 s later the agent's next event opened the session again (generation 3, R-SESS-1), and its SessionEnd closed it (generation 4). The archive of generation 4 was the whole transcript; the step of generation 2 wrote nothing. The agent's commit while the session was Closing had no `Prov-Session` trailer (no occupant); the gate found the session through the note, and `prov check` of the range passed. | R-SESS-1, R-SESS-2, R-SESS-3 |
+| `prov session archive` during a live run: `prov start claude -- -p <task>`, the task starts with `sleep 15`, the close 4 s after the start | The session went to Closing (generation 2), and the command waited for the agent process. 16 s later the agent's next event opened the session again (generation 3, R-SESS-1), and its SessionEnd closed it (generation 4). The archive of generation 4 was the whole transcript; the step of generation 2 wrote nothing. The agent's commit while the session was Closing had no `Prov-Session` trailer (no occupant); the gate found the session through the note, and `prov check` of the range passed. | R-SESS-1, R-SESS-2, R-SESS-3 |
 | The transcript of the live run, compared with the archive that `prov` made after `claude` exited | Byte for byte the same, and unchanged four hours later. One run. | The transcript does not grow after the agent exits (R-SESS-3) |
 | The same run: the model in the note | `unknown` for the first commit, `claude-haiku-5-5` for the second (the record had the model from the first Stop). The transcript had the model in the assistant message of the `git commit` call, before the call. | "Agent model" |
 

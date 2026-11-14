@@ -116,7 +116,7 @@ fn approve_merge(ctx: &Ctx, paths: &[String], args: &Args) -> Result<bool> {
     }
     let config = repo.config_at("HEAD")?.context(msg::approve::HEAD_NO_CONFIG)?;
     let mut analysis = gate::analyze(repo, &ctx.gitai, &config, "HEAD", tip)?;
-    analysis.drop_unknown_sessions(|s| gate::has_record(ctx, s));
+    gate::drop_sessions_without_record(ctx, &mut analysis)?;
 
     let message = repo.message_trailers(&message_file)?;
     let done = trailer::approvals(&message);

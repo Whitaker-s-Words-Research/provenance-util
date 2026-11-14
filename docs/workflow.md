@@ -31,7 +31,7 @@ prov start claude -- --model opus                # arguments after -- go to the 
 - **One session in one worktree.** `prov` cannot stop a second session, but the worktree then becomes *contended*: Claude Code is told to stop, `prov` sweeps nothing there, and every commit there is refused until one of the sessions ends. Changes from that time become doubtful lines at the gate.
 - **Agents do not work in a human worktree.** A session in your checkout of `main`, or on any branch that is not `agent/**`, gets a warning and no record. An agent commit there is refused. If you commit that work yourself, `prov check` fails in CI.
 - **Do not edit files in an agent worktree yourself.** `prov` attributes every change in the worktree to the session that occupies it.
-- **Stop background processes when a session ends.** A process that keeps writing in the worktree, such as a development server, is not swept, and the next session there would take its changes as its own. `prov session close`, `prov finish` and `prov start --resume` list the processes that still run in the worktree.
+- **Stop background processes when a session ends.** A process that keeps writing in the worktree, such as a development server, is not swept, and the next session there would take its changes as its own. `prov session archive`, `prov finish` and `prov start --resume` list the processes that still run in the worktree.
 
 ### Ending, resuming and closing
 
@@ -41,12 +41,12 @@ When Claude Code exits, the session goes to Closing, and a detached process arch
 prov session list                        # every session with a record, and its state
 prov session show <id>
 prov start claude --resume <id>          # resume a session in its worktree
-prov session close <id>                  # end a session that did not end by itself
+prov session archive <id>                  # end a session that did not end by itself
 ```
 
 - A resumed Claude Code session keeps its ID. It returns to Open, and the next archive is a new file.
 - If the worktree of a resumed session was removed, `prov start --resume` creates it again on the session's branch.
-- `prov session close` is for a session that crashed or was left open. It waits for the agent process to exit before it archives. For a Failed session, it runs the archive step again.
+- `prov session archive` is for a session that crashed or was left open. It waits for the agent process to exit before it archives. For a Failed session, it runs the archive step again.
 
 A session that gets no event for 24 hours, or whose agent process is gone, is *stale*. It no longer occupies the worktree, but it must be closed before its branch can merge. `prov doctor` lists stale and Failed sessions.
 
@@ -78,7 +78,7 @@ The gate runs in `prepare-commit-msg` for every merge that brings in agent commi
 
 1. Reads `.provenance.toml` from `HEAD` (the human branch before the merge, not the agent's copy) and checks `required_version`.
 2. Waits for git-ai to write the notes of recent agent commits.
-3. Checks the sessions. Every session that made a commit must be Archived. Close an Open session with `prov session close` first.
+3. Checks the sessions. Every session that made a commit must be Archived. Archive an Open session with `prov session archive` first.
 4. Lists the doubtful items. Each needs an approval.
 
 An item is **doubtful** when:
@@ -86,7 +86,8 @@ An item is **doubtful** when:
 - git-ai gives a line no author (untracked), or gives it a human. In an agent commit, a human label comes from git-ai's fallback, not from a person.
 - An agent commit has no git-ai note.
 - A line belongs to a session that no trailer names and that has no record. git-ai invents such a session, for example after `git commit --no-verify` skipped the sweep.
-- git changed a file that git-ai lists no lines for, because git-ai ignores the path (`vendor/`, lock files, `*.min.js` and others). The whole file is one item.
+- git changed a file that git-ai lists no lines for: a binary file, a change of mode, or a path that git-ai ignores (`vendor/`, lock files, `*.min.js` and others). The whole file is one item.
+- An agent commit deleted a file. The whole file is one item. Lines that an agent deletes from a file that stays need no approval.
 - A merge commit on the agent branch changed a path relative to every parent, for example a conflict that the agent resolved.
 - A protected path changed. The defaults are `.provenance.toml`, `.claude/**`, `.github/workflows/**`, and `CLAUDE.md` and `AGENTS.md` in any directory, because an agent could change them to weaken the controls.
 
@@ -118,7 +119,7 @@ git add src/parse.py      # your changes to the merged lines
 prov revise               # git opens the editor; write the message
 ```
 
-`prov revise` is optional. It refuses unless your staged changes change or delete at least one line that came in with the merge. Lines that you only add do not count. git opens the editor with a `Prov-Revises: <merge>` trailer, and you write the message. The default target is the latest merge of agent work on the first-parent line; `--of <merge>` names another. A merge can have several revisions. See [`prov revise`](commands.md#prov-revise).
+`prov revise` is optional. It refuses unless your staged changes change or delete at least one line that came in with the merge, or insert lines next to one. A line that an earlier revision of the merge changed still counts, so you can revise in several passes. A new file alone does not count. git opens the editor with a `Prov-Revises: <merge>` trailer, and you write the message. The default target is the latest merge of agent work on the first-parent line; `--of <merge>` names another, and you can give it more than once when a change crosses two merges. A merge can have several revisions. See [`prov revise`](commands.md#prov-revise).
 
 ### What is not permitted
 
@@ -128,13 +129,14 @@ prov revise               # git opens the editor; write the message
 | A fast-forward onto agent commits | No hook can refuse it. `post-merge` warns and prints `git reset --keep ORIG_HEAD`. |
 | A rebase or cherry-pick of agent commits | `prov check` reports the commits in CI. |
 | An octopus merge that contains agent commits | Refused. |
+| A merge of agent commits that an agent starts, for example from its shell tool | Refused. Only a person integrates. |
 | A merge on a forge, such as a GitHub pull request | `prov check` reports it in CI. Protect your human branches on the forge so that agent branches cannot be merged there. |
 
 `prov init` also sets `pull.ff = only`, so `git pull` on a human branch fast-forwards or stops instead of making a merge commit.
 
 ### Feature branches
 
-The same rules apply to every human branch. You can work on `feature/x`, start agent branches from it with `--from feature/x` or by checking it out, and merge them back into it through the gate. A later merge of `feature/x` into `main` is a merge of human commits: the gate does not run again, and `prov check <base>..<tip>` checks the integrations inside it.
+The same rules apply to every human branch. You can work on `feature/x`, start agent branches from it with `--from feature/x` or by checking it out, and merge them back into it through the gate. A later merge of `feature/x` into `main` is a merge of human commits: the gate does not run again, and `prov check <base>..<tip>` checks the integrations inside it. On a forge, merge such a pull request with a merge commit only. A squash merge hides the AI lines, and a rebase merge drops the record of the integrations.
 
 ## Your own commits
 
@@ -176,7 +178,7 @@ prov discard agent/claude/20261111-parser-tests --yes      # deletes it
 
 - It deletes the worktree with its uncommitted changes, the branch, the session records and the transcript archives of the branch's sessions.
 - It keeps the agent's own transcripts, the git-ai notes and a remote branch. It prints the command that deletes the remote branch.
-- It refuses while a session of the branch is Open or Closing. Close it first with `prov session close`.
+- It refuses while a session of the branch is Open or Closing. Archive it first with `prov session archive`.
 - It refuses while a merge of the branch is in progress in any worktree.
 - It refuses when another ref names one of its sessions: a merge commit on a human branch, a merged agent commit, or another agent branch that started from this one. That ref needs the session's record or archive. Use `prov finish` to remove only the worktree.
 - It refuses when a `Copied-From` trailer or a copy in progress names one of the branch's commits as its source.

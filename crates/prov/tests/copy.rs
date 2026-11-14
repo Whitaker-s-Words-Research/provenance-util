@@ -327,7 +327,15 @@ fn the_guard_refuses_a_changed_copy_and_a_failed_check_is_replaced() {
     // A note of `prov doctor`, not a failure. The earlier failure of ai.py is still there.
     let doctor = env.prov(&repo, ["doctor"]).failure();
     assert!(doctor.stdout.contains("vendor/ai.py") && doctor.stdout.contains("has no line authorship"), "{}", doctor.stdout);
-    std::fs::remove_file(repo.join(".git/provenance/copies").join(format!("{}.json", ignored[0]["id"].as_str().unwrap()))).unwrap();
+    // The note ends with the command that removes it, on a line of its own.
+    let lines: Vec<&str> = doctor.stdout.lines().collect();
+    let at = lines.iter().position(|l| l.contains("vendor/ai.py")).unwrap();
+    let command = lines[at..].iter().map(|l| l.trim()).find(|l| l.starts_with("rm ")).unwrap();
+    assert!(command.contains(ignored[0]["id"].as_str().unwrap()), "{}", doctor.stdout);
+    let out = env.run(&repo, "sh", ["-c", command], &[], None);
+    assert!(out.ok, "{command}\n{}", out.stderr);
+    let doctor = env.prov(&repo, ["doctor"]).failure();
+    assert!(!doctor.stdout.contains("vendor/ai.py"), "{}", doctor.stdout);
 
     // Replacing the authorship of a file, as the specification describes it.
     env.git(&repo, ["rm", "-q", "ai.py"]);
@@ -339,4 +347,179 @@ fn the_guard_refuses_a_changed_copy_and_a_failed_check_is_replaced() {
     let records = wait_checked(&repo);
     assert!(records.is_empty(), "{records:?}");
     env.prov(&repo, ["doctor"]).success();
+}
+
+/// An editor that needs the terminal: it checks that its standard input and
+/// output are a terminal, and reads what the human types there.
+#[test]
+fn an_editor_that_needs_the_terminal() {
+    let Some(env) = Env::new() else { return };
+    let src = source_repo(&env);
+    let repo = dest_repo(&env, "project");
+    let editor = env.home().join("tty-editor.sh");
+    std::fs::write(
+        &editor,
+        "#!/bin/sh\n[ -t 0 ] && [ -t 1 ] || { echo 'not a terminal' >&2; exit 1; }\nprintf 'author? '\nread answer\n\
+         sed -i \"s/author = \\\"?\\\"/author = \\\"$answer\\\"/\" \"$1\"\n",
+    )
+    .unwrap();
+    std::fs::set_permissions(&editor, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let out = env.prov_tty_env(&repo, ["cp", "--from", src.to_str().unwrap(), "lib/deep", "deep"], "human\n", &[("GIT_EDITOR", editor.to_str().unwrap())]);
+    assert!(out.ok, "{}{}", out.stdout, out.stderr);
+    assert!(out.stdout.contains("deep/human.txt  2 line(s)  human: 2"), "{}", out.stdout);
+}
+
+/// A clean filter in the source, as Git LFS uses: `prov cp` copies the blob,
+/// the filtered content, not the file of the source's worktree. A filter of
+/// the destination that changes the bytes at `git add` gives a note, and the
+/// deferred check still agrees.
+#[test]
+fn copies_the_blob_of_a_filtered_file() {
+    let Some(env) = Env::new() else { return };
+    let src = env.plain_repo("filtered");
+    std::fs::write(src.join(".gitattributes"), "*.dat filter=redact\n").unwrap();
+    env.git(&src, ["config", "filter.redact.clean", "sed s/secret/REDACTED/"]);
+    env.git(&src, ["config", "filter.redact.smudge", "cat"]);
+    ai_edit(&env, &src, "data.dat", "key = secret\nother = 1\n", "claude", "m1", "s1");
+    env.git(&src, ["add", "-A"]);
+    env.git(&src, ["commit", "-q", "-m", "Data"]);
+    env.await_notes(&src);
+    assert_eq!(std::fs::read_to_string(src.join("data.dat")).unwrap(), "key = secret\nother = 1\n");
+
+    let repo = dest_repo(&env, "project");
+    env.prov(&repo, ["cp", "--from", src.to_str().unwrap(), "data.dat", "data.dat", "--missing", "human"]).success();
+    assert_eq!(std::fs::read_to_string(repo.join("data.dat")).unwrap(), "key = REDACTED\nother = 1\n");
+
+    // A filter in the destination that changes the bytes at `git add`.
+    std::fs::write(repo.join(".gitattributes"), "*.txt filter=upper\n").unwrap();
+    env.git(&repo, ["config", "filter.upper.clean", "tr a-z A-Z"]);
+    env.git(&repo, ["config", "filter.upper.smudge", "cat"]);
+    env.git(&repo, ["add", ".gitattributes"]);
+    env.git(&repo, ["commit", "-q", "-m", "Attributes"]);
+    let out = env.prov(&repo, ["cp", "--from", src.to_str().unwrap(), "data.dat", "copy.txt", "--missing", "human"]).success();
+    eprintln!("{}", out.stdout);
+    env.git(&repo, ["commit", "-q", "-m", "Copy"]);
+    let records = wait_checked(&repo);
+    eprintln!("copy records after the check: {records:?}");
+}
+
+/// A copy of 2,000 files: the time of the plan, the copy and the deferred
+/// check. About two minutes, so it runs only on request:
+/// `ci/dev.sh test -p prov --test copy -- --ignored --nocapture`.
+#[test]
+#[ignore = "slow: about two minutes"]
+fn copies_two_thousand_files() {
+    let Some(env) = Env::new() else { return };
+    let src = env.plain_repo("many");
+    for i in 0..2000 {
+        env.plain_write(&src, &format!("lib/d{}/f{i}.txt", i % 20), &format!("line one of {i}\nline two\n"));
+    }
+    env.git(&src, ["add", "-A"]);
+    env.git(&src, ["commit", "-q", "-m", "Many"]);
+    env.await_notes(&src);
+    let repo = dest_repo(&env, "project");
+
+    let begin = Instant::now();
+    let out = env.prov(&repo, ["cp", "--from", src.to_str().unwrap(), "lib", "lib", "--missing", "human", "--json"]);
+    let copy = begin.elapsed();
+    assert!(out.ok, "{}", out.stderr);
+    let begin = Instant::now();
+    env.git(&repo, ["commit", "-q", "-m", "Copy many"]);
+    let commit = begin.elapsed();
+    let begin = Instant::now();
+    while !env.try_git(&repo, ["notes", "--ref=ai", "list", "HEAD"]).ok && begin.elapsed() < Duration::from_secs(120) {
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    let note = begin.elapsed();
+    let records = wait_checked(&repo);
+    let check = begin.elapsed();
+    eprintln!("2,000 files: the note arrived after {note:?}");
+    eprintln!("2,000 files: prov cp {copy:?}, git commit {commit:?}, deferred check {check:?}");
+    let begin = Instant::now();
+    env.run(&repo, "git-ai", ["diff", "HEAD", "--json"], &[], None);
+    eprintln!("2,000 files: one git-ai diff of the commit {:?}", begin.elapsed());
+    assert_eq!(records, [] as [Value; 0], "the check agrees for every file");
+    assert_eq!(env.git(&repo, ["ls-files", "lib"]).lines().count(), 2000);
+}
+
+/// A source with Git LFS. The blob of an LFS file is a pointer; `prov cp`
+/// copies the content from the source's local LFS store, with no line
+/// authorship. With git-lfs missing, or the object missing from the store,
+/// it refuses and copies nothing. LFS refuses to install its hooks over the
+/// shims; with `--force` and `prov init` again, both run. A commit with an
+/// LFS file once waited 60 seconds for the detached copy check, which held a
+/// pipe of `git-lfs filter-process`.
+#[test]
+fn copies_from_a_source_with_git_lfs() {
+    let Some(env) = Env::new() else { return };
+    if !env.try_git(env.home(), ["lfs", "version"]).ok {
+        eprintln!("SKIPPED: git-lfs is not installed");
+        return;
+    }
+    let content = "the real content\nof a large file\n";
+    let src = env.plain_repo("lfs");
+    env.git(&src, ["lfs", "install", "--local"]);
+    env.git(&src, ["lfs", "track", "*.bin"]);
+    std::fs::write(src.join("big.bin"), content).unwrap();
+    std::fs::write(src.join("gone.bin"), "an object that the store lost\n").unwrap();
+    env.git(&src, ["add", "-A"]);
+    env.git(&src, ["commit", "-q", "-m", "LFS files"]);
+    env.await_notes(&src);
+    assert!(env.git(&src, ["cat-file", "blob", "HEAD:big.bin"]).starts_with("version https://git-lfs.github.com/spec/v1"));
+    // The object of gone.bin is not in the local store any more.
+    let oid = env.git(&src, ["cat-file", "blob", "HEAD:gone.bin"]).lines().find_map(|l| l.strip_prefix("oid sha256:").map(String::from)).unwrap();
+    std::fs::remove_file(src.join(".git/lfs/objects").join(&oid[..2]).join(&oid[2..4]).join(&oid)).unwrap();
+    let from = src.to_str().unwrap();
+
+    // A destination without LFS gets the content as an ordinary file.
+    let plain = dest_repo(&env, "plain");
+    let out = env.prov(&plain, ["cp", "--from", from, "big.bin", "big.bin"]).success();
+    assert!(out.stdout.contains("big.bin  binary"), "{}", out.stdout);
+    assert_eq!(std::fs::read_to_string(plain.join("big.bin")).unwrap(), content);
+    env.git(&plain, ["commit", "-q", "-m", "Copy"]);
+    assert_eq!(env.git(&plain, ["cat-file", "blob", "HEAD:big.bin"]) + "\n", content);
+    assert_eq!(wait_checked(&plain), [] as [Value; 0], "the check agrees");
+
+    // An object that is not in the source's store: refused, nothing copied.
+    let missing = env.prov(&plain, ["cp", "--from", from, "gone.bin", "gone.bin"]).failure();
+    assert!(missing.stderr.contains("gone.bin is a Git LFS pointer, and its content is not in the local LFS store"), "{}", missing.stderr);
+    assert!(!plain.join("gone.bin").exists());
+
+    // No git-lfs: refused, nothing copied. (Only where git-lfs is not in /usr/bin or /bin.)
+    if !Path::new("/usr/bin/git-lfs").exists() && !Path::new("/bin/git-lfs").exists() {
+        let bin = env.home().join("no-lfs-bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        for tool in ["prov", "git-ai"] {
+            let path = env.run(env.home(), "sh", ["-c", &format!("command -v {tool}")], &[], None).stdout.trim().to_string();
+            std::os::unix::fs::symlink(path, bin.join(tool)).unwrap();
+        }
+        let path = format!("{}:/usr/bin:/bin", bin.display());
+        let none = env.run(&plain, "prov", ["cp", "--from", from, "big.bin", "again.bin"], &[("PATH", path.as_str())], None).failure();
+        assert!(none.stderr.contains("git-lfs is not installed"), "{}", none.stderr);
+        assert!(!plain.join("again.bin").exists());
+    }
+
+    // A destination that tracks the same pattern stores the content in its own LFS store.
+    let tracked = dest_repo(&env, "tracked");
+    let refused = env.try_git(&tracked, ["lfs", "install", "--local"]);
+    assert!(!refused.ok && refused.stderr.contains("Hook already exists"), "{}", refused.stderr);
+    env.git(&tracked, ["lfs", "install", "--local", "--force"]);
+    env.prov(&tracked, ["init"]).success();
+    let hooks = env.hooks_dir(&tracked);
+    for name in ["post-commit", "post-merge"] {
+        assert!(std::fs::read_to_string(hooks.join(name)).unwrap().contains("prov hook git"), "{name}");
+        assert!(std::fs::read_to_string(hooks.join(format!("{name}.local"))).unwrap().contains("git lfs"), "{name}.local");
+    }
+    env.prov(&tracked, ["doctor"]).success();
+    env.git(&tracked, ["lfs", "track", "*.bin"]);
+    env.git(&tracked, ["add", ".gitattributes"]);
+    env.git(&tracked, ["commit", "-q", "-m", "Track"]);
+    env.prov(&tracked, ["cp", "--from", from, "big.bin", "big.bin"]).success();
+    let begin = Instant::now();
+    env.git(&tracked, ["commit", "-q", "-m", "Copy"]);
+    assert!(begin.elapsed() < Duration::from_secs(10), "the commit waited {:?}", begin.elapsed());
+    assert!(env.git(&tracked, ["cat-file", "blob", "HEAD:big.bin"]).starts_with("version https://git-lfs.github.com/spec/v1"));
+    assert_eq!(std::fs::read_to_string(tracked.join("big.bin")).unwrap(), content);
+    assert!(tracked.join(".git/lfs/objects").is_dir());
+    assert_eq!(wait_checked(&tracked), [] as [Value; 0], "the check agrees");
 }

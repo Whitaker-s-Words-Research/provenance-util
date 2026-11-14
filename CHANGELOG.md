@@ -1,24 +1,67 @@
 # Changelog
 
-This file lists the changes to `prov` by date, oldest first. All changes so far belong to version 0.1.0, which is not released yet.
+This file lists the changes to `prov` by date, newest first. All changes so far belong to version 0.1.0, which is not released yet.
 
 Each day lists major features, minor features, major bug fixes, and the other bug fixes in one line. A day with no bug fixes has no bug sections. Changes to the documentation and the repository setup are under minor features.
 
-## 2026-11-11
-
-### Major features
-
-- The Cargo workspace, with four library crates and the `prov` binary.
-- `prov-core`: the configuration, path patterns, live state, session states and commit trailers.
-- `prov-git`: worktree discovery and the git commands that prov runs.
-- `prov-adapters`: the adapter interface for agents, and the Claude Code adapter.
-- `prov-gitai`: the git-ai commands that prov runs, and their JSON output.
-- `prov`: the agent hooks and git hooks, the sweep, the archive step, the merge gate and `prov check`.
+## 2026-11-14
 
 ### Minor features
 
-- The toolchain pin and the license.
-- PLAN.md with the testing notes.
+- `prov start` refuses when an agent runs it.
+- `git config prov.worktreesDir <dir>` sets the directory of the agent worktrees for one clone, for example on a local disk when the repository is on a slow mount.
+- `prov init --force` always writes `.provenance.toml` again from the defaults. Before, it kept a file that parsed unless `--agent` named other agents.
+- `prov doctor` prints notes as `note:` lines, and the note of a `moved` or `ignored` copy ends with the command that deletes its record.
+- The container image of the local checks has git-lfs 3.7.1, pinned by checksum.
+- The docs name git-lfs as an optional requirement, for `prov cp` from a source with Git LFS, and how to chain LFS's hooks through `prov init`.
+- The docs no longer say that a repository with no remote is never allowed by git-ai: that holds only once `allow_repositories` has entries. A contract test checks git-ai's rule.
+- SPEC states the choices that the owner confirmed: `prov approve` needs a terminal, `prov session archive` works in the foreground, and the approval hash, the commit list of `prov trace export` and the schema validator stay as they are.
+- New tests: `prov discard` racing a merge and a resume, a killed archive process, `prov cp` with Git LFS, clean filters, an editor that needs the terminal and 2,000 files. Live runs with Claude Code: two sessions in one worktree, and a resume while the merge editor is open.
+
+### Major bug fixes
+
+- A commit could wait 60 seconds. With a long-running git filter, such as Git LFS, the detached copy check inherited a pipe of the filter, and git waited for it; the check then found no note. Detached processes now keep no inherited file descriptors.
+- `prov cp` copied the pointer of a Git LFS file, not its content, and every check passed. It now copies the content from the source's local LFS store, with no line authorship. Without git-lfs or the object, it refuses and copies nothing.
+- When one of two sessions in a worktree ended, the other's later work became doubtful lines. The remaining session now becomes the owner at once, and a taint first waits up to 5 seconds for git-ai to apply pending checkpoints.
+- A resume that raced `prov discard` could leave an Open record for the removed worktree. The discard now removes the worktree under the lock, before it deletes the records, and an agent hook checks under the lock that its worktree exists.
+
+### Bug Fixes
+
+Bug Fixes: the archive step deletes the temporary files that a killed archive step of the same session left, and `prov discard` deletes them with the archives; the deferred copy check looks for the note itself instead of running `git-ai await`, and checks each commit with a few processes (a copy of 2,000 files is checked after about 35 seconds; before, the check did not end within 90); the extra observation at SessionEnd runs only when another session is left.
+
+## 2026-11-13
+
+### Major features
+
+- `CLAUDE.md` and `AGENTS.md` are protected paths by default, at every level of the tree. Reason: an agent could weaken the controls by changing its own instruction files on its branch.
+- All user-facing text is in the `prov-messages` crate. A snapshot test checks the help texts.
+- `prov discard <session or branch>` deletes the work of an agent branch that will not be integrated: the worktree, the branch, the session records and the transcript archives. It lists what it will delete, and deletes only with `--yes`. It refuses while a session of the branch is open or closing, while a merge of the branch is in progress, and when another ref names one of its sessions or copied a file from one of its commits. The TLA+ model `tla/ProvDiscard` checks the order of its steps.
+- `prov revise [--of <merge>]... [--dry-run]` commits staged human changes to the lines of an integration, with a `Prov-Revises: <merge>` trailer for each integration. The staged diff must change or delete at least one merged line, or insert lines next to one. A line that an earlier revision of the same merge changed counts. `--of` can be given more than once, for a change that crosses two merges.
+
+### Minor features
+
+- `prov session list` and `prov session show` show the session title from the Claude Code transcript. `list` shows the shortest unique session ID prefix and the worktree path with `~`.
+- AGENTS.md and CLAUDE.md hold the instructions for agents in this repository.
+- The user guides, the README and the messages of prov no longer show rule IDs, TLA+ models or test evidence.
+- The merge gate reads the session records under the lock.
+- After an integration, post-commit and post-merge print a hint about `prov revise`.
+- `prov check <base>..<tip>` warns about a commit that adds lines and has no git-ai note, for example a squash made on a forge. The warning does not fail the check.
+- `prov session close` is now `prov session archive`. Reason: "close" was easy to confuse with `prov finish`.
+- Every `--dry-run` and `--json` option has a help text.
+- SPEC and the docs require a merge commit when a human branch goes into another one on a forge, for example a feature branch into `main`. A squash merge hides the AI lines from `prov check`.
+- The README and getting-started strongly recommend branch protection for human branches on a shared repository: signed commits and merge commits only.
+- docs/development.md: run `ci/run.sh` on the human branch after each merge of an agent branch.
+- The texts of `prov discard` moved into `prov-messages`.
+
+### Major bug fixes
+
+- `prov start --path` expands a leading `~`. Before, `--path=~/dir` or a quoted value created the worktree in `<repo>/~/...`.
+- Binary files, changes of mode and deleted files in an agent commit reached the human branch with no approval. The merge gate now makes one item for each such file. Lines that an agent deletes from a file that stays still need none.
+- An agent session in a human worktree could merge an agent branch and write the approvals itself: `git merge` runs no `pre-commit`. The merge gate now refuses an integration that an agent starts.
+
+### Bug Fixes
+
+Bug Fixes: `ci/dev.sh` with `PROV_UPDATE_SNAPSHOTS` now copies the snapshot files back to the checkout; the help snapshot lacked `prov discard`; `ci/run.sh --worktree` works in an agent worktree; the waits of the merge gate for late notes share one limit of 60 seconds, instead of 60 seconds for each commit; a session record that does not parse is reported as such, not as a missing record.
 
 ## 2026-11-12
 
@@ -66,27 +109,18 @@ Each day lists major features, minor features, major bug fixes, and the other bu
 
 Bug Fixes: clippy findings, a race in the git-ai service test, and `.gitignore` entries that hid new files in `crates/` and `vendor/` from git and from `ci/dev.sh`.
 
-## 2026-11-13
+## 2026-11-11
 
 ### Major features
 
-- `CLAUDE.md` and `AGENTS.md` are protected paths by default, at every level of the tree. Reason: an agent could weaken the controls by changing its own instruction files on its branch.
-- All user-facing text is in the `prov-messages` crate. A snapshot test checks the help texts.
-- `prov discard <session or branch>` deletes the work of an agent branch that will not be integrated: the worktree, the branch, the session records and the transcript archives. It lists what it will delete, and deletes only with `--yes`. It refuses while a session of the branch is open or closing, while a merge of the branch is in progress, and when another ref names one of its sessions or copied a file from one of its commits. The TLA+ model `tla/ProvDiscard` checks the order of its steps.
-- `prov revise [--of <merge>] [--dry-run]` commits staged human changes to the lines of an integration, with a `Prov-Revises: <merge>` trailer. The staged diff must change or delete at least one line of the integration.
+- The Cargo workspace, with four library crates and the `prov` binary.
+- `prov-core`: the configuration, path patterns, live state, session states and commit trailers.
+- `prov-git`: worktree discovery and the git commands that prov runs.
+- `prov-adapters`: the adapter interface for agents, and the Claude Code adapter.
+- `prov-gitai`: the git-ai commands that prov runs, and their JSON output.
+- `prov`: the agent hooks and git hooks, the sweep, the archive step, the merge gate and `prov check`.
 
 ### Minor features
 
-- `prov session list` and `prov session show` show the session title from the Claude Code transcript. `list` shows the shortest unique session ID prefix and the worktree path with `~`.
-- AGENTS.md and CLAUDE.md hold the instructions for agents in this repository.
-- The user guides, the README and the messages of prov no longer show rule IDs, TLA+ models or test evidence.
-- The merge gate reads the session records under the lock.
-- After an integration, post-commit and post-merge print a hint about `prov revise`.
-
-### Major bug fixes
-
-- `prov start --path` expands a leading `~`. Before, `--path=~/dir` or a quoted value created the worktree in `<repo>/~/...`.
-
-### Bug Fixes
-
-Bug Fixes: `ci/dev.sh` with `PROV_UPDATE_SNAPSHOTS` now copies the snapshot files back to the checkout.
+- The toolchain pin and the license.
+- PLAN.md with the testing notes.

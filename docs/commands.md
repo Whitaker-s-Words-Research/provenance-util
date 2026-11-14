@@ -10,7 +10,7 @@ Every command that changes something accepts `--dry-run`. Every command that sho
 | [`prov check`](#prov-check) | A person, CI | Applies the rules of the merge gate without a merge. |
 | [`prov approve`](#prov-approve) | A person | Records a decision about the authorship of files. |
 | [`prov revise`](#prov-revise) | A person | Commits your changes to the lines of a merge of agent work. |
-| [`prov session`](#prov-session) | A person | Lists, shows, closes or drops sessions. |
+| [`prov session`](#prov-session) | A person | Lists, shows, archives or drops sessions. |
 | [`prov finish`](#prov-finish) | A person | Removes an agent worktree and keeps the branch. |
 | [`prov discard`](#prov-discard) | A person | Deletes an agent branch that will not be merged, with its worktree, records and archives. |
 | [`prov cp`](#prov-cp) | A person | Copies files from another repository with an author for every line. |
@@ -27,7 +27,7 @@ prov init [--agent <name>]... [--force]
 Writes `.provenance.toml`, the hook shims and `.claude/settings.json`, sets `merge.ff = false` and `pull.ff = only`, and adds `logs_dir` to `.gitignore`. See [Getting started](getting-started.md#setting-up-a-repository).
 
 - `--agent <name>`: an agent in use. Default: the agents in the config, or `claude`.
-- It keeps an existing `.provenance.toml` that parses. `--force` replaces a file, a hook or a settings value that has other content.
+- It keeps an existing `.provenance.toml` that parses. `--force` writes `.provenance.toml` again from the defaults, which removes your own settings such as extra protected paths and `known_gaps`; `git diff` shows them. It also replaces a hook or a settings value that has other content.
 - The hooks directory must be outside every worktree, so that an agent branch cannot replace the hooks that run during its own merge. `prov init` accepts a `core.hooksPath` only if it is an absolute path outside every worktree.
 
 ## `prov doctor`
@@ -51,7 +51,7 @@ prov start <agent> [options] [-- <agent arguments>]
 | `--name <slug>` | 4 random hex characters | The `<name>` part of the branch name. Letters, digits and `-`. |
 | `--branch <name>` | `agent/<agent>/<YYYYMMDD>-<name>` | The full branch name. It must match `agent/**`. |
 | `--from <ref>` | the branch that is checked out | The start point of the new branch. |
-| `--path <dir>` | `../<repo>.worktrees/` | The directory that holds the worktree. The worktree's name comes from the branch. A leading `~` is the home directory. |
+| `--path <dir>` | `prov.worktreesDir`, or `../<repo>.worktrees/` | The directory that holds the worktree. The worktree's name comes from the branch. A leading `~` is the home directory. |
 | `--no-launch` | off | Create the worktree, print its path, and do not start the agent. |
 | `--resume <session>` | none | Open the worktree of that session (create it again if it was removed) and start the agent with its resume option. If the session has no record, also give `--branch`. |
 
@@ -90,15 +90,15 @@ Asks for a typed `yes` at a terminal; with no terminal it refuses. `--dry-run` s
 ## `prov revise`
 
 ```text
-prov revise [--of <merge>] [--dry-run]
+prov revise [--of <merge>]... [--dry-run]
 ```
 
-Commits your staged changes to the lines of an integration, with a `Prov-Revises: <merge>` trailer. git opens the editor with the trailer and comment lines; you write the message. An unchanged message stops the commit.
+Commits your staged changes to the lines of an integration, with a `Prov-Revises: <merge>` trailer for each integration that it revises. git opens the editor with the trailer and comment lines; you write the message. An unchanged message stops the commit.
 
-- The target is the latest merge with a `Prov-Session` trailer on the first-parent line from `HEAD`. `--of <merge>` names another; it must be such a merge and an ancestor of `HEAD`.
-- Refuses unless the staged changes change or delete at least one line that came in with the target: a line that `git blame` gives to the merge or to a commit that it merged. Lines that are only added do not count. A line that an earlier revision changed no longer counts.
+- The target is the latest merge with a `Prov-Session` trailer on the first-parent line from `HEAD`. `--of <merge>` names another; it must be such a merge and an ancestor of `HEAD`. Give `--of` more than once for a change that crosses the work of several merges.
+- Refuses unless, for each target, the staged changes change or delete at least one merged line, or insert lines next to one. A merged line is a line that `git blame` gives to the merge, to a commit that it merged, or to an earlier revision of the merge. Lines inserted between two other lines, and the lines of a new file, do not count.
 - Refuses when nothing is staged, and when a staged file also has changes that are not staged.
-- Prints how many merged lines and other lines the changes change or delete. `--dry-run` stops there.
+- Prints, for each target, how many merged lines the changes change or delete and how many lines they insert next to merged lines, then how many other lines they change or delete. `--dry-run` stops there.
 - Refuses in an agent worktree and when an agent environment variable is set.
 
 `prov check` treats the commit as any other human commit. See [Workflow](workflow.md#revising-the-merged-work).
@@ -108,14 +108,14 @@ Commits your staged changes to the lines of an integration, with a `Prov-Revises
 ```text
 prov session list
 prov session show <id>
-prov session close <id>
+prov session archive <id>
 prov session drop <id>
 ```
 
 - `list` and `show` print the session records: state, worktree, branch, model, archive.
 - `list` shows the start of each session ID, as much as tells the sessions apart. Every command that takes `<id>` accepts it.
 - `list` and `show` also show the title that Claude Code gave the session. They read it from the `ai-title` records in the transcript. Claude Code does not document these records, so a new version can drop them; the title is then missing. No rule depends on the title.
-- `close` moves an Open session to Closing and archives it, after the agent process exits. For a Failed session, it runs the archive step again.
+- `archive` moves an Open session to Closing and archives it, after the agent process exits. For a Failed session, it runs the archive step again.
 - `drop` deletes the record of a session. The transcript archive stays. Use it for a record that `prov doctor` says is left over after a merge. To throw away a branch and everything of its sessions, use [`prov discard`](#prov-discard).
 
 ## `prov finish`

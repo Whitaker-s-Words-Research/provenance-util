@@ -51,6 +51,12 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
     let now = now();
     let (session, open_here) = {
         let lock = ctx.store.lock()?;
+        // `prov discard` removes a worktree under the lock. A hook that found
+        // the worktree before it got the lock must not record a session for
+        // it now (R-DISC-1).
+        if !ctx.repo.toplevel.is_dir() {
+            return Ok(());
+        }
         let mut session = match lock.get(&event.session_id)?.map(|s| s.at(now)) {
             Some(mut session) => {
                 if event.kind != EventKind::End {
@@ -99,6 +105,19 @@ pub fn run(adapter_name: &str, event: &str, payload: &str) -> Result<()> {
                 session.last_event_at = now;
                 session.close(now)?;
                 lock.put(&session)?;
+                // The session no longer occupies the worktree. If one session
+                // is left, it becomes the owner now, and what is changed at
+                // this moment is tainted: it can be the work of either.
+                // Without this, the next event of that session would taint
+                // its own later work.
+                // With no session left, the next hook observes as before: the
+                // end sweep has just run, and this hook has little time.
+                let remaining = lock.open_in(&ctx.repo.toplevel)?;
+                if !remaining.is_empty() {
+                    if let Err(e) = sweep::observe(&ctx, &lock, &remaining) {
+                        out.push(msg::agent_hook::warning(format!("{e:#}")));
+                    }
+                }
                 // The agent gives this hook little time: a detached process does the archive step.
                 match archive::spawn_detached(&ctx, &session.id, session.generation) {
                     Ok(pid) => session.archive_pid = Some(pid),

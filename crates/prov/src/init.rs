@@ -124,7 +124,8 @@ pub fn run(args: &Args) -> Result<bool> {
             config
         }
         Some(text) => match Config::parse(text) {
-            Ok(config) if args.agents.is_empty() || args.agents == config.agents => {
+            // `--force` always writes the defaults again (owner decision, 2026-11-13).
+            Ok(config) if !args.force && (args.agents.is_empty() || args.agents == config.agents) => {
                 report.actions.push(Action { target: CONFIG_FILE.into(), result: "kept", detail: None });
                 config
             }

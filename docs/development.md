@@ -47,6 +47,7 @@ cp ci/pre-push "$(git rev-parse --git-path hooks)/pre-push"   # run ci/run.sh be
 - The containers run with `--init`. Without it, a stopped git-ai service stays as a zombie and tests that wait for it fail.
 - In the container, `PROV_TEST_REQUIRE_GITAI=1` is set, so an integration test that cannot find git-ai fails instead of skipping.
 - Builds use `--locked`.
+- After each merge of an agent branch, run `ci/run.sh` on the human branch before the next merge. Reason: two branches can each pass their checks and fail together. This happened when `prov revise` and `prov discard` each wrote the help snapshot. To run only the tests, add `--no-fail-fast`: a plain `cargo test` stops at the first test binary that fails and hides later failures.
 
 ## Tests
 

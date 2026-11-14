@@ -10,6 +10,7 @@ use prov_core::pattern::is_agent_branch;
 use prov_core::trailer::{self, SessionRef};
 use prov_core::{now, State};
 use prov_git::Repo;
+use prov_messages as msg;
 use serde::Serialize;
 
 use crate::context::{say, Ctx};
@@ -68,10 +69,10 @@ struct Plan {
 pub fn run(args: &Args) -> Result<bool> {
     let ctx = Ctx::here()?;
     if let Some(var) = prov_adapters::agent_env_marker() {
-        bail!("refused: only a human can run `prov discard`. {var} is set: an agent started this command.");
+        bail!(msg::discard::agent_env(var));
     }
     if ctx.on_agent_branch() {
-        bail!("refused: `prov discard` does not run in an agent worktree. Run it from a human worktree.");
+        bail!(msg::discard::AGENT_WORKTREE);
     }
     let branch = find_branch(&ctx, &args.target)?;
 
@@ -84,22 +85,19 @@ pub fn run(args: &Args) -> Result<bool> {
         if !args.json {
             print(&plan.report, args);
         }
+        if attempt == 1 {
+            if let Some(worktree) = &plan.report.worktree {
+                crate::procs::warn_if_busy(worktree, msg::discard::STOP_PROCESSES);
+            }
+        }
         if !delete_under_lock(&ctx, &plan)? {
             if attempt == ATTEMPTS {
-                bail!("refused: refs of this repository changed {ATTEMPTS} times during the check. Run it again when they stop changing.");
+                bail!(msg::discard::refs_kept_changing(ATTEMPTS));
             }
-            say("a ref changed during the check. Checking again.");
+            say(msg::discard::REF_CHANGED);
             continue;
         }
-        // Step 3: the worktree.
-        if let Some(worktree) = &plan.report.worktree {
-            crate::procs::warn_if_busy(worktree, "Stop them: the worktree is removed now.");
-            let mut git: Vec<&std::ffi::OsStr> = vec!["worktree".as_ref(), "remove".as_ref(), "--force".as_ref()];
-            git.push(worktree.as_os_str());
-            ctx.repo.git(git)?;
-            ctx.store.lock()?.delete_worktree(worktree)?;
-        }
-        // Step 4: the branch.
+        // Step 3: the branch.
         if plan.report.branch_exists {
             ctx.repo.git(["branch", "-D", &branch])?;
         }
@@ -108,10 +106,10 @@ pub fn run(args: &Args) -> Result<bool> {
         if args.json {
             println!("{}", serde_json::to_string_pretty(&report)?);
         } else {
-            println!("Discarded the branch {branch}.");
+            println!("{}", msg::discard::discarded(&branch));
             for remote in &report.remote_branches {
                 if let Some((name, b)) = remote.strip_prefix("refs/remotes/").and_then(|r| r.split_once('/')) {
-                    println!("The remote branch {remote} stays. To delete it: git push {name} --delete {b}");
+                    println!("{}", msg::discard::remote_stays(remote, name, b));
                 }
             }
         }
@@ -127,7 +125,7 @@ fn find_branch(ctx: &Ctx, target: &str) -> Result<String> {
     }
     if let Ok(record) = session::resolve(&ctx.store, target) {
         if !is_agent_branch(&record.branch) {
-            bail!("session {} is on {}, which is not an agent branch", record.id, record.branch);
+            bail!(msg::discard::session_not_agent_branch(&record.id, &record.branch));
         }
         return Ok(record.branch);
     }
@@ -138,7 +136,7 @@ fn find_branch(ctx: &Ctx, target: &str) -> Result<String> {
     {
         return Ok(target.to_string());
     }
-    bail!("`{target}` is not an agent branch, and not a session. See: git branch --list 'agent/*', prov session list")
+    bail!(msg::discard::not_found(target))
 }
 
 /// The arguments that select every ref except the branch, its remote-tracking
@@ -181,10 +179,10 @@ fn collect(ctx: &Ctx, branch: &str) -> Result<Plan> {
     let worktree = repo.worktrees()?.into_iter().find(|w| w.branch.as_deref() == Some(branch));
     if let Some(w) = &worktree {
         if w.path == repo.toplevel {
-            bail!("refused: the branch {branch} is checked out here. Run `prov discard` from another worktree.");
+            bail!(msg::discard::checked_out_here(branch));
         }
         if repo.worktrees()?.first().is_some_and(|main| main.path == w.path) {
-            bail!("refused: the branch {branch} is checked out in the main worktree {}. Check out another branch there first.", w.path.display());
+            bail!(msg::discard::checked_out_in_main(branch, w.path.display()));
         }
     }
 
@@ -209,13 +207,7 @@ fn collect(ctx: &Ctx, branch: &str) -> Result<Plan> {
                     continue;
                 }
                 if let Some(v) = views.iter().find(|v| v.record.id == s.id && v.record.agent == s.agent) {
-                    bail!(
-                        "refused: commit {} names session {s}, and its record is for the branch {}, not {branch}. \
-                         Discard that branch, or drop the record (prov session drop {}).",
-                        commit.short(),
-                        v.record.branch,
-                        v.record.id
-                    );
+                    bail!(msg::discard::session_of_other_branch(commit.short(), &s, &v.record.branch, branch, &v.record.id));
                 }
                 items.push(SessionItem { agent: s.agent.clone(), id: s.id.clone(), state: None });
                 sessions.insert(s);
@@ -227,10 +219,10 @@ fn collect(ctx: &Ctx, branch: &str) -> Result<Plan> {
     let busy: Vec<String> = views
         .iter()
         .filter(|v| v.record.branch == branch && matches!(v.record.state, State::Open | State::Closing))
-        .map(|v| format!("{} ({})", v.record.id, state_text(v.record.state, v.stale)))
+        .map(|v| msg::discard::busy_session(&v.record.id, state_text(v.record.state, v.stale)))
         .collect();
     if !busy.is_empty() {
-        bail!("refused: a session of {branch} is open or closing: {}. Close it first: prov session close <id>", busy.join(", "));
+        bail!(msg::discard::busy(branch, busy.join(", ")));
     }
 
     // Other refs that name a session, or copy from an own commit.
@@ -238,28 +230,17 @@ fn collect(ctx: &Ctx, branch: &str) -> Result<Plan> {
     args.extend(other_refs(branch));
     for commit in repo.commits(args)? {
         if let Some(s) = trailer::sessions(&commit.trailers).into_iter().find(|s| sessions.contains(s)) {
-            bail!(
-                "refused: commit {} on another ref names session {s}. That ref needs the session's record or archive. \
-                 To remove only the worktree: prov finish {branch}",
-                commit.short()
-            );
+            bail!(msg::discard::named_on_other_ref(commit.short(), &s, branch));
         }
         for t in commit.trailers.iter().filter(|t| t.key == trailer::COPIED_FROM) {
             if let Some(source) = trailer::copied_from_commit(&t.value).filter(|c| own.contains(*c)) {
-                bail!(
-                    "refused: commit {} copied a file from commit {source} of {branch} (Copied-From). \
-                     The transcripts of that copy are found through this branch.",
-                    commit.short()
-                );
+                bail!(msg::discard::copied_from_own(commit.short(), source, branch));
             }
         }
     }
     for copy in ctx.store.copies()? {
         if own.contains(&copy.source_commit) {
-            bail!(
-                "refused: the copy {} has its source in commit {} of {branch}. Commit or delete the copied files first.",
-                copy.id, copy.source_commit
-            );
+            bail!(msg::discard::copy_in_progress(&copy.id, &copy.source_commit, branch));
         }
     }
     merge_check(ctx, branch, &own)?;
@@ -302,7 +283,7 @@ fn collect(ctx: &Ctx, branch: &str) -> Result<Plan> {
 }
 
 fn state_text(state: State, is_stale: bool) -> String {
-    if is_stale { format!("{}, stale", state.as_str()) } else { state.as_str().to_string() }
+    if is_stale { format!("{}{}", state.as_str(), msg::session::STALE) } else { state.as_str().to_string() }
 }
 
 /// Refuses while a merge is in progress in any worktree whose `MERGE_HEAD`
@@ -316,22 +297,20 @@ fn merge_check(ctx: &Ctx, branch: &str, own: &BTreeSet<String>) -> Result<()> {
         let Some(repo) = Repo::discover(&w.path)? else { continue };
         for head in repo.merge_heads()? {
             if own.contains(&head) || own_commits(&ctx.repo, &head, branch)?.iter().any(|c| own.contains(c)) {
-                bail!(
-                    "refused: a merge of {branch} is in progress in {}. Finish it or run `git merge --abort` there first.",
-                    w.path.display()
-                );
+                bail!(msg::discard::merge_in_progress(branch, w.path.display()));
             }
         }
     }
     Ok(())
 }
 
-/// The archive files of a session: `<session>-<12 hex>.tar.gz`.
+/// The archive files of a session: `<session>-<12 hex>.tar.gz`, and the
+/// temporary files `<session>-<12 hex>.tar.tmp<pid>` of a killed archive step.
 fn archives_of(dir: &Path, id: &str) -> Result<Vec<PathBuf>> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(e) => return Err(e).with_context(|| format!("cannot read {}", dir.display())),
+        Err(e) => return Err(e).with_context(|| msg::fs::cannot_read(dir.display())),
     };
     let mut out = Vec::new();
     for entry in entries {
@@ -343,7 +322,8 @@ fn archives_of(dir: &Path, id: &str) -> Result<Vec<PathBuf>> {
             .and_then(|rest| rest.strip_prefix('-'))
             .and_then(|rest| rest.strip_suffix(".tar.gz"))
             .is_some_and(|hash| hash.len() == 12 && hash.bytes().all(|b| b.is_ascii_hexdigit()));
-        if is_archive {
+        // A temporary file of a killed archive step holds part of the transcript.
+        if is_archive || crate::archive::temp_archive_pid(name, id).is_some() {
             out.push(entry.path());
         }
     }
@@ -361,18 +341,29 @@ fn delete_under_lock(ctx: &Ctx, plan: &Plan) -> Result<bool> {
     for record in lock.sessions()?.into_iter().map(|r| r.at(now)) {
         let named = plan.sessions.contains(&SessionRef::new(&record.agent, &record.id));
         if (record.branch == plan.report.branch || named) && matches!(record.state, State::Open | State::Closing) {
-            bail!("refused: session {} became {} during the check. Nothing was deleted.", record.id, record.state.as_str());
+            bail!(msg::discard::session_became(&record.id, record.state.as_str()));
         }
         if named && record.branch != plan.report.branch {
-            bail!("refused: session {} now has a record for the branch {}. Nothing was deleted.", record.id, record.branch);
+            bail!(msg::discard::session_moved(&record.id, &record.branch));
         }
     }
     merge_check(ctx, &plan.report.branch, &plan.own)?;
+    // The worktree first, still under the lock: an agent event that waits
+    // for the lock then finds no worktree and makes no record. Removed after
+    // the records, a resume could make a new Open record for it.
+    if let Some(worktree) = &plan.report.worktree {
+        if worktree.exists() {
+            let mut git: Vec<&std::ffi::OsStr> = vec!["worktree".as_ref(), "remove".as_ref(), "--force".as_ref()];
+            git.push(worktree.as_os_str());
+            ctx.repo.git(git)?;
+        }
+        lock.delete_worktree(worktree)?;
+    }
     for file in &plan.report.archives {
         match std::fs::remove_file(file) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
-            Err(e) => return Err(e).with_context(|| format!("cannot delete {}", file.display())),
+            Err(e) => return Err(e).with_context(|| msg::fs::cannot_delete(file.display())),
         }
     }
     for record in lock.sessions()?.into_iter().filter(|r| r.branch == plan.report.branch) {
@@ -389,34 +380,33 @@ fn print(report: &Report, args: &Args) {
     if args.json {
         match serde_json::to_string_pretty(&report) {
             Ok(text) => println!("{text}"),
-            Err(e) => say(format!("error: {e}")),
+            Err(e) => say(msg::discard::json_error(e)),
         }
         return;
     }
-    let will = if args.dry_run || !args.yes { "Will delete" } else { "Deleting" };
-    println!("{will}:");
+    println!("{}", if args.dry_run || !args.yes { msg::discard::WILL_DELETE } else { msg::discard::DELETING });
     if let Some(w) = &report.worktree {
-        println!("  the worktree {}, with {} changed files that are not committed", w.display(), report.changed_files);
+        println!("{}", msg::discard::item_worktree(w.display(), report.changed_files));
     }
     if report.branch_exists {
-        println!("  the branch {}, with {} commits that no other ref has", report.branch, report.own_commits);
+        println!("{}", msg::discard::item_branch(&report.branch, report.own_commits));
     }
     for s in &report.sessions {
         match &s.state {
-            Some(state) => println!("  the record of session {}:{} ({state})", s.agent, s.id),
-            None => println!("  session {}:{} (no record)", s.agent, s.id),
+            Some(state) => println!("{}", msg::discard::item_record(&s.agent, &s.id, state)),
+            None => println!("{}", msg::discard::item_session(&s.agent, &s.id)),
         }
     }
     for a in &report.archives {
-        println!("  the archive {}", a.display());
+        println!("{}", msg::discard::item_archive(a.display()));
     }
-    println!("It keeps the agent's own transcripts and the git-ai notes.");
+    println!("{}", msg::discard::KEEPS);
     for remote in &report.remote_branches {
-        println!("It keeps the remote branch {remote}.");
+        println!("{}", msg::discard::keeps_remote(remote));
     }
     if args.dry_run {
-        println!("Dry run: nothing was deleted.");
+        println!("{}", msg::discard::DRY_RUN);
     } else if !args.yes {
-        println!("Nothing was deleted. To delete it: prov discard {} --yes", report.branch);
+        println!("{}", msg::discard::not_deleted(&report.branch));
     }
 }

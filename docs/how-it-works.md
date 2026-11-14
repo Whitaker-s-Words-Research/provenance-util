@@ -63,7 +63,7 @@ A worktree with no occupant gets no sweep. Its changes are tainted when the next
 | State | Entered when |
 |---|---|
 | Open | The first event of the session. Any later event (except SessionEnd) also returns a Closing, Archived or Failed session to Open, because the agent is still working. |
-| Closing | SessionEnd, or `prov session close`. A detached process starts the archive step. |
+| Closing | SessionEnd, or `prov session archive`. A detached process starts the archive step. |
 | Archived | The archive step stored the transcript. |
 | Failed | The archive step could not finish, or the session stayed Closing for 5 minutes with no live archive process. |
 

@@ -108,6 +108,14 @@ fn init_sets_up_a_clone_and_doctor_passes() {
     assert!(again["actions"].as_array().unwrap().iter().all(|a| a["result"] == "kept"), "{again}");
     assert_eq!(env.git(&repo, ["status", "--porcelain"]), "");
 
+    // A changed config is kept, and `--force` writes the defaults again.
+    let defaults = std::fs::read_to_string(repo.join(".provenance.toml")).unwrap();
+    std::fs::write(repo.join(".provenance.toml"), defaults.replace("protected = [", "protected = [\"secrets/**\", ")).unwrap();
+    env.prov(&repo, ["init"]).success();
+    assert!(std::fs::read_to_string(repo.join(".provenance.toml")).unwrap().contains("secrets/**"));
+    env.prov(&repo, ["init", "--force"]).success();
+    assert_eq!(std::fs::read_to_string(repo.join(".provenance.toml")).unwrap(), defaults);
+
     // A failing local hook makes the hook fail.
     std::fs::write(hooks.join("pre-commit.local"), "#!/bin/sh\nexit 1\n").unwrap();
     std::fs::write(repo.join("x.txt"), "x\n").unwrap();
@@ -187,6 +195,17 @@ fn start_session_approve_finish_and_trace() {
     env.prov(&repo, ["start", "claude", "--no-launch", "--name", "bad name"]).failure();
     env.prov(&repo, ["start", "claude", "--no-launch", "--branch", "feature/x"]).failure();
     env.prov(&repo, ["start", "other", "--no-launch"]).failure();
+    // Only a human starts a session.
+    let agent = env.run(&repo, "prov", ["start", "claude", "--no-launch", "--name", "self"], &[("CLAUDECODE", "1")], None).failure();
+    assert!(agent.stderr.contains("only a human can start a session"), "{}", agent.stderr);
+    // `prov.worktreesDir` in the git config of the clone, relative to the base directory.
+    env.git(&repo, ["config", "prov.worktreesDir", "../elsewhere"]);
+    let moved = json(&env.prov(&repo, ["start", "claude", "--name", "moved", "--dry-run", "--json"]).success().stdout);
+    assert_eq!(Path::new(moved["worktree"].as_str().unwrap()).parent().unwrap(), env.repos().join("elsewhere"), "{moved}");
+    // --path wins over it.
+    let given = json(&env.prov(&repo, ["start", "claude", "--name", "given", "--dry-run", "--json", "--path", env.repos().join("p").to_str().unwrap()]).success().stdout);
+    assert!(given["worktree"].as_str().unwrap().starts_with(env.repos().join("p").to_str().unwrap()), "{given}");
+    env.git(&repo, ["config", "--unset", "prov.worktreesDir"]);
 
     let session = "sess-flow";
     let (wt, branch) = started_session(&env, &repo, "flow", session);
@@ -216,7 +235,7 @@ fn start_session_approve_finish_and_trace() {
     let refused = env.prov(&repo, ["finish", &branch]).failure();
     assert!(refused.stderr.contains("open or closing"), "{}", refused.stderr);
     assert!(wt.is_dir());
-    env.prov(&repo, ["session", "close", session, "--dry-run"]).success();
+    env.prov(&repo, ["session", "archive", session, "--dry-run"]).success();
     assert_eq!(env.state(&repo, session), "open");
     // The agent still runs: the archive step waits for its process, and
     // says so. Here the agent exits one second later.
@@ -226,14 +245,14 @@ fn start_session_approve_finish_and_trace() {
             assert_eq!(env.state(&repo, session), "closing");
             env.kill_agent(session);
         });
-        env.prov(&repo, ["session", "close", session, "--json"]).success()
+        env.prov(&repo, ["session", "archive", session, "--json"]).success()
     });
     assert!(closed.stderr.contains("waiting for the agent process"), "{}", closed.stderr);
     let closed = json(&closed.stdout);
     assert_eq!(closed["state"], "archived");
     let archive = PathBuf::from(closed["archive_file"].as_str().unwrap());
     assert_eq!(common::sha256_of_gunzipped(&archive), closed["archive_sha256"].as_str().unwrap());
-    env.prov(&repo, ["session", "close", session]).failure(); // already archived
+    env.prov(&repo, ["session", "archive", session]).failure(); // already archived
 
     // --- The gate and prov approve --merge -----------------------------------
     let merge = env.try_git(&repo, ["merge", &branch]).failure();
@@ -495,7 +514,7 @@ fn close_resume_and_finish_warn_about_the_accepted_limits() {
         .unwrap();
     let listed = format!("{} sleep", server.id());
 
-    let close = env.prov(&repo, ["session", "close", session]).success();
+    let close = env.prov(&repo, ["session", "archive", session]).success();
     assert!(close.stderr.contains("does not know the process ID of the agent of session sess-limits"), "{}", close.stderr);
     assert!(close.stderr.contains("processes still run in the worktree"), "{}", close.stderr);
     assert!(close.stderr.contains(&listed), "{}", close.stderr);
@@ -512,7 +531,7 @@ fn close_resume_and_finish_warn_about_the_accepted_limits() {
     // With no process in the worktree, and a known agent process, no warning.
     let (wt, _) = started_session(&env, &repo, "quiet", "sess-quiet");
     env.kill_agent("sess-quiet");
-    let quiet = env.prov(&repo, ["session", "close", "sess-quiet"]).success();
+    let quiet = env.prov(&repo, ["session", "archive", "sess-quiet"]).success();
     assert!(!quiet.stderr.contains("warning"), "{}", quiet.stderr);
     assert!(wt.is_dir());
 }

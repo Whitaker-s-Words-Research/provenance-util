@@ -95,6 +95,11 @@ impl CommitInfo {
 impl Repo {
     /// Finds the worktree that contains `dir`. `None` if `dir` is not in a worktree.
     pub fn discover(dir: &Path) -> Result<Option<Repo>> {
+        // A directory that is gone, for example a removed worktree in which
+        // an agent still runs, is in no repository.
+        if !dir.is_dir() {
+            return Ok(None);
+        }
         let out = Command::new("git")
             .current_dir(dir)
             .args(["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"])
@@ -168,6 +173,56 @@ impl Repo {
             bail!(msg::git::failed(cmd.get_args().collect::<Vec<_>>(), String::from_utf8_lossy(&out.stderr).trim()));
         }
         Ok(out.stdout)
+    }
+
+    /// The blob ID of each file of a commit, by path: one `git ls-tree`.
+    pub fn tree_blobs(&self, commit: &str) -> Result<std::collections::HashMap<String, String>> {
+        let text = self.git(["ls-tree", "-r", "-z", "--full-tree", commit])?;
+        Ok(text
+            .split('\0')
+            .filter_map(|entry| {
+                // `<mode> <type> <id>\t<path>`
+                let (meta, path) = entry.split_once('\t')?;
+                let id = meta.split(' ').nth(2)?;
+                Some((path.to_string(), id.to_string()))
+            })
+            .collect())
+    }
+
+    /// The content of each blob, by ID: one `git cat-file --batch`.
+    pub fn blobs(&self, ids: &[&str]) -> Result<std::collections::HashMap<String, Vec<u8>>> {
+        use std::io::Write;
+        let mut cmd = self.command(["cat-file", "--batch"]);
+        cmd.stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+        let mut child = cmd.spawn().context(msg::run::CANNOT_RUN_GIT)?;
+        let mut stdin = child.stdin.take().context(msg::run::CANNOT_RUN_GIT)?;
+        let mut input = ids.join("\n");
+        input.push('\n');
+        // A thread writes, so that a large output cannot block the write.
+        let writer = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
+        let out = child.wait_with_output().context(msg::run::CANNOT_RUN_GIT)?;
+        writer.join().map_err(|_| anyhow::anyhow!(msg::run::CANNOT_RUN_GIT))?.context(msg::run::CANNOT_RUN_GIT)?;
+        if !out.status.success() {
+            bail!(msg::git::failed(["cat-file", "--batch"], String::from_utf8_lossy(&out.stderr).trim()));
+        }
+        // `<id> blob <size>\n<content>\n` for each ID, or `<id> missing\n`.
+        let mut blobs = std::collections::HashMap::new();
+        let mut rest = out.stdout.as_slice();
+        while let Some(end) = rest.iter().position(|b| *b == b'\n') {
+            let header = String::from_utf8_lossy(&rest[..end]).into_owned();
+            rest = &rest[end + 1..];
+            let mut words = header.split(' ');
+            let (Some(id), Some(kind), Some(size)) = (words.next(), words.next(), words.next()) else { continue };
+            let Ok(size) = size.parse::<usize>() else { continue };
+            if rest.len() < size + 1 {
+                bail!(msg::git::failed(["cat-file", "--batch"], msg::git::CUT_OFF));
+            }
+            if kind == "blob" {
+                blobs.insert(id.to_string(), rest[..size].to_vec());
+            }
+            rest = &rest[size + 1..];
+        }
+        Ok(blobs)
     }
 
     pub fn git_opt<I, S>(&self, args: I) -> Result<Option<String>>
@@ -281,24 +336,16 @@ impl Repo {
         Ok(text.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())
     }
 
-    /// The paths that differ between the merge base of `base` and `tip`, and `tip`.
-    /// The paths of text files to which a commit adds lines, by
-    /// `git diff-tree --numstat`. Not for a merge commit.
-    pub fn paths_with_added_lines(&self, commit: &str) -> Result<Vec<String>> {
-        let text = self.git(["diff-tree", "--no-commit-id", "--numstat", "--no-renames", "-r", "--root", "-z", commit])?;
-        let mut out = Vec::new();
-        for record in text.split('\0') {
-            // `<added>\t<deleted>\t<path>`; `-` for a binary file.
-            let mut parts = record.splitn(3, '\t');
-            if let (Some(added), Some(_), Some(path)) = (parts.next(), parts.next(), parts.next()) {
-                if added.parse::<u64>().is_ok_and(|n| n > 0) {
-                    out.push(path.to_string());
-                }
-            }
-        }
-        Ok(out)
+    /// The paths that a commit changes, each with the kind of change, by one
+    /// `git diff-tree --raw --numstat`. Not for a merge commit.
+    pub fn path_changes(&self, commit: &str) -> Result<Vec<(String, PathChange)>> {
+        let text = self.git([
+            "diff-tree", "--no-commit-id", "--raw", "--numstat", "--no-renames", "-r", "--root", "-z", commit,
+        ])?;
+        Ok(parse_path_changes(&text))
     }
 
+    /// The paths that differ between the merge base of `base` and `tip`, and `tip`.
     pub fn changed_paths(&self, base: &str, tip: &str) -> Result<Vec<String>> {
         let text = self.git(["diff", "--name-only", "--no-renames", "-z", &format!("{base}...{tip}")])?;
         Ok(text.split('\0').filter(|p| !p.is_empty()).map(String::from).collect())
@@ -403,9 +450,80 @@ impl Repo {
     }
 }
 
+/// How a commit changes a path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PathChange {
+    /// The commit deletes the file.
+    Deleted,
+    /// The commit adds lines, changes a binary file, or changes the mode or
+    /// the type of the file.
+    Content,
+    /// The commit only deletes lines of the file, or does not change its
+    /// content at all.
+    LinesDeleted,
+}
+
+/// Parses `git diff-tree --raw --numstat -z`: first a raw record for each
+/// path (`:<old mode> <new mode> <old id> <new id> <status>`, then the
+/// path), then a numstat record for each path (`<added>\t<deleted>\t<path>`,
+/// `-` for a binary file).
+fn parse_path_changes(text: &str) -> Vec<(String, PathChange)> {
+    let mut out: Vec<(String, PathChange)> = Vec::new();
+    let mut records = text.split('\0').filter(|r| !r.is_empty());
+    while let Some(record) = records.next() {
+        if let Some(raw) = record.strip_prefix(':') {
+            let Some(path) = records.next() else { break };
+            let fields: Vec<&str> = raw.split(' ').collect();
+            let change = match fields.as_slice() {
+                [_, _, _, _, status] if status.starts_with('D') => PathChange::Deleted,
+                [old_mode, new_mode, ..] if old_mode != new_mode && *old_mode != "000000" => PathChange::Content,
+                [_, _, _, _, status] if status.starts_with('T') => PathChange::Content,
+                _ => PathChange::LinesDeleted,
+            };
+            out.push((path.to_string(), change));
+        } else {
+            let mut parts = record.splitn(3, '\t');
+            let (Some(added), Some(_), Some(path)) = (parts.next(), parts.next(), parts.next()) else { continue };
+            let content = added == "-" || added.parse::<u64>().is_ok_and(|n| n > 0);
+            if let Some(entry) = out.iter_mut().find(|(p, _)| p == path) {
+                if content && entry.1 == PathChange::LinesDeleted {
+                    entry.1 = PathChange::Content;
+                }
+            }
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Output of git 2.53 for a commit that changes a binary file, deletes
+    /// a file, makes a script executable, adds a file with a space in its
+    /// name and deletes a line of a text file.
+    #[test]
+    fn reads_path_changes() {
+        let raw = [
+            ":100644 100644 d5d0 5d9e M", "b.bin",
+            ":100644 000000 1191 0000 D", "g.txt",
+            ":100644 100755 fa11 fa11 M", "s.sh",
+            ":000000 100644 0000 8ba3 A", "sp ace.txt",
+            ":100644 100644 422c 7898 M", "t.txt",
+            "-\t-\tb.bin", "0\t2\tg.txt", "0\t0\ts.sh", "1\t0\tsp ace.txt", "0\t1\tt.txt", "",
+        ]
+        .join("\0");
+        assert_eq!(
+            parse_path_changes(&raw),
+            vec![
+                ("b.bin".to_string(), PathChange::Content),
+                ("g.txt".to_string(), PathChange::Deleted),
+                ("s.sh".to_string(), PathChange::Content),
+                ("sp ace.txt".to_string(), PathChange::Content),
+                ("t.txt".to_string(), PathChange::LinesDeleted),
+            ]
+        );
+    }
 
     #[test]
     fn reads_the_branch_from_the_head_file() {

@@ -4,10 +4,12 @@
 
 - git 2.31 or later.
 - git-ai 1.7.6 or later. `prov` is tested with git-ai 1.7.6; `prov doctor` warns about a newer version until it is tested.
-- The repository must be in git-ai's `allow_repositories` setting. git-ai matches that setting against remote URLs only, so a repository with no remote is not allowed. In a repository that is not allowed, git-ai ignores every checkpoint.
+- git-ai must allow the repository. By default `allow_repositories` is empty, and git-ai allows every repository, also one with no remote. If you set `allow_repositories`, git-ai matches it against remote URLs only: a repository with no remote is then never allowed, not even by `*`. Give it a remote whose URL matches; the remote need not exist yet. In a repository that is not allowed, git-ai ignores every checkpoint.
 - The git-ai service must run (`git-ai bg start`). Without it, a checkpoint records nothing, and `prov` refuses commits.
+- Optional: git-lfs, only to copy files that a source repository stores with Git LFS (`prov cp`). Without it, such a copy stops with an error. If you use git-lfs in a repository with `prov`, run `git lfs install --local --force` and then `prov init` again: `prov init` keeps LFS's hooks and runs them after its own.
 - Linux. macOS is supported by design but not tested yet.
 - Claude Code as the agent. OpenCode is planned for a second phase.
+- Strongly recommended on a shared repository: branch protection for the human branches on your forge, with signed commits required and merge commits only. Reason: without signed commits, an agent that commits with a person's email passes as that person. A squash or rebase merge on the forge drops the record. See [Checking in CI](ci.md#limits).
 
 ## Installing
 

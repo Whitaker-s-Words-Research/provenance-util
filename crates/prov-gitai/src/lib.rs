@@ -388,14 +388,20 @@ impl GitAi {
     /// Waits until the service has done its queued work: the checkpoints it
     /// has received, and the notes of new commits.
     pub fn await_notes(&self, worktree: &Path) -> Result<()> {
+        self.await_for(worktree, AWAIT_TIMEOUT_SECS)
+    }
+
+    /// `git-ai await` with a time limit of `secs`: the service applies the
+    /// checkpoints that it has received and writes pending notes.
+    pub fn await_for(&self, worktree: &Path, secs: u32) -> Result<()> {
         let out = self
             .command(worktree)
-            .args(["await", "--timeout", &AWAIT_TIMEOUT_SECS.to_string()])
+            .args(["await", "--timeout", &secs.to_string()])
             .stdin(Stdio::null())
             .output()
             .context(msg::run::CANNOT_RUN_GITAI)?;
         if !out.status.success() {
-            bail!(msg::gitai::await_timed_out(AWAIT_TIMEOUT_SECS, String::from_utf8_lossy(&out.stderr).trim()));
+            bail!(msg::gitai::await_timed_out(secs, String::from_utf8_lossy(&out.stderr).trim()));
         }
         Ok(())
     }

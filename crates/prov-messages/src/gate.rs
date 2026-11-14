@@ -14,9 +14,13 @@ pub fn item_merge_resolution(path: impl Display, commit: impl Display) -> String
 
 pub fn item_no_ranges(path: impl Display, commit: impl Display) -> String {
     format!(
-        "{path}: commit {commit} adds lines, and git-ai lists none of them (a path that git-ai ignores, for \
-         example vendor/ or a lock file?)"
+        "{path}: commit {commit} changes the file, and git-ai lists no line of it (a binary file, a change of \
+         mode, or a path that git-ai ignores, for example vendor/ or a lock file)"
     )
+}
+
+pub fn item_deleted_file(path: impl Display, commit: impl Display) -> String {
+    format!("{path}: commit {commit} deletes the file")
 }
 
 pub fn item_tainted(path: impl Display, start: impl Display, end: impl Display, commit: impl Display) -> String {
@@ -57,7 +61,7 @@ pub fn session_no_record(session: impl Display) -> String {
 }
 
 pub fn session_open(session: impl Display, id: impl Display) -> String {
-    format!("session {session} is open. Close it first: prov session close {id}")
+    format!("session {session} is open. Archive it first: prov session archive {id}")
 }
 
 pub fn session_closing(session: impl Display) -> String {
@@ -65,7 +69,7 @@ pub fn session_closing(session: impl Display) -> String {
 }
 
 pub fn session_failed(session: impl Display, error: impl Display, id: impl Display) -> String {
-    format!("session {session} is failed ({error}). Run the archive step again: prov session close {id}")
+    format!("session {session} is failed ({error}). Run the archive step again: prov session archive {id}")
 }
 
 /// A Failed session with no error text.
@@ -76,7 +80,7 @@ pub fn session_no_hash(session: impl Display) -> String {
 }
 
 pub fn session_open_in_range(session: impl Display, worktree: impl Display, branch: impl Display, id: impl Display) -> String {
-    format!("session {session} is open in the worktree {worktree} on the branch {branch}. Close it first: prov session close {id}")
+    format!("session {session} is open in the worktree {worktree} on the branch {branch}. Archive it first: prov session archive {id}")
 }
 
 pub const ARCHIVED_NO_HASH: &str = "an archived session has no transcript hash";
@@ -117,3 +121,10 @@ pub fn step_approve(paths: impl Display) -> String {
 
 pub const STEP_COMMIT: &str = "  2. git commit";
 pub const TO_STOP: &str = "To stop instead: git merge --abort";
+
+pub fn agent_env(var: impl Display) -> String {
+    format!(
+        "refused: only a human can integrate agent work. {var} is set: an agent started this merge. Run `git merge \
+         --abort`, then merge from your own terminal."
+    )
+}

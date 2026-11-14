@@ -3,8 +3,7 @@
 //! of the note against the plan.
 
 use std::collections::BTreeMap;
-use std::os::unix::process::CommandExt;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
@@ -137,18 +136,12 @@ pub fn committed(ctx: &Ctx, head: &str) -> Result<()> {
 fn spawn_detached(ctx: &Ctx, id: &str) -> Result<u32> {
     let exe = std::env::current_exe().context(msg::archive::NO_BINARY)?;
     let mut cmd = Command::new(exe);
-    cmd.args(["copy-check", id]).current_dir(&ctx.repo.toplevel).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+    cmd.args(["copy-check", id]).current_dir(&ctx.repo.toplevel);
     // The hook environment names an index file that git removes.
     for var in ["GIT_INDEX_FILE", "GIT_DIR", "GIT_WORK_TREE", "GIT_PREFIX"] {
         cmd.env_remove(var);
     }
-    // SAFETY: setsid is async-signal-safe and touches no memory of the parent.
-    unsafe {
-        cmd.pre_exec(|| {
-            libc::setsid();
-            Ok(())
-        });
-    }
+    crate::detach::detach(&mut cmd);
     Ok(cmd.spawn().context(msg::copy_check::CANNOT_SPAWN)?.id())
 }
 
@@ -228,20 +221,30 @@ pub fn run(id: &str) -> Result<()> {
         list.dedup();
         list
     };
+    // It looks for the notes, and does not run `git-ai await`: the await
+    // returns only when the service has done all its work, and after a large
+    // copy that took the full 60 seconds although the note came after 9.
     let begin = Instant::now();
     loop {
-        let _ = ctx.gitai.await_notes(&ctx.repo.toplevel);
         if commits.iter().all(|c| has_note(&ctx, c)) || begin.elapsed() >= Duration::from_secs(u64::from(AWAIT_TIMEOUT_SECS)) {
             break;
         }
         std::thread::sleep(Duration::from_millis(250));
     }
 
-    let mut results: Vec<(String, CopyCheck, Option<String>)> = Vec::new();
+    // One pass for each commit: a few processes, whatever the number of files.
+    let mut by_commit: BTreeMap<&str, Vec<&CopyFile>> = BTreeMap::new();
     for file in record.files.iter().filter(|f| f.check.is_none()) {
-        let Some(commit) = &file.commit else { continue };
-        let result = check_file(&ctx, file, commit).unwrap_or_else(|e| (CopyCheck::Failed, Some(format!("{e:#}"))));
-        results.push((file.dest.clone(), result.0, result.1));
+        if let Some(commit) = &file.commit {
+            by_commit.entry(commit.as_str()).or_default().push(file);
+        }
+    }
+    let mut results: Vec<(String, CopyCheck, Option<String>)> = Vec::new();
+    for (commit, files) in by_commit {
+        match check_commit(&ctx, commit, &files) {
+            Ok(r) => results.extend(r),
+            Err(e) => results.extend(files.iter().map(|f| (f.dest.clone(), CopyCheck::Failed, Some(format!("{e:#}"))))),
+        }
     }
 
     // Read the record again under the lock: another commit can have changed it.
@@ -278,35 +281,57 @@ pub fn run(id: &str) -> Result<()> {
     Ok(())
 }
 
-fn check_file(ctx: &Ctx, file: &CopyFile, commit: &str) -> Result<(CopyCheck, Option<String>)> {
+/// Checks the copied files of one commit with one `git ls-tree`, one
+/// `git-ai diff` and one `git cat-file --batch`.
+fn check_commit(ctx: &Ctx, commit: &str, files: &[&CopyFile]) -> Result<Vec<(String, CopyCheck, Option<String>)>> {
     let repo = &ctx.repo;
-    let blob = repo.git_opt(["rev-parse", "-q", "--verify", &format!("{commit}:{}", file.dest)])?;
-    if blob.as_deref() != Some(file.blob.as_str()) {
-        return Ok((CopyCheck::Failed, Some(msg::copy_check::different_bytes(commit))));
+    let tree = repo.tree_blobs(commit)?;
+    let note = has_note(ctx, commit);
+    let mut out = Vec::new();
+    let mut text = Vec::new();
+    for file in files {
+        if tree.get(&file.dest) != Some(&file.blob) {
+            out.push((file.dest.clone(), CopyCheck::Failed, Some(msg::copy_check::different_bytes(commit))));
+        } else if !file.text {
+            // A binary file and a symbolic link have no line authorship.
+            out.push((file.dest.clone(), CopyCheck::Agrees, None));
+        } else if !note {
+            out.push((file.dest.clone(), CopyCheck::Failed, Some(msg::copy_check::no_note(commit, AWAIT_TIMEOUT_SECS))));
+        } else {
+            text.push(*file);
+        }
     }
-    // A binary file and a symbolic link have no line authorship.
-    if !file.text {
-        return Ok((CopyCheck::Agrees, None));
+    if text.is_empty() {
+        return Ok(out);
     }
-    if !has_note(ctx, commit) {
-        return Ok((CopyCheck::Failed, Some(msg::copy_check::no_note(commit, AWAIT_TIMEOUT_SECS))));
+    let added = ctx.gitai.diff(&repo.toplevel, commit)?.added;
+    let ids: Vec<&str> = text.iter().map(|f| f.blob.as_str()).collect();
+    let blobs = repo.blobs(&ids)?;
+    for file in text {
+        let (check, detail) = blobs
+            .get(&file.blob)
+            .context(msg::copy_check::different_bytes(commit))
+            .and_then(|bytes| check_file(file, bytes, &added, commit))
+            .unwrap_or_else(|e| (CopyCheck::Failed, Some(format!("{e:#}"))));
+        out.push((file.dest.clone(), check, detail));
     }
-    let bytes = repo.git_bytes(["cat-file", "blob", &file.blob])?;
+    Ok(out)
+}
+
+/// Compares the authors of one text file in the note with the plan.
+fn check_file(file: &CopyFile, bytes: &[u8], added: &[prov_gitai::AddedRange], commit: &str) -> Result<(CopyCheck, Option<String>)> {
     let lines: Vec<&[u8]> = bytes.split_inclusive(|b| *b == b'\n').collect();
     let plan_file = PlanFile { path: file.path.clone(), dest: file.dest.clone(), binary: false, symlink: false, ranges: file.ranges.clone() };
     plan_file.check_cover(u32::try_from(lines.len()).context(msg::copy_check::TOO_MANY_LINES)?)?;
     let plan = plan_file.line_authors();
     let mut actual = vec![Author::Untracked; lines.len()];
-    let added: Vec<_> = ctx.gitai.diff(&repo.toplevel, commit)?.added.into_iter().filter(|r| r.path == file.dest).collect();
-    if added.is_empty() && !lines.is_empty() {
+    let ranges: Vec<_> = added.iter().filter(|r| r.path == file.dest).collect();
+    if ranges.is_empty() && !lines.is_empty() {
         // git-ai ignores some paths, for example `**/vendor/**` and lock
         // files. It then drops the checkpoints and lists no line of the file.
-        return Ok((
-            CopyCheck::Ignored,
-            Some(msg::copy_check::ignored(&file.dest, commit)),
-        ));
+        return Ok((CopyCheck::Ignored, Some(msg::copy_check::ignored(&file.dest, commit))));
     }
-    for range in added {
+    for range in ranges {
         for line in range.start..=range.end {
             if let Some(slot) = actual.get_mut(line as usize - 1) {
                 *slot = range.author.clone();

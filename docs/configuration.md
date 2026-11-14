@@ -21,7 +21,7 @@ command = ["claude", "--model", "opus"]
 | `agents` | The agents in use. Phase 1 supports `claude`. |
 | `logs_dir` | The directory of the transcript archives. Not tracked by git. |
 | `protected` | Paths whose every change is a doubtful item at the gate. gitignore patterns: `*` does not match `/`, `**` matches across directories. |
-| `known_gaps` | Commit IDs (7 or more hex characters) with no git-ai note that you accept instead of repairing them. `prov doctor` then lists them as notes, not failures. |
+| `known_gaps` | Commit IDs (7 or more hex characters) with no git-ai note that you accept instead of repairing them. `prov doctor` then lists them as notes, not failures, and `prov check` gives no warning for them. |
 | `[agent.<name>]` | Replaces `author`, `email` or `command` of the agent's adapter. |
 
 Relative paths resolve against the base directory: the repository root in a normal clone, or the directory that holds a bare repository with linked worktrees.
@@ -40,7 +40,7 @@ These are not config keys.
 |---|---|
 | Agent branches | `agent/**` |
 | Name of a new agent branch | `agent/<agent>/<YYYYMMDD>-<name>` |
-| Worktrees | `../<repo>.worktrees/`, from the base directory |
+| Worktrees | `../<repo>.worktrees/`, from the base directory. For one clone, set another directory with `git config prov.worktreesDir <dir>`, for example a local disk when the repository is on a slow mount. |
 | Transcript archives | `<logs_dir>/<agent>/<session>-<12 hex characters of the hash>.tar.gz` |
 | Agent names | `claude` (adapter `claude-code`) |
 | Agent commit identity | `Claude <noreply@anthropic.com>` for Claude Code |

@@ -91,11 +91,11 @@ pub fn session_merged(id: impl Display, state: impl Display, branch: impl Displa
 }
 
 pub fn session_stale(id: impl Display) -> String {
-    format!("session {id} is stale (no event for 24 hours, or its agent process is gone). Close it: prov session close {id}")
+    format!("session {id} is stale (no event for 24 hours, or its agent process is gone). Archive it: prov session archive {id}")
 }
 
 pub fn session_failed(id: impl Display, error: impl Display) -> String {
-    format!("session {id} is failed: {error}. Run the archive step again: prov session close {id}")
+    format!("session {id} is failed: {error}. Run the archive step again: prov session archive {id}")
 }
 
 pub fn worktree_contended(worktree: impl Display, ids: impl Display) -> String {
@@ -122,13 +122,13 @@ pub fn copy_failed(dest: impl Display, commit: &str, detail: impl Display) -> St
 }
 
 pub fn copy_moved(dest: impl Display, commit: &str, detail: impl Display, record: impl Display) -> String {
-    format!("{dest} (commit {commit:.10}): {detail}. The content and the counts are correct. To remove this note, delete {record}")
+    format!("{dest} (commit {commit:.10}): {detail}. The content and the counts are correct. To remove this note:\nrm {record}")
 }
 
 pub fn copy_ignored(dest: impl Display, commit: &str, detail: impl Display, record: impl Display) -> String {
     format!(
         "{dest} (commit {commit:.10}) has no line authorship: {detail}. The Copied-From trailer records its origin. \
-         To remove this note, delete {record}"
+         To remove this note:\nrm {record}"
     )
 }
 
@@ -154,9 +154,9 @@ pub const PROBLEM_NEXT: &str = "         ";
 pub const WARNING_FIRST: &str = "       warning: ";
 pub const WARNING_NEXT: &str = "         ";
 
-pub fn note(text: impl Display) -> String {
-    format!("       ({text})")
-}
+/// The first line of a note, and each line after it.
+pub const NOTE_FIRST: &str = "       note: ";
+pub const NOTE_NEXT: &str = "         ";
 
 pub const ALL_PASS: &str = "All checks pass.";
 pub const SOME_FAIL: &str = "One check or more fails.";

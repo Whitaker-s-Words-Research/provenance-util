@@ -9,6 +9,7 @@ mod completions;
 mod context;
 mod copy_check;
 mod cp;
+mod detach;
 mod discard;
 mod doctor;
 mod finish;
@@ -47,8 +48,10 @@ enum Cmd {
         /// Replace a file or a hook that has other content.
         #[arg(long)]
         force: bool,
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -57,6 +60,7 @@ enum Cmd {
         /// Also run `git-ai debug`.
         #[arg(long)]
         deep: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -70,6 +74,7 @@ enum Cmd {
         /// branch that is checked out.
         #[arg(long, value_name = "BRANCH", add = ArgValueCandidates::new(complete::branches))]
         into: Option<String>,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -85,7 +90,7 @@ enum Cmd {
         #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
         args: Vec<String>,
     },
-    /// Shows sessions, closes one, or deletes the record of one.
+    /// Shows sessions, archives one, or deletes the record of one.
     Session {
         #[command(subcommand)]
         action: SessionCmd,
@@ -101,8 +106,10 @@ enum Cmd {
         /// Passed to `git worktree remove`: remove a worktree with changes that are not committed.
         #[arg(long)]
         force: bool,
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -114,8 +121,10 @@ enum Cmd {
         /// Delete. Without it, `prov discard` only prints what it would delete.
         #[arg(long)]
         yes: bool,
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -124,13 +133,17 @@ enum Cmd {
     /// Commits your staged changes to the lines of an integration, with a `Prov-Revises` trailer.
     ///
     /// The changes must change or delete at least one line that came in with
-    /// the merge. git opens the editor with the trailer; you write the message.
+    /// the merge, or that an earlier revision of it changed, or insert lines
+    /// next to such a line. git opens the editor with the trailer; you write
+    /// the message.
     Revise {
-        /// The integration that you revise. Default: the latest one on the
+        /// The integration that you revise. Give it more than once for a
+        /// revision of several integrations. Default: the latest one on the
         /// first-parent line from HEAD.
         #[arg(long, value_name = "MERGE")]
-        of: Option<String>,
+        of: Vec<String>,
         /// Show the target and the counts, and do not commit.
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
     },
@@ -142,8 +155,10 @@ enum Cmd {
         /// Add the line to the startup file, if it is not there yet.
         #[arg(long)]
         install: bool,
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -183,7 +198,8 @@ struct StartArgs {
     from: Option<String>,
     /// The directory that holds the worktree. The worktree is a new
     /// directory in it, named after the branch. A leading `~` is the home
-    /// directory. Default: `../<repo>.worktrees/`.
+    /// directory. Default: `prov.worktreesDir` from the git config of the
+    /// clone, or `../<repo>.worktrees/`.
     #[arg(long, value_name = "DIR", value_hint = clap::ValueHint::DirPath)]
     path: Option<PathBuf>,
     /// Create the worktree, print its path, and do not start the agent.
@@ -192,8 +208,10 @@ struct StartArgs {
     /// Open the worktree of that session and start the agent with its resume option.
     #[arg(long, value_name = "SESSION", add = ArgValueCandidates::new(complete::sessions))]
     resume: Option<String>,
+    /// Show what the command would do, and change nothing.
     #[arg(long)]
     dry_run: bool,
+    /// Print the result as JSON.
     #[arg(long)]
     json: bool,
     /// Arguments for the agent, after `--`.
@@ -205,6 +223,7 @@ struct StartArgs {
 enum SessionCmd {
     /// Lists the sessions that have a record.
     List {
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -212,15 +231,18 @@ enum SessionCmd {
     Show {
         #[arg(add = ArgValueCandidates::new(complete::sessions))]
         session: String,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
     /// Moves an Open session to Closing and archives it. For a Failed session: runs the archive step again.
-    Close {
+    Archive {
         #[arg(add = ArgValueCandidates::new(complete::sessions))]
         session: String,
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -228,8 +250,10 @@ enum SessionCmd {
     Drop {
         #[arg(add = ArgValueCandidates::new(complete::sessions))]
         session: String,
+        /// Show what the command would do, and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// Print the result as JSON.
         #[arg(long)]
         json: bool,
     },
@@ -254,8 +278,10 @@ struct ApproveArgs {
     /// With --ai: the model. Default: `unknown`.
     #[arg(long)]
     model: Option<String>,
+    /// Show what the command would do, and change nothing.
     #[arg(long)]
     dry_run: bool,
+    /// Print the result as JSON.
     #[arg(long)]
     json: bool,
 }
@@ -292,8 +318,10 @@ struct CpArgs {
     /// Apply a plan file.
     #[arg(long, value_name = "FILE")]
     apply: Option<PathBuf>,
+    /// Show what the command would do, and change nothing.
     #[arg(long)]
     dry_run: bool,
+    /// Print the result as JSON.
     #[arg(long)]
     json: bool,
 }
@@ -336,7 +364,7 @@ fn main() -> ExitCode {
             Cmd::Session { action } => match action {
                 SessionCmd::List { json } => session::run(session::Action::List, json, false),
                 SessionCmd::Show { session, json } => session::run(session::Action::Show(session), json, false),
-                SessionCmd::Close { session, dry_run, json } => session::run(session::Action::Close(session), json, dry_run),
+                SessionCmd::Archive { session, dry_run, json } => session::run(session::Action::Archive(session), json, dry_run),
                 SessionCmd::Drop { session, dry_run, json } => session::run(session::Action::Drop(session), json, dry_run),
             },
             Cmd::Finish { target, override_, force, dry_run, json } => {

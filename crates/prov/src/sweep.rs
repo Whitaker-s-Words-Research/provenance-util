@@ -36,6 +36,11 @@ pub fn observe(ctx: &Ctx, lock: &Locked<'_>, occupants: &[SessionRecord]) -> Res
         if files.is_empty() {
             return Ok(());
         }
+        // git-ai applies a checkpoint after the command returns. A checkpoint
+        // of the agent's own hooks for an edit just before this one must
+        // apply first, or the taint takes its lines. A failed wait does not
+        // stop the taint: it can only make more lines doubtful.
+        let _ = ctx.gitai.await_for(top, TAINT_AWAIT_SECS);
         // Lines that git-ai already has a checkpoint for keep their author:
         // a checkpoint covers only the changes since the one before.
         ctx.gitai.checkpoint_ai(top, &files, UNATTRIBUTED_TOOL, "unknown", &taint_id())
@@ -45,6 +50,10 @@ pub fn observe(ctx: &Ctx, lock: &Locked<'_>, occupants: &[SessionRecord]) -> Res
     }
     Ok(())
 }
+
+/// The time limit of the wait before a taint. A taint is rare: it runs only
+/// when the occupants of a worktree change and files are changed.
+const TAINT_AWAIT_SECS: u32 = 5;
 
 /// A conversation ID that no other taint has: the time and the process.
 fn taint_id() -> String {

@@ -25,7 +25,7 @@ pub fn session_state(id: impl Display, state: impl Display) -> String {
 
 pub fn busy(worktree: impl Display, sessions: impl Display) -> String {
     format!(
-        "refused: a session in {worktree} is open or closing: {sessions}. End the session or run `prov session close <id>`. \
+        "refused: a session in {worktree} is open or closing: {sessions}. End the session or run `prov session archive <id>`. \
          `--override` closes each open session first."
     )
 }

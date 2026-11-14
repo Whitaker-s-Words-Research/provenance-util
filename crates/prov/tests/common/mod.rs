@@ -151,6 +151,28 @@ impl Env {
         }
     }
 
+    /// Starts `program` with the environment of [`Env::run`], and returns at
+    /// once, for a test that stops the process.
+    pub fn spawn<I, S>(&self, dir: &Path, program: &str, args: I) -> std::process::Child
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<OsStr>,
+    {
+        Command::new(program)
+            .current_dir(dir)
+            .args(args)
+            .env_clear()
+            .env("HOME", self.home())
+            .env("PATH", &self.path)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("LC_ALL", "C")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap_or_else(|e| panic!("cannot run {program}: {e}"))
+    }
+
     /// `prov` with a controlling terminal, as a human at a keyboard has.
     /// `input` is what the human types. Standard output and standard error
     /// are captured as in [`Env::run`].
@@ -420,7 +442,11 @@ impl Env {
         let payload = fill(template, session, cwd, &self.transcript_path(session));
         let pid = agent_pid.to_string();
         let envs = [("CLAUDE_PID", pid.as_str()), ("CLAUDECODE", "1"), ("CLAUDE_CODE_SESSION_ID", session)];
-        self.run(cwd, "prov", ["hook", "claude-code", event], &envs, Some(&payload))
+        // As an agent's hook does, it also runs when the worktree is gone:
+        // the agent's own directory was removed. prov reads `cwd` from the payload.
+        let script = "cd \"$1\" 2>/dev/null; exec prov hook claude-code \"$2\"";
+        let args = [OsStr::new("-c"), OsStr::new(script), OsStr::new("sh"), cwd.as_os_str(), OsStr::new(event)];
+        self.run(self.home(), "sh", args, &envs, Some(&payload))
     }
 
     /// Starts a session: the transcript and the `SessionStart` event.

@@ -71,6 +71,12 @@ fn protected_paths_need_approval() {
 
     approve(&env, &repo, &[".claude/settings.json", "AGENTS.md", "src/CLAUDE.md"]);
     env.try_git(&repo, ["commit", "--no-edit"]).success();
+    // The gate ran three times on one message: each trailer is there once.
+    let trailers = env.trailers(&repo, "HEAD");
+    for key in ["Prov-Session:", "Prov-Transcript-SHA256:", "Prov-Version:"] {
+        assert_eq!(trailers.iter().filter(|t| t.starts_with(key)).count(), 1, "{key} {trailers:?}");
+    }
+    assert_eq!(trailers.iter().filter(|t| t.starts_with("Prov-Approved:")).count(), 4, "{trailers:?}");
     let base = env.git(&repo, ["rev-parse", "HEAD^1"]);
     // prov check reads the config at the first parent, so the paths are still protected there.
     env.await_notes(&repo);
@@ -460,11 +466,141 @@ fn a_file_that_git_ai_ignores_needs_approval() {
     env.end_session(&wt, "sess-i");
 
     let merge = env.try_git(&repo, ["merge", &branch("ignored")]).failure();
-    assert!(merge.stderr.contains("vendor/lib.py") && merge.stderr.contains("git-ai lists none of them"), "{}", merge.stderr);
+    assert!(merge.stderr.contains("vendor/lib.py") && merge.stderr.contains("git-ai lists no line of it"), "{}", merge.stderr);
     assert!(!merge.stderr.contains("src/ok.py"), "{}", merge.stderr);
     approve(&env, &repo, &["vendor/lib.py"]);
     env.try_git(&repo, ["commit", "--no-edit"]).success();
     let base = env.git(&repo, ["rev-parse", "HEAD^1"]);
     env.await_notes(&repo);
     env.prov(&repo, ["check", &format!("{base}..HEAD")]).success();
+}
+
+/// A session record that does not parse is reported as such, not as a
+/// missing record. The gate still refuses.
+#[test]
+fn a_record_that_does_not_parse_is_not_a_missing_record() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    archived_branch(&env, &repo, "broken", "sess-x", "x.py");
+    let common = env.git(&repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+    let path = Path::new(&common).join("provenance/sessions/sess-x.json");
+    std::fs::write(&path, "{\"id\": \"sess-x\", \"state\":").unwrap();
+
+    let merge = env.try_git(&repo, ["merge", &branch("broken")]).failure();
+    assert!(merge.stderr.contains("sess-x.json does not parse"), "{}", merge.stderr);
+    assert!(!merge.stderr.contains("no record"), "{}", merge.stderr);
+    env.git(&repo, ["merge", "--abort"]);
+    let check = env.prov(&repo, ["check", &branch("broken")]).failure();
+    assert!(check.stderr.contains("sess-x.json does not parse"), "{}{}", check.stdout, check.stderr);
+}
+
+/// git-ai lists no range for a binary file or a change of mode. Each such
+/// path, and each deleted file, is one item. A file that only loses lines is
+/// not: a deleted line has no author to doubt.
+#[test]
+fn binary_files_mode_changes_and_deleted_files_need_approval() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    for (file, content) in [("logo.png", "old\0png"), ("run.sh", "echo run\n"), ("gone.txt", "gone\n"), ("short.txt", "1\n2\n")] {
+        env.human_edit(&repo, file, content);
+    }
+    env.git(&repo, ["add", "-A"]);
+    env.git(&repo, ["commit", "-q", "-m", "Files"]);
+
+    let wt = env.worktree(&repo, "nontext");
+    env.start_session(&wt, "sess-n").success();
+    env.agent_edit(&wt, "logo.png", "new\0png", "sess-n");
+    env.agent_edit(&wt, "icon.png", "\u{89}PNG\0icon", "sess-n");
+    std::fs::set_permissions(wt.join("run.sh"), std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    std::fs::remove_file(wt.join("gone.txt")).unwrap();
+    env.agent_edit(&wt, "short.txt", "1\n", "sess-n");
+    env.agent_edit(&wt, "ok.py", "ok = True\n", "sess-n");
+    env.agent_commit(&wt, "sess-n", "Change non-text files").success();
+    env.end_session(&wt, "sess-n");
+
+    let check = env.prov(&repo, ["check", &branch("nontext"), "--json"]).failure();
+    let report: serde_json::Value = serde_json::from_str(&check.stdout).unwrap();
+    let mut items: Vec<(String, String)> = report["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|i| (i["path"].as_str().unwrap().to_string(), i["reason"].as_str().unwrap().to_string()))
+        .collect();
+    items.sort();
+    let expected = [("gone.txt", "deleted_file"), ("icon.png", "no_ranges"), ("logo.png", "no_ranges"), ("run.sh", "no_ranges")];
+    assert_eq!(items, expected.map(|(p, r)| (p.to_string(), r.to_string())), "{}", check.stdout);
+
+    let merge = env.try_git(&repo, ["merge", &branch("nontext")]).failure();
+    assert!(merge.stderr.contains("gone.txt: commit") && merge.stderr.contains("deletes the file"), "{}", merge.stderr);
+    assert!(!merge.stderr.contains("short.txt") && !merge.stderr.contains("ok.py"), "{}", merge.stderr);
+    let approve = env.prov_tty(&repo, ["approve", "--merge", "gone.txt", "icon.png", "logo.png", "run.sh"], "yes\n");
+    assert!(approve.ok, "{}{}", approve.stdout, approve.stderr);
+    env.try_git(&repo, ["commit", "--no-edit"]).success();
+    let base = env.git(&repo, ["rev-parse", "HEAD^1"]);
+    env.await_notes(&repo);
+    env.prov(&repo, ["check", &format!("{base}..HEAD")]).success();
+}
+
+/// `git merge` runs no `pre-commit`, so the gate itself refuses an agent:
+/// an agent session in a human worktree must not integrate, with or without
+/// approvals that it wrote into the merge message.
+#[test]
+fn the_gate_refuses_an_agent() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    archived_branch(&env, &repo, "self", "sess-s", "s.py");
+    let agent = [("CLAUDECODE", "1"), ("CLAUDE_CODE_SESSION_ID", "sess-other")];
+    let merge = env.run(&repo, "git", ["merge", "--no-edit", &branch("self")], &agent, None).failure();
+    assert!(merge.stderr.contains("only a human can integrate agent work. CLAUDECODE is set"), "{}", merge.stderr);
+    env.git(&repo, ["merge", "--abort"]);
+    // The same merge by a human passes.
+    env.try_git(&repo, ["merge", &branch("self")]).success();
+}
+
+/// How a forge brings a human branch with an integration into `main`, with
+/// no hooks and no git-ai service. A merge commit keeps every note and the
+/// record, and `prov check` passes. A rebase puts the agent commit on the
+/// first-parent line, and `prov check` reports it. A squash leaves one
+/// commit with no note: `prov check` cannot see the AI lines in it, and only
+/// warns about a commit with no note. This is the accepted limit that
+/// requires merge commits for human branches.
+#[test]
+fn forge_merge_methods_of_a_human_branch() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let base = env.git(&repo, ["rev-parse", "HEAD"]);
+    let feature = env.repos().join("feature-wt");
+    env.git(&repo, ["worktree", "add", "-q", "-b", "feature/y", feature.to_str().unwrap()]);
+    let wt = env.worktree_from(&repo, "port", "feature/y");
+    env.start_session(&wt, "sess-f").success();
+    env.agent_edit(&wt, "p.py", "ported = 1\n", "sess-f");
+    env.agent_commit(&wt, "sess-f", "Port").success();
+    env.end_session(&wt, "sess-f");
+    env.try_git(&feature, ["merge", &branch("port")]).success();
+    env.human_edit(&feature, "h.txt", "human\n");
+    env.git(&feature, ["add", "-A"]);
+    env.git(&feature, ["commit", "-q", "-m", "Human"]);
+    env.await_notes(&repo);
+    let tip = env.git(&repo, ["rev-parse", "feature/y"]);
+
+    env.remove_shims(&repo);
+    env.stop_service();
+    env.git(&repo, ["checkout", "-q", "-b", "forge-merge", "main"]);
+    env.git(&repo, ["merge", "-q", "--no-ff", "-m", "Merge pull request #1", &tip]);
+    env.git(&repo, ["checkout", "-q", "-b", "forge-squash", "main"]);
+    env.git(&repo, ["-c", "merge.ff=true", "merge", "-q", "--squash", &tip]);
+    env.git(&repo, ["commit", "-q", "-m", "Squash pull request #1"]);
+    env.git(&repo, ["checkout", "-q", "-b", "forge-rebase", "main"]);
+    env.git(&repo, ["rebase", "-q", "--onto", "forge-rebase", &base, &tip]);
+    let rebased = env.git(&repo, ["rev-parse", "HEAD"]);
+    env.git(&repo, ["checkout", "-q", "main"]);
+
+    let merge = env.prov(&repo, ["check", &format!("{base}..forge-merge")]).success();
+    assert!(!merge.stdout.contains("WARN"), "{}", merge.stdout);
+    // The squash passes, with a warning: it adds lines and has no note.
+    let squash = env.prov(&repo, ["check", &format!("{base}..forge-squash")]).success();
+    let squashed = env.git(&repo, ["rev-parse", "--short=10", "forge-squash"]);
+    assert!(squash.stdout.contains(&format!("WARN {squashed} adds lines and has no git-ai note")), "{}", squash.stdout);
+    let rebase = env.prov(&repo, ["check", &format!("{base}..{rebased}")]).failure();
+    assert!(rebase.stdout.contains("is not a human commit"), "{}", rebase.stdout);
 }

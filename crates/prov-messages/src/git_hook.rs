@@ -55,7 +55,7 @@ pub const GITAI_UNAVAILABLE_HUMAN: &str = "refused: the git-ai service is not av
 pub fn contended(count: impl Display, sessions: impl Display) -> String {
     format!(
         "refused: this worktree is contended. {count} sessions are open here: {sessions}. End all but one, or run \
-         `prov session close <id>`."
+         `prov session archive <id>`."
     )
 }
 

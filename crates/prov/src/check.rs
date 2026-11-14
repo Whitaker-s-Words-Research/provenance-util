@@ -5,7 +5,7 @@
 //! with no argument and with an agent branch compare against the branch that
 //! the merge will go into: `--into`, or the branch that is checked out.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{bail, Context, Result};
 use prov_messages as msg;
@@ -37,6 +37,9 @@ struct Report {
     /// Form with a range: the number of commits checked.
     #[serde(skip_serializing_if = "Option::is_none")]
     commits_checked: Option<usize>,
+    /// What looks wrong but does not fail the check.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<Failure>,
 }
 
 #[derive(Debug, Serialize)]
@@ -65,6 +68,60 @@ struct SessionStatus {
 impl Report {
     fn fail(&mut self, commit: Option<&CommitInfo>, message: impl Into<String>) {
         self.failures.push(Failure { commit: commit.map(|c| c.sha.clone()), message: message.into() });
+    }
+
+    fn warn(&mut self, commit: Option<&CommitInfo>, message: impl Into<String>) {
+        self.warnings.push(Failure { commit: commit.map(|c| c.sha.clone()), message: message.into() });
+    }
+}
+
+/// What the range check needs to find a commit with no note.
+struct Notes {
+    /// The commits with a git-ai note.
+    with_note: BTreeSet<String>,
+    /// The time of the first commit of `refs/notes/ai`. Older commits were
+    /// made before git-ai was in use.
+    since: u64,
+    /// The commit time of each commit of the range.
+    times: BTreeMap<String, u64>,
+    /// `known_gaps` of the config at the tip.
+    known_gaps: Vec<String>,
+}
+
+impl Notes {
+    /// `None` if the clone has no `refs/notes/ai`.
+    fn read(repo: &prov_git::Repo, base: &str, tip: &str, known_gaps: &[String]) -> Result<Option<Notes>> {
+        if repo.rev_parse("refs/notes/ai")?.is_none() {
+            return Ok(None);
+        }
+        let since = repo
+            .git(["log", "--max-parents=0", "--format=%ct", "refs/notes/ai"])?
+            .lines()
+            .filter_map(|l| l.trim().parse().ok())
+            .min()
+            .unwrap_or(0);
+        let with_note = repo
+            .git(["notes", "--ref=ai", "list"])?
+            .lines()
+            .filter_map(|l| l.split_whitespace().nth(1).map(str::to_string))
+            .collect();
+        let times = repo
+            .git(["log", "--format=%H %ct", &format!("{base}..{tip}")])?
+            .lines()
+            .filter_map(|l| {
+                let (sha, ct) = l.split_once(' ')?;
+                Some((sha.to_string(), ct.trim().parse().ok()?))
+            })
+            .collect();
+        let known_gaps = known_gaps.iter().map(|g| g.to_ascii_lowercase()).collect();
+        Ok(Some(Notes { with_note, since, times, known_gaps }))
+    }
+
+    /// True if the commit should have a note and has none.
+    fn missing(&self, sha: &str) -> bool {
+        !self.with_note.contains(sha)
+            && self.times.get(sha).is_some_and(|t| *t >= self.since)
+            && !self.known_gaps.iter().any(|g| sha.starts_with(g.as_str()))
     }
 }
 
@@ -137,6 +194,12 @@ fn print(report: &Report, target: Option<&str>) {
     if target.is_none() && report.branches.is_empty() && report.failures.is_empty() {
         println!("{}", msg::check::nothing_waits(report.into.as_deref().unwrap_or("HEAD")));
     }
+    for w in &report.warnings {
+        match &w.commit {
+            Some(c) => println!("{}", msg::check::warn_commit(&c[..c.len().min(10)], &w.message)),
+            None => println!("{}", msg::check::warn(&w.message)),
+        }
+    }
     for f in &report.failures {
         match &f.commit {
             Some(c) => println!("{}", msg::check::fail_commit(&c[..c.len().min(10)], &f.message)),
@@ -150,11 +213,11 @@ fn print(report: &Report, target: Option<&str>) {
     }
 }
 
-fn session_state(ctx: &Ctx, session: &trailer::SessionRef) -> String {
-    match ctx.store.get(&session.id).ok().flatten().filter(|r| r.agent == session.agent) {
+fn session_state(ctx: &Ctx, session: &trailer::SessionRef) -> Result<String> {
+    Ok(match gate::record_of(ctx, session)? {
         Some(r) => r.state.as_str().to_string(),
         None => msg::check::NO_RECORD.to_string(),
-    }
+    })
 }
 
 /// `prov check`: the agent branches that are not merged into `human`.
@@ -177,15 +240,15 @@ fn list_branches(ctx: &Ctx, human: &str, report: &mut Report) -> Result<()> {
             continue;
         }
         let mut analysis = gate::analyze(repo, &ctx.gitai, &config, human, branch)?;
-        analysis.drop_unknown_sessions(|s| gate::has_record(ctx, s));
+        gate::drop_sessions_without_record(ctx, &mut analysis)?;
         report.branches.push(BranchReport {
             branch: branch.to_string(),
             commits: analysis.commits.iter().map(|c| format!("{} {}", c.short(), c.subject)).collect(),
             sessions: analysis
                 .sessions
                 .iter()
-                .map(|s| SessionStatus { session: s.to_string(), state: session_state(ctx, s) })
-                .collect(),
+                .map(|s| Ok(SessionStatus { session: s.to_string(), state: session_state(ctx, s)? }))
+                .collect::<Result<_>>()?,
             doubtful_lines: analysis.doubtful_lines(),
             protected_paths: analysis
                 .items
@@ -218,7 +281,7 @@ fn check_branch(ctx: &Ctx, branch: &str, human: &str, report: &mut Report) -> Re
         crate::context::say(msg::gate::await_failed(format!("{e:#}")));
     }
     let mut analysis = gate::analyze(repo, &ctx.gitai, &config, human, branch)?;
-    analysis.drop_unknown_sessions(|s| gate::has_record(ctx, s));
+    gate::drop_sessions_without_record(ctx, &mut analysis)?;
     let (_, problems) = gate::check_sessions(ctx, &analysis)?;
     for p in problems {
         report.fail(None, p);
@@ -260,6 +323,10 @@ fn check_range(ctx: &Ctx, base: &str, tip: &str, report: &mut Report) -> Result<
         return Ok(());
     }
     let emails = prov_adapters::agent_emails(&tip_config);
+    let notes = Notes::read(repo, base, tip, &tip_config.known_gaps)?;
+    if notes.is_none() {
+        report.warn(None, msg::check::NO_NOTES_REF);
+    }
     let mut seen = BTreeSet::new();
     // Each entry is the first-parent line of one human branch.
     let mut lines = vec![(base.to_string(), tip.to_string())];
@@ -276,7 +343,7 @@ fn check_range(ctx: &Ctx, base: &str, tip: &str, report: &mut Report) -> Result<
             if commit.parents.len() >= 2 {
                 lines.extend(check_merge(ctx, commit, &emails, report)?);
             } else {
-                check_ordinary(ctx, commit, report)?;
+                check_ordinary(ctx, commit, notes.as_ref(), report)?;
             }
         }
     }
@@ -352,8 +419,15 @@ fn check_merge(
 /// `Copied-From` trailer or a `Prov-Approved` trailer with the choice `ai`.
 /// This is how a squash or a cherry-pick of agent commits appears, and the
 /// work of a session in a human worktree.
-fn check_ordinary(ctx: &Ctx, commit: &CommitInfo, report: &mut Report) -> Result<()> {
+///
+/// A commit that adds lines and has no note gets a warning: a squash made on
+/// a forge looks like this, and so does a commit by a person who does not use
+/// git-ai.
+fn check_ordinary(ctx: &Ctx, commit: &CommitInfo, notes: Option<&Notes>, report: &mut Report) -> Result<()> {
     let authorship = ctx.gitai.diff(&ctx.repo.toplevel, &commit.sha)?;
+    if !authorship.added.is_empty() && notes.is_some_and(|n| n.missing(&commit.sha)) {
+        report.warn(Some(commit), msg::check::NO_NOTE);
+    }
     if authorship.sessions.is_empty() {
         return Ok(());
     }

@@ -32,8 +32,8 @@
 (* P3  post-commit sees the commit that was made, with its trailers.       *)
 (*     Tested by the same test.                                            *)
 (* P4  A session can be resumed at any time, also while the editor is      *)
-(*     open. Tested for resume in general (Claude Code 2.1.322); not with  *)
-(*     an editor open.                                                     *)
+(*     open. Tested: Claude Code 2.1.325, "resume while the merge editor   *)
+(*     is open" (live run, 2026-11-14).                                    *)
 (***************************************************************************)
 EXTENDS Naturals
 

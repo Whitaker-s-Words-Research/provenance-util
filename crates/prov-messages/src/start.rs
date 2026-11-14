@@ -2,6 +2,10 @@
 
 use std::fmt::Display;
 
+pub fn agent_env(var: impl Display) -> String {
+    format!("refused: only a human can start a session. {var} is set: an agent started this command.")
+}
+
 pub const CANNOT_READ_URANDOM: &str = "cannot read /dev/urandom";
 pub const BASE_NO_NAME: &str = "the base directory has no name";
 pub const BASE_NO_PARENT: &str = "the base directory has no parent";

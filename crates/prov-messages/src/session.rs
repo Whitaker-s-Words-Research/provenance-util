@@ -94,10 +94,10 @@ pub fn show_last_event(age: impl Display) -> String {
     format!("last event: {age} ago")
 }
 
-// `prov session close`
+// `prov session archive`
 
-pub fn close_dry_run(id: impl Display, state: impl Display) -> String {
-    format!("Dry run: session {id} is {state}; `prov session close` will run the archive step.")
+pub fn archive_dry_run(id: impl Display, state: impl Display) -> String {
+    format!("Dry run: session {id} is {state}; `prov session archive` will run the archive step.")
 }
 
 pub fn archived(id: impl Display, file: impl Display) -> String {

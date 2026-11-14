@@ -113,7 +113,7 @@ Crash(s) ==
     /\ alive' = [alive EXCEPT ![s] = FALSE]
     /\ UNCHANGED <<st, gen, arch, work, procs>>
 
-(* prov session close (or finish --override): Open -> Closing, the process *)
+(* prov session archive (or finish --override): Open -> Closing, the process *)
 (* may still be alive. On a Failed session: run the archive step again.    *)
 Close(s) ==
     /\ EffSt(s) \in {"open", "failed"} /\ gen[s] < MaxGen

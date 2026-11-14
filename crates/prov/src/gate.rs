@@ -8,7 +8,7 @@ use anyhow::{Context, Result};
 use prov_messages as msg;
 use prov_core::trailer::{self, Approval, SessionRef, Trailer};
 use prov_core::{Config, SessionRecord, State};
-use prov_git::{CommitInfo, Repo};
+use prov_git::{CommitInfo, PathChange, Repo};
 use prov_gitai::{Author, GitAi};
 use serde::Serialize;
 
@@ -53,10 +53,14 @@ pub enum Reason {
     /// every parent: the author of the merge wrote the result, for example to
     /// resolve a conflict. git-ai gives no usable line record for a merge.
     MergeResolution,
-    /// git shows added lines for the file, and git-ai lists no range of it.
-    /// git-ai ignores some paths, for example `**/vendor/**` and lock files:
-    /// it drops their checkpoints and lists none of their lines.
+    /// git shows added lines, a binary change or a new mode for the file,
+    /// and git-ai lists no range of it. git-ai ignores some paths, for
+    /// example `**/vendor/**` and lock files: it drops their checkpoints and
+    /// lists none of their lines. It also lists no range for a binary file
+    /// or a change of mode.
     NoRanges,
+    /// The agent commit deletes the file.
+    DeletedFile,
 }
 
 /// Something that the human must approve before the integration.
@@ -92,6 +96,7 @@ impl Item {
             Reason::Protected => msg::gate::item_protected(path),
             Reason::MergeResolution => msg::gate::item_merge_resolution(path, commit),
             Reason::NoRanges => msg::gate::item_no_ranges(path, commit),
+            Reason::DeletedFile => msg::gate::item_deleted_file(path, commit),
             Reason::UnknownSession if self.session.as_deref().is_some_and(|s| s.starts_with(prov_gitai::UNATTRIBUTED_TOOL)) => {
                 msg::gate::item_tainted(path, start, end, commit)
             }
@@ -152,10 +157,12 @@ fn has_note(repo: &Repo, commit: &str) -> Result<bool> {
 ///
 /// The caller ran `git-ai await` before. If a commit of the last two
 /// minutes still has no note, this waits for it, up to the time limit of
-/// `git-ai await`. An older commit with no note will not get one: there is
-/// no wait. Reason: on a slow file system under load, a test once saw a
-/// commit with no note after the await; the cause is not known.
-fn wait_for_note(repo: &Repo, commit: &str) -> Result<bool> {
+/// `git-ai await`. The limit holds for all waits of one analysis together:
+/// `waiting_since` is the start of the first wait. An older commit with no
+/// note will not get one: there is no wait. Reason: on a slow file system
+/// under load, a test once saw a commit with no note after the await; the
+/// cause is not known.
+fn wait_for_note(repo: &Repo, commit: &str, waiting_since: &mut Option<std::time::Instant>) -> Result<bool> {
     if has_note(repo, commit)? {
         return Ok(true);
     }
@@ -163,7 +170,7 @@ fn wait_for_note(repo: &Repo, commit: &str) -> Result<bool> {
     if prov_core::now().saturating_sub(committed) > 120 {
         return Ok(false);
     }
-    let begin = std::time::Instant::now();
+    let begin = *waiting_since.get_or_insert_with(std::time::Instant::now);
     let limit = std::time::Duration::from_secs(u64::from(prov_gitai::AWAIT_TIMEOUT_SECS));
     while begin.elapsed() < limit {
         std::thread::sleep(std::time::Duration::from_millis(250));
@@ -188,6 +195,7 @@ pub fn analyze(repo: &Repo, gitai: &GitAi, config: &Config, base: &str, tip: &st
     let mut items = Vec::new();
     let mut named = Vec::new();
     let mut ai_ranges = Vec::new();
+    let mut waiting_since = None;
     for commit in &commits {
         for s in trailer::sessions(&commit.trailers) {
             add(&mut named, s.clone());
@@ -209,23 +217,21 @@ pub fn analyze(repo: &Repo, gitai: &GitAi, config: &Config, base: &str, tip: &st
             }
             continue;
         }
-        let has_note = wait_for_note(repo, &commit.sha)?;
+        let has_note = wait_for_note(repo, &commit.sha, &mut waiting_since)?;
         let authorship = gitai.diff(&repo.toplevel, &commit.sha)?;
         for s in &authorship.sessions {
             add(&mut sessions, SessionRef::new(&s.tool, &s.id));
         }
-        // A file with added lines that git-ai does not list at all.
-        for path in repo.paths_with_added_lines(&commit.sha)? {
-            if !authorship.added.iter().any(|r| r.path == path) {
-                items.push(Item {
-                    path,
-                    reason: Reason::NoRanges,
-                    commit: Some(commit.sha.clone()),
-                    start_line: None,
-                    end_line: None,
-                    session: None,
-                });
-            }
+        // A deleted file, and a changed file that git-ai does not list at all.
+        // A file that only loses lines needs no approval: a deleted line has
+        // no author to doubt.
+        for (path, change) in repo.path_changes(&commit.sha)? {
+            let reason = match change {
+                PathChange::Deleted => Reason::DeletedFile,
+                PathChange::Content if !authorship.added.iter().any(|r| r.path == path) => Reason::NoRanges,
+                PathChange::Content | PathChange::LinesDeleted => continue,
+            };
+            items.push(Item { path, reason, commit: Some(commit.sha.clone()), start_line: None, end_line: None, session: None });
         }
         for range in authorship.added {
             let item = |reason, session| Item {
@@ -262,10 +268,27 @@ pub fn unapproved<'a>(items: &'a [Item], approvals: &[Approval]) -> Vec<&'a Item
     items.iter().filter(|item| !approvals.iter().any(|a| a.path == item.path)).collect()
 }
 
-/// True if this clone has a record of the session.
-pub fn has_record(ctx: &Ctx, session: &SessionRef) -> bool {
-    // An ID that cannot be a record name has no record.
-    ctx.store.get(&session.id).ok().flatten().is_some_and(|r| r.agent == session.agent)
+/// The record of the session in this clone. An ID that cannot be a record
+/// name has no record. A record that cannot be read or parsed is an error,
+/// not a missing record.
+pub fn record_of(ctx: &Ctx, session: &SessionRef) -> Result<Option<SessionRecord>> {
+    if !prov_core::state::is_record_name(&session.id) {
+        return Ok(None);
+    }
+    Ok(ctx.store.get(&session.id)?.filter(|r| r.agent == session.agent))
+}
+
+/// Removes each session with no record in this clone and no trailer (see
+/// [`Analysis::drop_unknown_sessions`]).
+pub fn drop_sessions_without_record(ctx: &Ctx, analysis: &mut Analysis) -> Result<()> {
+    let mut known = Vec::new();
+    for s in &analysis.sessions {
+        if record_of(ctx, s)?.is_some() {
+            known.push(s.clone());
+        }
+    }
+    analysis.drop_unknown_sessions(|s| known.contains(s));
+    Ok(())
 }
 
 /// Checks the sessions of an integration against live state. Returns the
@@ -277,8 +300,7 @@ pub fn check_sessions(ctx: &Ctx, analysis: &Analysis) -> Result<(Vec<SessionReco
     let mut records = Vec::new();
     let mut problems = Vec::new();
     for session in &analysis.sessions {
-        // An ID that cannot be a record name has no record.
-        let record = ctx.store.get(&session.id).ok().flatten().filter(|r| r.agent == session.agent).map(|r| r.at(prov_core::now()));
+        let record = record_of(ctx, session)?.map(|r| r.at(prov_core::now()));
         match record {
             None => problems.push(msg::gate::session_no_record(session)),
             Some(r) if r.state == State::Archived && r.archive_sha256.as_deref().is_some_and(trailer::is_sha256) => {
@@ -358,6 +380,12 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
     if !any {
         return Ok(true);
     }
+    // Only a human integrates. `git merge` runs no `pre-commit`, so the
+    // check for an agent commit there does not cover a merge.
+    if let Some(var) = prov_adapters::agent_env_marker() {
+        say(msg::gate::agent_env(var));
+        return Ok(false);
+    }
     if heads.len() > 1 {
         say(msg::gate::OCTOPUS);
         return Ok(false);
@@ -391,7 +419,7 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
     // or has deleted the records before this read. Taken after `analyze`,
     // which is slow; nothing below takes the lock again.
     let _lock = ctx.store.lock()?;
-    analysis.drop_unknown_sessions(|s| has_record(ctx, s));
+    drop_sessions_without_record(ctx, &mut analysis)?;
     let (records, problems) = check_sessions(ctx, &analysis)?;
 
     // 4. Doubtful ranges and protected paths.
@@ -411,9 +439,7 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
             for item in &open {
                 say(msg::gate::item(item.describe()));
             }
-            let mut paths: Vec<&str> = open.iter().map(|i| i.path.as_str()).collect();
-            paths.dedup();
-            let paths: BTreeSet<&str> = paths.into_iter().collect();
+            let paths: BTreeSet<&str> = open.iter().map(|i| i.path.as_str()).collect();
             say(msg::gate::NEXT_STEPS);
             say(msg::gate::step_approve(paths.iter().map(|p| shell_quote(p)).collect::<Vec<_>>().join(" ")));
             say(msg::gate::STEP_COMMIT);
@@ -444,7 +470,8 @@ pub fn run(ctx: &Ctx, message_file: &Path, heads: &[String]) -> Result<bool> {
     Ok(true)
 }
 
-fn shell_quote(s: &str) -> String {
+/// `s` as one word for a POSIX shell.
+pub(crate) fn shell_quote(s: &str) -> String {
     if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./+=:@".contains(c)) {
         s.to_string()
     } else {

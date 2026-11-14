@@ -6,6 +6,7 @@
 mod common;
 
 use std::time::{Duration, Instant};
+use std::path::PathBuf;
 
 use common::{branch, Env};
 
@@ -378,7 +379,7 @@ fn a_commit_before_the_first_stop_gets_the_model_of_the_transcript() {
 }
 
 /// P4 of `ProvSessions`, as seen in a live run: the human closes a session
-/// while its agent works. `prov session close` waits for the agent; the
+/// while its agent works. `prov session archive` waits for the agent; the
 /// agent's next event opens the session again, and the command says so.
 #[test]
 fn a_session_closed_while_its_agent_works_goes_on() {
@@ -387,7 +388,7 @@ fn a_session_closed_while_its_agent_works_goes_on() {
     let wt = env.worktree(&repo, "busy");
     env.start_session(&wt, "sess-busy").success();
     let close = std::thread::scope(|scope| {
-        let closing = scope.spawn(|| env.prov(&repo, ["session", "close", "sess-busy"]));
+        let closing = scope.spawn(|| env.prov(&repo, ["session", "archive", "sess-busy"]));
         // The command waits for the agent; the agent sends its next event.
         let begin = Instant::now();
         while env.state(&repo, "sess-busy") != "closing" {
@@ -405,4 +406,105 @@ fn a_session_closed_while_its_agent_works_goes_on() {
     assert!(close.stderr.contains("sent another event while prov waited"), "{}", close.stderr);
     let archived = env.wait_state(&repo, "sess-busy", "archived");
     assert_eq!(archived["generation"], 4);
+}
+
+/// R-ARCH-1 with a real process: `prov session archive` is killed (SIGKILL)
+/// at several moments of the archive step of a large transcript, spread
+/// over the time that one uncut step takes. A killed step never leaves a
+/// file with the final name that is not the complete archive, and running
+/// the step again archives the session.
+#[test]
+fn an_archive_process_killed_during_its_write() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let logs = repo.join("llm-logs/claude");
+    let session_with_data = |round: usize| {
+        let session = format!("sess-kill-{round}");
+        let wt = env.worktree(&repo, &format!("kill-{round}"));
+        env.start_session(&wt, &session).success();
+        // About 8 MB that compresses badly, so that the write takes time.
+        let side = env.transcript_path(&session).parent().unwrap().join(&session).join("subagents");
+        let mut x: u64 = 0x9e37_79b9_7f4a_7c15 ^ round as u64;
+        let big: Vec<u8> = (0..8_000_000)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                b'!' + u8::try_from(x % 90).unwrap()
+            })
+            .collect();
+        std::fs::write(side.join("agent-big.jsonl"), big).unwrap();
+        env.kill_agent(&session);
+        session
+    };
+    // One uncut step, for the time it takes.
+    let session = session_with_data(0);
+    let begin = Instant::now();
+    env.prov(&repo, ["session", "archive", &session]).success();
+    let full = begin.elapsed();
+
+    let mut cut = 0;
+    for (round, tenths) in [(1, 2u32), (2, 4), (3, 6), (4, 8), (5, 9)] {
+        let session = session_with_data(round);
+        let mut child = env.spawn(&repo, "prov", ["session", "archive", &session]);
+        std::thread::sleep(full * tenths / 10);
+        if child.try_wait().unwrap().is_none() {
+            cut += 1;
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+
+        for file in std::fs::read_dir(&logs).unwrap().flatten().map(|e| e.path()) {
+            let name = file.file_name().unwrap().to_string_lossy().into_owned();
+            if name.starts_with(&format!("{session}-")) && name.ends_with(".tar.gz") {
+                // A file with the final name is the complete archive: its name holds the hash.
+                let hash = common::sha256_of_gunzipped(&file);
+                assert!(name.contains(&hash[..12]), "round {round}: {name} is cut off");
+            }
+        }
+        // The step again, unless the kill came after its end: the session is
+        // archived, with a complete archive.
+        if env.state(&repo, &session) != "archived" {
+            env.prov(&repo, ["session", "archive", &session]).success();
+        }
+        let archived = env.record(&repo, &session).unwrap();
+        assert_eq!(archived["state"], "archived", "round {round}");
+        let file = PathBuf::from(archived["archive_file"].as_str().unwrap());
+        assert_eq!(common::sha256_of_gunzipped(&file), archived["archive_sha256"].as_str().unwrap(), "round {round}");
+    }
+    let leftovers: Vec<String> = std::fs::read_dir(&logs)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| !n.ends_with(".tar.gz"))
+        .collect();
+    eprintln!("one step: {full:?}; killed before the end: {cut} of 5; temporary files left: {leftovers:?}");
+    assert!(cut >= 3, "the kills came too late to test anything");
+    // The step that ran again deleted what the killed one left.
+    assert!(leftovers.is_empty(), "{leftovers:?}");
+}
+
+/// R-SWEEP-2 when a contention ends: the `SessionEnd` of one of two sessions
+/// makes the other one the owner at once. Its later work stays its own.
+#[test]
+fn the_end_of_a_contention_restores_the_owner() {
+    let Some(env) = Env::new() else { return };
+    let repo = env.repo("project");
+    let wt = env.worktree(&repo, "contention-end");
+    let owner = || -> Option<String> {
+        let dir = repo.join(".git/provenance/worktrees");
+        std::fs::read_dir(dir).unwrap().flatten().find_map(|e| {
+            let v: serde_json::Value = serde_json::from_slice(&std::fs::read(e.path()).unwrap()).unwrap();
+            (v["worktree"].as_str() == Some(wt.to_str().unwrap())).then(|| v["owner"].as_str().map(String::from)).flatten()
+        })
+    };
+    env.start_session(&wt, "sess-a").success();
+    env.start_session(&wt, "sess-b").success();
+    assert_eq!(owner(), None, "contended");
+    env.end_session(&wt, "sess-b");
+    assert_eq!(owner().as_deref(), Some("sess-a"), "the end of b restores a");
+    env.agent_edit(&wt, "a.txt", "A\n", "sess-a");
+    env.hook(&wt, "Stop", "sess-a").success();
+    env.agent_commit(&wt, "sess-a", "Add a").success();
+    assert_eq!(authors_of(&env, &wt, "HEAD", "a.txt"), vec![("claude".to_string(), "sess-a".to_string())]);
 }
