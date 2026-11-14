@@ -221,9 +221,11 @@ pub fn run(id: &str) -> Result<()> {
         list.dedup();
         list
     };
+    // It looks for the notes, and does not run `git-ai await`: the await
+    // returns only when the service has done all its work, and after a large
+    // copy that took the full 60 seconds although the note came after 9.
     let begin = Instant::now();
     loop {
-        let _ = ctx.gitai.await_notes(&ctx.repo.toplevel);
         if commits.iter().all(|c| has_note(&ctx, c)) || begin.elapsed() >= Duration::from_secs(u64::from(AWAIT_TIMEOUT_SECS)) {
             break;
         }

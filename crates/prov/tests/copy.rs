@@ -435,6 +435,9 @@ fn copies_two_thousand_files() {
     let check = begin.elapsed();
     eprintln!("2,000 files: the note arrived after {note:?}");
     eprintln!("2,000 files: prov cp {copy:?}, git commit {commit:?}, deferred check {check:?}");
+    let begin = Instant::now();
+    env.run(&repo, "git-ai", ["diff", "HEAD", "--json"], &[], None);
+    eprintln!("2,000 files: one git-ai diff of the commit {:?}", begin.elapsed());
     assert_eq!(records, [] as [Value; 0], "the check agrees for every file");
     assert_eq!(env.git(&repo, ["ls-files", "lib"]).lines().count(), 2000);
 }
